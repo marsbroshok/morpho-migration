@@ -430,11 +430,9 @@
 1. **The Bug:** Live wallet simulations reverted with `ERC20: transfer amount exceeds balance` when executing rollover or leverage adjustments.
 2. **Analysis:**
    * The DApp constant `MORPHO_BUNDLER_V3` was pointing to the local mock/test address instead of the real mainnet contract address.
-   * Morpho Blue requires that users explicitly authorize the Bundler contract (`setAuthorization`) to manage their positions. Without this approval, any attempt by the Bundler to withdraw collateral or repay on behalf of the user fails/reverts, triggering the ERC20 transfer balance error when the swap tries to pull non-withdrawn tokens from the adapter.
    * Verified correct mainnet contract address mappings using the [Morpho Addresses Documentation](https://docs.morpho.org/get-started/resources/addresses/#bundlers).
 3. **Resolution:**
    * Restored `MORPHO_BLUE` to point to the correct mainnet contract address `0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb` (ending in `EEFFCb`).
    * Configured `MORPHO_BUNDLER_V3` to point to the correct mainnet Bundler V3 address `0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`.
-   * Added on-chain authorization check (`isAuthorized`) on position fetch comparing user status against `MORPHO_BUNDLER_V3`.
-   * Embedded an inline red warning box and "Authorize Bundler Contract" helper button when delegation is missing, allowing users to approve the Bundler in a single click.
    * Created a live on-chain integration sanity test (`tests/integration.test.mjs`) to test the address constants against live mainnet state during development, preventing regression errors.
+   * **Bypassed Bundler Delegation Prompt:** Removed the unnecessary `isAuthorized` checks and delegation UI buttons. Because the multicall continues to route position modifications (withdraw, repay, supply, borrow) through the already-authorized **Ether General Adapter 1** (`0x4A6c312e...`) rather than calling raw Bundler actions, no new delegation or authorization of the Bundler contract (`MORPHO_BUNDLER_V3`) is required.
