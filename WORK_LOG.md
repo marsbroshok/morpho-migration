@@ -381,3 +381,17 @@
 3. **Resolution:**
    * Corrected `morphoWithdrawCollateral` to pass exactly 3 parameters (`marketParams`, `params.collateralAmount`, `ETHER_GENERAL_ADAPTER_1`).
    * Replaced the incorrect `adapter.swap` call in both deleveraging and leveraging-up bundles with the correct Pendle Router direct call pattern (direct ERC20 approval and router call execution via `routeData.tx.to` and `routeData.tx.data`).
+
+---
+
+## 2026-06-08 - Fixed reenter Function ABI Mismatch in Flashloans
+
+### Summary of Investigation
+1. **The Bug:** Clicking "Simulate & Adjust Leverage" threw a `Function "reenter" not found on ABI` error.
+2. **Analysis:**
+   * In the Morpho flashloan integration, the callback bundle actions cannot be encoded using a direct `reenter` method call (which is not part of the adapter contract interface).
+   * Instead, the nested bundle must be serialized as custom `tuple[]` parameters using `encodeAbiParameters`, hashed via `keccak256` to create a `callbackHash` parameter, and passed to `morphoFlashLoan` as a generic `bytes` parameter.
+3. **Resolution:**
+   * Rewrote the flashloan wrapping in both deleveraging and leveraging-up builders to match the exact ABI serialization flow used in the rollover tab.
+   * Registered `encodedReenterBundle` via `encodeAbiParameters` and calculated the hash via `keccak256`.
+   * Appended a USDC refund sweep to the outer bundle in the deleveraging path to sweep leftovers from the buffer.

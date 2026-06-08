@@ -1232,6 +1232,25 @@
             callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
           });
 
+          const encodedReenterBundle = encodeAbiParameters(
+            [
+              {
+                name: 'bundle',
+                type: 'tuple[]',
+                components: [
+                  { name: 'to', type: 'address' },
+                  { name: 'data', type: 'bytes' },
+                  { name: 'value', type: 'uint256' },
+                  { name: 'skipRevert', type: 'bool' },
+                  { name: 'callbackHash', type: 'bytes32' }
+                ]
+              }
+            ],
+            [reenterBundle]
+          );
+
+          const callbackHash = keccak256(encodedReenterBundle);
+
           // Wrap inside flashloan
           const outerBundle = [
             {
@@ -1239,21 +1258,28 @@
               data: encodeFunctionData({
                 abi: ADAPTER_ABI,
                 functionName: 'morphoFlashLoan',
-                args: [
-                  usdcAddress,
-                  flashLoanAmount,
-                  encodeFunctionData({
-                    abi: ADAPTER_ABI,
-                    functionName: 'reenter',
-                    args: [reenterBundle]
-                  })
-                ]
+                args: [usdcAddress, flashLoanAmount, encodedReenterBundle]
+              }),
+              value: 0n,
+              skipRevert: false,
+              callbackHash: callbackHash
+            }
+          ];
+
+          // Sweep any remaining USDC buffer back to the user's wallet
+          if (is1x) {
+            outerBundle.push({
+              to: ETHER_GENERAL_ADAPTER_1,
+              data: encodeFunctionData({
+                abi: ADAPTER_ABI,
+                functionName: 'erc20Transfer',
+                args: [usdcAddress, userAddress, 2n ** 256n - 1n]
               }),
               value: 0n,
               skipRevert: false,
               callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-            }
-          ];
+            });
+          }
 
           finalCalldata = encodeFunctionData({
             abi: BUNDLER_ABI,
@@ -1348,6 +1374,25 @@
             callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
           });
 
+          const encodedReenterBundle = encodeAbiParameters(
+            [
+              {
+                name: 'bundle',
+                type: 'tuple[]',
+                components: [
+                  { name: 'to', type: 'address' },
+                  { name: 'data', type: 'bytes' },
+                  { name: 'value', type: 'uint256' },
+                  { name: 'skipRevert', type: 'bool' },
+                  { name: 'callbackHash', type: 'bytes32' }
+                ]
+              }
+            ],
+            [reenterBundle]
+          );
+
+          const callbackHash = keccak256(encodedReenterBundle);
+
           // Wrap inside flashloan
           const outerBundle = [
             {
@@ -1355,19 +1400,11 @@
               data: encodeFunctionData({
                 abi: ADAPTER_ABI,
                 functionName: 'morphoFlashLoan',
-                args: [
-                  usdcAddress,
-                  params.debtAmount,
-                  encodeFunctionData({
-                    abi: ADAPTER_ABI,
-                    functionName: 'reenter',
-                    args: [reenterBundle]
-                  })
-                ]
+                args: [usdcAddress, params.debtAmount, encodedReenterBundle]
               }),
               value: 0n,
               skipRevert: false,
-              callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+              callbackHash: callbackHash
             }
           ];
 
