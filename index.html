@@ -197,6 +197,7 @@
     import { mainnet } from 'https://esm.sh/viem/chains';
     import { calculateCollateralValue, calculateLtv, calculateLeverage, calculateLeverageAdjustmentParams } from './math.js';
     import { formatMarketLabel } from './labels.js';
+    import { buildDeleveragingBundle, buildLeveragingUpBundle } from './builders.js';
 
     // --- CONSTANTS & ABIs ---
     const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
@@ -1187,57 +1188,19 @@
           const is1x = (params.mode === 'deleverage-to-1x');
           const bufferAmount = 2n * 10n ** 6n; // 2 USDC buffer
           const flashLoanAmount = is1x ? (params.debtAmount + bufferAmount) : expectedUsdcOutput;
-          const repayAmount = is1x ? 0n : expectedUsdcOutput;
-          const repayShares = is1x ? 2n ** 256n - 1n : 0n;
 
-          const reenterBundle = [];
-
-          // Call A: Repay the Morpho Blue debt
-          reenterBundle.push({
-            to: ETHER_GENERAL_ADAPTER_1,
-            data: encodeFunctionData({
-              abi: ADAPTER_ABI,
-              functionName: 'morphoRepay',
-              args: [marketParams, repayAmount, repayShares, 2n ** 256n - 1n, userAddress, '0x']
-            }),
-            value: 0n,
-            skipRevert: false,
-            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-          });
-
-          // Call B: Withdraw collateral PT from Morpho (directly to Adapter)
-          reenterBundle.push({
-            to: ETHER_GENERAL_ADAPTER_1,
-            data: encodeFunctionData({
-              abi: ADAPTER_ABI,
-              functionName: 'morphoWithdrawCollateral',
-              args: [marketParams, params.collateralAmount, ETHER_GENERAL_ADAPTER_1]
-            }),
-            value: 0n,
-            skipRevert: false,
-            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-          });
-
-          // Call C: Approve the Pendle Swap Router to spend PT from the Adapter
-          reenterBundle.push({
-            to: ptAddress,
-            data: encodeFunctionData({
-              abi: ERC20_ABI,
-              functionName: 'approve',
-              args: [routeData.tx.to, params.collateralAmount]
-            }),
-            value: 0n,
-            skipRevert: false,
-            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-          });
-
-          // Call D: Execute Pendle Swap (PT -> USDC) via direct Router call
-          reenterBundle.push({
-            to: routeData.tx.to,
-            data: routeData.tx.data,
-            value: 0n,
-            skipRevert: false,
-            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          const reenterBundle = buildDeleveragingBundle({
+            encodeFunctionData,
+            marketParams,
+            collateralAmount: params.collateralAmount,
+            debtAmount: expectedUsdcOutput,
+            is1x,
+            ptAddress,
+            usdcAddress,
+            routeData,
+            userAddress,
+            ETHER_GENERAL_ADAPTER_1,
+            MORPHO_BUNDLER_V3
           });
 
           const encodedReenterBundle = encodeAbiParameters(
@@ -1332,54 +1295,17 @@
           
           statusEl.innerText = `Pendle Swap path resolved! Expected Output: ${(Number(expectedPtOutput)/1e18).toFixed(4)} PT.\nGenerating atomic flashloan bundle...`;
 
-          const reenterBundle = [];
-
-          // Call A: Approve Pendle Swap Router to spend USDC from the Adapter
-          reenterBundle.push({
-            to: usdcAddress,
-            data: encodeFunctionData({
-              abi: ERC20_ABI,
-              functionName: 'approve',
-              args: [routeData.tx.to, params.debtAmount]
-            }),
-            value: 0n,
-            skipRevert: false,
-            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-          });
-
-          // Call B: Execute Pendle Swap (USDC -> PT) via direct Router call
-          reenterBundle.push({
-            to: routeData.tx.to,
-            data: routeData.tx.data,
-            value: 0n,
-            skipRevert: false,
-            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-          });
-
-          // Call B: Supply PT collateral to Morpho Blue
-          reenterBundle.push({
-            to: ETHER_GENERAL_ADAPTER_1,
-            data: encodeFunctionData({
-              abi: ADAPTER_ABI,
-              functionName: 'morphoSupplyCollateral',
-              args: [marketParams, expectedPtOutput, userAddress, '0x']
-            }),
-            value: 0n,
-            skipRevert: false,
-            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-          });
-
-          // Call C: Borrow USDC from Morpho back to the Adapter to repay the flashloan
-          reenterBundle.push({
-            to: ETHER_GENERAL_ADAPTER_1,
-            data: encodeFunctionData({
-              abi: ADAPTER_ABI,
-              functionName: 'morphoBorrow',
-              args: [marketParams, params.debtAmount, 0n, 0n, ETHER_GENERAL_ADAPTER_1]
-            }),
-            value: 0n,
-            skipRevert: false,
-            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          const reenterBundle = buildLeveragingUpBundle({
+            encodeFunctionData,
+            marketParams,
+            collateralAmount: expectedPtOutput,
+            debtAmount: params.debtAmount,
+            ptAddress,
+            usdcAddress,
+            routeData,
+            userAddress,
+            ETHER_GENERAL_ADAPTER_1,
+            MORPHO_BUNDLER_V3
           });
 
           const encodedReenterBundle = encodeAbiParameters(

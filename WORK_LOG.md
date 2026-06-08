@@ -1,5 +1,36 @@
 # Project Work Log
 
+## 2026-06-08 - Resolved Deleveraging Swap Simulation Revert and Refactored Leverage Adjustment Builders
+
+### Summary of Investigation
+1. **The Bug:** During simulation of the deleveraging flow on the leverage adjustment tab, the transaction reverted with `ERC20: transfer amount exceeds balance` at the top level and `Called function does not exist in the contract` inside the `ActionSwapPTV3` (Pendle) contract.
+2. **Analysis:**
+   * **Deleveraging Path:** The collateral PT tokens withdrawn from Morpho Blue were being sent to the `ETHER_GENERAL_ADAPTER_1` address. However, the subsequent Pendle Router direct call was initiated by the `Bundler3` contract itself, which was also the contract that called `approve` on the token. Since `Bundler3` did not hold the PT tokens, the token approval was invalid and the transfer failed.
+   * **Leveraging Up Path:** The flashloan USDC was received by `ETHER_GENERAL_ADAPTER_1`, but the Pendle Router swap expected to pull the USDC from `Bundler3`. Since the USDC was not transferred to `Bundler3`, the swap failed.
+3. **Resolution:**
+   * Extracted the transaction bundle builders into a new ES module: [builders.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/builders.js).
+   * Developed a new unit test suite [tests/builders.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/builders.test.mjs) verifying the correct call layout, recipients, and amounts.
+   * **Deleveraging Fix:** Configured the `morphoWithdrawCollateral` call in the deleveraging path to withdraw PT tokens directly to `MORPHO_BUNDLER_V3` so that the bundler owns the tokens it approves and swaps.
+   * **Leveraging Up Fix:** Added a step at the beginning of the callback to transfer the flashloaned USDC from the adapter to `MORPHO_BUNDLER_V3`. Updated the supply step to use `type(uint256).max` (`2n ** 256n - 1n`) for collateral supply.
+
+### Changes Applied
+* **File Created:** [builders.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/builders.js)
+  * Implemented environment-agnostic transaction bundle encoders via dependency-injected `encodeFunctionData`.
+* **File Created:** [tests/builders.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/builders.test.mjs)
+  * Asserted step counts, token transfers, approvals, and contract parameter values.
+* **File Updated:** [tests/package.json](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/package.json)
+  * Integrated builder test validation into the local test runner script.
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Imported the modular bundle builders and replaced the inline transaction encoders.
+
+### Verification Terminal Commands Run
+* Running all test suites (including math, labeling, and transaction builders):
+  ```bash
+  npm test --prefix tests
+  ```
+
+---
+
 ## 2026-06-08 - Migrated Pendle Swap API to Convert V3 & Verified PT Token Addresses
 
 ### Summary of Investigation
