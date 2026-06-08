@@ -118,3 +118,26 @@
 
 * **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
   * Set `assets = 0n` and `shares = 2n ** 256n - 1n` in the `morphoRepay` call parameters.
+
+---
+
+## 2026-06-08 - Resolved Swap Routing and Collateral Supply transferFrom Revert
+
+### Summary of Investigation
+1. **The Bug:** During wallet transaction simulation, the wallet threw a `Simulation Failed (revert: transferFrom reverted #-39000)` error.
+2. **Analysis:**
+   * The swap receiver was previously set to `MORPHO_BUNDLER_V3`.
+   * The `morphoSupplyCollateral` function is executed by `EthereumGeneralAdapter1`.
+   * For the adapter to supply the collateral, the collateral tokens must reside directly inside the adapter contract itself.
+   * If they reside in `Bundler3`, the adapter's internal balance check or pull fails.
+   * Trying to pass a hardcoded expected amount also creates a risk of failure if the actual swap output is slightly different due to slippage or price impact.
+3. **Resolution:**
+   * Updated the Pendle V3 Swap quote request to route the swapped new PT tokens directly to `ETHER_GENERAL_ADAPTER_1` (by setting the swap `receiver` to the adapter's address instead of `MORPHO_BUNDLER_V3`).
+   * Configured `morphoSupplyCollateral` to supply `assets = type(uint256).max` (`2n ** 256n - 1n`). This instructs the adapter to check its own balance dynamically (which will hold the exact amount received from the swap) and supply the entire balance to the new market.
+   * This removes the need for approval or transfer steps on the new PT token between `Bundler3` and `EthereumGeneralAdapter1`, making the transaction more gas-efficient and robust.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Set `receiver: ETHER_GENERAL_ADAPTER_1` in the Pendle API fetch payload.
+  * Removed the obsolete Approve call on the new PT token.
+  * Set `assets = 2n ** 256n - 1n` in the `morphoSupplyCollateral` call parameters.

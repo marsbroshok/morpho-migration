@@ -371,7 +371,7 @@
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              receiver: MORPHO_BUNDLER_V3,
+              receiver: ETHER_GENERAL_ADAPTER_1,
               slippage: slippage,
               inputs: [
                 {
@@ -450,27 +450,13 @@
           callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
         });
 
-        // Call E: Approve the EthereumGeneralAdapter1 to spend the new PT from the Bundler
-        const expectedNewPtAmount = BigInt(routeData.outputs[0].amount);
-        reenterBundle.push({
-          to: newPtAddress,
-          data: encodeFunctionData({
-            abi: ERC20_ABI,
-            functionName: 'approve',
-            args: [ETHER_GENERAL_ADAPTER_1, expectedNewPtAmount]
-          }),
-          value: 0n,
-          skipRevert: false,
-          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-        });
-
-        // Call F: Supply the newly acquired PT token as collateral to the new Morpho market
+        // Call F: Supply the newly acquired PT token as collateral to the new Morpho market (pulls adapter balance directly)
         reenterBundle.push({
           to: ETHER_GENERAL_ADAPTER_1,
           data: encodeFunctionData({
             abi: ADAPTER_ABI,
             functionName: 'morphoSupplyCollateral',
-            args: [newMarketParams, expectedNewPtAmount, userAddress, '0x']
+            args: [newMarketParams, 2n ** 256n - 1n, userAddress, '0x']
           }),
           value: 0n,
           skipRevert: false,
