@@ -74,3 +74,28 @@
   * Refactored transaction assembly in `initiateMigration` to construct, pack, and hash the re-entry bundle and submit it to the wallet.
 * **File Updated:** [HISTORY_LOG.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/HISTORY_LOG.md)
   * Updated documented contract addresses to align with the correct mainnet configurations.
+
+---
+
+## 2026-06-08 - Resolved Simulation Revert (Insufficient Collateral) via Self-Balancing Repayment Buffer
+
+### Summary of Investigation
+1. **The Bug:** During wallet transaction simulation, the Rabby wallet returned a `Simulation Failed (revert: insufficient collateral #-39000)` error.
+2. **Analysis:**
+   * Morpho Blue enforces collateral health factors atomically.
+   * If the debt amount requested for repayment is exactly `debtAmount`, any interest accrued block-by-block makes the user's actual debt slightly higher than `debtAmount`.
+   * When the repay action attempts to repay exactly `debtAmount`, a tiny fraction of debt remains on the old market.
+   * Consequently, when the script attempts to withdraw the *entire* old PT collateral, the transaction reverts because the remaining 0 collateral cannot support the remaining interest debt.
+3. **Resolution:**
+   * Implemented a self-balancing repayment buffer of `2 USDC` added to the flashloan amount.
+   * Configured the repayment step to repay the user's *entire* debt (`assets = type(uint256).max` in `morphoRepay`), which is capped automatically at the actual debt amount by Morpho Blue. This leaves the old market's debt at exactly 0.
+   * Configured the new borrow step to borrow the full flashloan amount (`debtAmount + buffer`) to ensure the flashloan is fully repaid at the end of the callback.
+   * Appended a final sweep action (`erc20Transfer` with `amount = type(uint256).max`) to the outer multicall bundle, executing immediately after the flashloan settlements are completed. This transfers any remaining USDC buffer cash (approximately 2 USDC minus the tiny accrued interest) directly back to the user's wallet address.
+   * This leaves the user's net position mathematically identical to a zero-slippage repayment while ensuring successful atomic execution.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Added `erc20Transfer` to `ADAPTER_ABI`.
+  * Added `bufferAmount = 2 USDC` and configured the flashloan to request `debtAmount + bufferAmount`.
+  * Updated borrowing to request `flashLoanAmount`.
+  * Appended the sweep refund `Call` struct to the outer multicall bundle.

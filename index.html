@@ -353,6 +353,10 @@
         const collateralAmount = BigInt(Math.floor(parseFloat(document.getElementById('collateralAmount').value) * 1e18));
         const slippage = parseFloat(document.getElementById('slippage').value) / 100;
 
+        // Buffer of 2 USDC to cover accrued interest during repayment. The leftover is returned to the user at the end.
+        const bufferAmount = 2n * 10n ** 6n;
+        const flashLoanAmount = debtAmount + bufferAmount;
+
         statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data from Pendle Convert API...`;
 
         // --- 2. Call Pendle Core V3 Convert API for Dynamic Swap Calldata ---
@@ -404,7 +408,7 @@
           data: encodeFunctionData({
             abi: ADAPTER_ABI,
             functionName: 'morphoRepay',
-            args: [oldMarketParams, debtAmount, 0n, 2n ** 256n - 1n, userAddress, '0x']
+            args: [oldMarketParams, 0n, 2n ** 256n - 1n, 2n ** 256n - 1n, userAddress, '0x']
           }),
           value: 0n,
           skipRevert: false,
@@ -479,7 +483,7 @@
           data: encodeFunctionData({
             abi: ADAPTER_ABI,
             functionName: 'morphoBorrow',
-            args: [newMarketParams, debtAmount, 0n, 0n, ETHER_GENERAL_ADAPTER_1]
+            args: [newMarketParams, flashLoanAmount, 0n, 0n, ETHER_GENERAL_ADAPTER_1]
           }),
           value: 0n,
           skipRevert: false,
@@ -506,18 +510,31 @@
 
         const callbackHash = keccak256(encodedReenterBundle);
 
-        // --- 5. Construct Outer Multicall Payload (Flashloan call) ---
+        // --- 5. Construct Outer Multicall Payload ---
         const outerBundle = [
+          // Action 1: Execute the flashloan and nested callback actions
           {
             to: ETHER_GENERAL_ADAPTER_1,
             data: encodeFunctionData({
               abi: ADAPTER_ABI,
               functionName: 'morphoFlashLoan',
-              args: [usdcAddress, debtAmount, encodedReenterBundle]
+              args: [usdcAddress, flashLoanAmount, encodedReenterBundle]
             }),
             value: 0n,
             skipRevert: false,
             callbackHash: callbackHash
+          },
+          // Action 2: Refund any leftover USDC buffer to the user's wallet
+          {
+            to: ETHER_GENERAL_ADAPTER_1,
+            data: encodeFunctionData({
+              abi: ADAPTER_ABI,
+              functionName: 'erc20Transfer',
+              args: [usdcAddress, userAddress, 2n ** 256n - 1n]
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
           }
         ];
 
