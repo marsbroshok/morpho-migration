@@ -408,3 +408,16 @@
    * Because the flashloan borrowed the full theoretical amount to repay Morpho Blue, but the swap received slightly less USDC, the general adapter had a USDC balance deficit at the end of the block, preventing it from repaying the flashloan.
 3. **Resolution:**
    * Aligned the deleveraging flashloan borrow and Morpho repayment amount directly with the actual quoted swap output (`expectedUsdcOutput`). This ensures the adapter's USDC balance sheet balances perfectly.
+
+---
+
+## 2026-06-08 - Automated PT Token Address Auto-Fill on Market ID Input
+
+### Summary of Investigation
+1. **The Goal:** Prevent user entry mismatches by automatically populating the corresponding PT Token Address field when a Morpho Market ID is entered or pasted.
+2. **Analysis:**
+   * Morpho Blue's GraphQL API (`fetchMarketParams`) already returns the collateral asset contract address (`collateralToken`) alongside symbols.
+3. **Resolution:**
+   * Extended `onMarketIdInput` to accept target PT address input and badge element IDs as optional arguments.
+   * On successful GraphQL lookup, populates the PT address value dynamically and triggers `onPtAddressInput` to resolve the symbol badge.
+   * Bound the HTML input fields on both the Rollover and Leverage tabs to support this automated flow.

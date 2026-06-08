@@ -634,13 +634,19 @@
       }
     };
 
-    window.onMarketIdInput = async function (inputId, labelId) {
+    window.onMarketIdInput = async function (inputId, labelId, ptInputId, ptBadgeId) {
       const marketIdVal = document.getElementById(inputId).value.trim();
       const labelEl = document.getElementById(labelId);
       if (marketIdVal.length === 66 && marketIdVal.startsWith('0x')) {
         try {
           const params = await fetchMarketParams(marketIdVal);
           labelEl.innerText = ` ${formatMarketLabel(params.collateralSymbol, params.loanSymbol)}`;
+          
+          if (ptInputId && ptBadgeId) {
+            const ptInput = document.getElementById(ptInputId);
+            ptInput.value = params.collateralToken;
+            window.onPtAddressInput(ptInputId, ptBadgeId);
+          }
         } catch (err) {
           labelEl.innerText = " (Invalid Market)";
         }
@@ -653,8 +659,10 @@
     window.addEventListener('load', () => {
       window.onPtAddressInput('oldPtAddress', 'oldPtBadge');
       window.onPtAddressInput('newPtAddress', 'newPtBadge');
-      window.onMarketIdInput('oldMarketId', 'oldMarketLabel');
-      window.onMarketIdInput('newMarketId', 'newMarketLabel');
+      window.onPtAddressInput('levPtAddress', 'levPtBadge');
+      window.onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldPtAddress', 'oldPtBadge');
+      window.onMarketIdInput('newMarketId', 'newMarketLabel', 'newPtAddress', 'newPtBadge');
+      window.onMarketIdInput('levMarketId', 'levMarketLabel', 'levPtAddress', 'levPtBadge');
     });
 
     window.initiateMigration = async function () {
@@ -1480,13 +1488,13 @@
       <div class="form-group">
         <label>Old Morpho Market ID <span id="oldMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
         <!-- UPDATED: Set default value to user provided Old Morpho ID -->
-        <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('oldMarketId', 'oldMarketLabel')">
+        <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldPtAddress', 'oldPtBadge')">
       </div>
 
       <div class="form-group">
         <label>New Morpho Market ID <span id="newMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-5NOV2026/USDC)</span></label>
         <!-- UPDATED: Set default value to user provided New Morpho ID -->
-        <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c" oninput="onMarketIdInput('newMarketId', 'newMarketLabel')">
+        <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c" oninput="onMarketIdInput('newMarketId', 'newMarketLabel', 'newPtAddress', 'newPtBadge')">
       </div>
 
       <button id="loadPositionBtn" onclick="connectAndLoadPosition()" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
@@ -1529,7 +1537,7 @@
 
       <div class="form-group">
         <label>Morpho Market ID <span id="levMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
-        <input type="text" id="levMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('levMarketId', 'levMarketLabel')">
+        <input type="text" id="levMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('levMarketId', 'levMarketLabel', 'levPtAddress', 'levPtBadge')">
       </div>
 
       <div class="form-group">
