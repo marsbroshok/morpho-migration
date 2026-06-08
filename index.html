@@ -162,13 +162,40 @@
       opacity: 0.6;
       cursor: not-allowed;
     }
+
+    /* Tabs Layout Styling */
+    .tabs-container {
+      display: flex;
+      border-bottom: 2px solid #334155;
+      margin-bottom: 24px;
+    }
+    .tab-item {
+      padding: 10px 20px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 600;
+      color: #94a3b8;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: color 0.15s ease, border-bottom-color 0.15s ease;
+    }
+    .tab-item.active {
+      color: #3b82f6;
+      border-bottom-color: #3b82f6;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
   </style>
 
   <!-- Import Viem via ESM-compatible CDN -->
   <script type="module">
     import { createWalletClient, createPublicClient, http, custom, getAddress, encodeFunctionData, encodeAbiParameters, keccak256 } from 'https://esm.sh/viem';
     import { mainnet } from 'https://esm.sh/viem/chains';
-    import { calculateCollateralValue, calculateLtv, calculateLeverage } from './math.js';
+    import { calculateCollateralValue, calculateLtv, calculateLeverage, calculateLeverageAdjustmentParams } from './math.js';
     import { formatMarketLabel } from './labels.js';
 
     // --- CONSTANTS & ABIs ---
@@ -895,6 +922,465 @@
       }
     };
 
+    // --- TAB 2: ADJUST LEVERAGE JS IMPLEMENTATION ---
+    let levDebt = 0n;
+    let levCollateral = 0n;
+
+    window.switchTab = function (tabName) {
+      document.getElementById('tabContentRollover').classList.remove('active');
+      document.getElementById('tabContentLeverage').classList.remove('active');
+      document.getElementById('tabHeaderRollover').classList.remove('active');
+      document.getElementById('tabHeaderLeverage').classList.remove('active');
+
+      document.getElementById('status').style.display = 'none';
+      document.getElementById('payloadContainer').style.display = 'none';
+
+      if (tabName === 'rollover') {
+        document.getElementById('tabContentRollover').classList.add('active');
+        document.getElementById('tabHeaderRollover').classList.add('active');
+      } else if (tabName === 'leverage') {
+        document.getElementById('tabContentLeverage').classList.add('active');
+        document.getElementById('tabHeaderLeverage').classList.add('active');
+      }
+    };
+
+    window.levConnectAndLoadPosition = async function () {
+      const loadBtn = document.getElementById('levLoadBtn');
+      const statusEl = document.getElementById('status');
+
+      statusEl.style.display = 'block';
+      statusEl.className = 'info';
+      statusEl.innerText = "Connecting to wallet...";
+      document.getElementById('payloadContainer').style.display = 'none';
+
+      if (!window.ethereum) {
+        showError("No injected wallet found. Please make sure Rabby Wallet is unlocked.");
+        return;
+      }
+
+      try {
+        const walletClient = createWalletClient({
+          chain: mainnet,
+          transport: custom(window.ethereum)
+        });
+
+        if (!publicClient) {
+          publicClient = createPublicClient({
+            chain: mainnet,
+            transport: custom(window.ethereum)
+          });
+        }
+
+        const [address] = await walletClient.requestAddresses();
+        userAddress = getAddress(address);
+        statusEl.innerText = `Connected Wallet: ${userAddress}\nLoading position data from Morpho Blue...`;
+
+        const marketId = document.getElementById('levMarketId').value.trim();
+        if (!marketId || marketId.length !== 66) {
+          throw new Error("Please enter a valid 32-byte hex Market ID.");
+        }
+
+        const [posData, marketData] = await Promise.all([
+          publicClient.readContract({
+            address: MORPHO_BLUE,
+            abi: MORPHO_BLUE_ABI,
+            functionName: 'position',
+            args: [marketId, userAddress]
+          }),
+          publicClient.readContract({
+            address: MORPHO_BLUE,
+            abi: MORPHO_BLUE_ABI,
+            functionName: 'market',
+            args: [marketId]
+          })
+        ]);
+
+        const [, borrowShares, collateral] = posData;
+        const [,, totalBorrowAssets, totalBorrowShares] = marketData;
+
+        levCollateral = collateral;
+
+        if (borrowShares > 0n && totalBorrowShares > 0n) {
+          levDebt = (borrowShares * totalBorrowAssets) / totalBorrowShares;
+        } else {
+          levDebt = 0n;
+        }
+
+        const marketParams = await fetchMarketParams(marketId);
+        const oraclePrice = await publicClient.readContract({
+          address: marketParams.oracle,
+          abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
+          functionName: 'price'
+        });
+
+        const collateralValue = calculateCollateralValue(levCollateral, oraclePrice);
+        const ltv = calculateLtv(levDebt, collateralValue);
+        const leverageVal = calculateLeverage(collateralValue, levDebt);
+
+        const formattedCollateral = (Number(levCollateral) / 1e18).toFixed(4);
+        const formattedDebt = (Number(levDebt) / 1e6).toFixed(2);
+
+        const infoEl = document.getElementById('levPositionInfo');
+        infoEl.innerHTML = `
+          <strong>Active Position Found:</strong><br>
+          Collateral: <span style="color: #38bdf8;">${formattedCollateral} PT</span><br>
+          Current Debt: <span style="color: #f43f5e;">${formattedDebt} USDC</span><br>
+          LTV & Leverage: <span style="color: #34d399;">${ltv.toFixed(2)}% (${leverageVal} Leverage)</span>
+        `;
+        infoEl.style.display = 'block';
+
+        // Display controls and calculate initial metrics
+        document.getElementById('levAdjustmentControls').style.display = 'block';
+        
+        // Match slider value to current leverage (cap at max 6.0)
+        let currentLeverageNum = 1.0;
+        if (collateralValue > levDebt && (collateralValue - levDebt) > 0n) {
+          currentLeverageNum = Number(collateralValue * 100n / (collateralValue - levDebt)) / 100;
+        }
+        document.getElementById('levSlider').value = Math.min(6.0, currentLeverageNum).toString();
+        
+        onLevSliderChange();
+        statusEl.style.display = 'none';
+        loadBtn.innerText = "Refresh Position Data";
+      } catch (err) {
+        showError(err.message || err);
+      }
+    };
+
+    window.onLevSliderChange = function () {
+      const targetLeverage = parseFloat(document.getElementById('levSlider').value);
+      document.getElementById('levTargetLeverageDisplay').innerText = `${targetLeverage.toFixed(2)}x`;
+
+      const metricsEl = document.getElementById('levTargetMetrics');
+      if (levCollateral === 0n) {
+        metricsEl.innerHTML = "<em>No active position loaded. Please connect wallet first.</em>";
+        return;
+      }
+
+      // Compute estimated changes based on current leverage level
+      const targetLtv = 1.0 - (1.0 / targetLeverage);
+      const targetLtvPct = (targetLtv * 100).toFixed(2);
+
+      // Fetch simulated action
+      let actionText = "";
+      if (targetLeverage === 1.0) {
+        actionText = `<span style="color: #f43f5e; font-weight: bold;">Action: Unleveraging.</span> Will withdraw & sell PT collateral to completely clear your <span style="color: #f43f5e;">${(Number(levDebt)/1e6).toFixed(2)} USDC</span> borrow debt. Position LTV will go to 0%.`;
+      } else {
+        const targetLtvBig = BigInt(Math.floor(targetLtv * 1e18));
+        
+        // Approximate LTV checks dynamically
+        const currentLtvBig = levCollateral > 0n ? (levDebt * 10n**18n) / ((levCollateral * 95n * 10n**22n) / 10n**36n) : 0n; // Assume approx price of 0.95
+        
+        if (targetLtvBig < currentLtvBig) {
+          actionText = `<span style="color: #38bdf8; font-weight: bold;">Action: Deleveraging.</span> Will withdraw and sell a portion of PT collateral for USDC to pay down borrow debt. Target LTV: <span style="color: #34d399;">${targetLtvPct}%</span>.`;
+        } else if (Math.abs(Number(targetLtvBig - currentLtvBig)) < 1e15) {
+          actionText = `Target leverage matches current position leverage. No action required.`;
+        } else {
+          actionText = `<span style="color: #34d399; font-weight: bold;">Action: Leveraging up.</span> Will borrow additional USDC via flashloan to buy and supply more PT collateral. Target LTV: <span style="color: #34d399;">${targetLtvPct}%</span>.`;
+        }
+      }
+
+      metricsEl.innerHTML = `
+        <strong>Simulated Target Metrics:</strong><br>
+        Target Leverage: ${targetLeverage.toFixed(2)}x (LTV: ${targetLtvPct}%)<br>
+        Liquidation Buffer: ${(86.0 - targetLtvPct).toFixed(2)}% margin to liquidation (86% LLTV)<br>
+        <div style="margin-top: 8px; border-top: 1px dashed #475569; padding-top: 8px;">
+          ${actionText}
+        </div>
+      `;
+    };
+
+    window.executeLeverageAdjustment = async function () {
+      const statusEl = document.getElementById('status');
+      statusEl.style.display = 'block';
+      statusEl.className = 'info';
+      statusEl.innerText = "Connecting to Rabby Wallet...";
+      document.getElementById('payloadContainer').style.display = 'none';
+
+      if (!window.ethereum) {
+        showError("No injected wallet found. Please make sure Rabby Wallet is unlocked.");
+        return;
+      }
+
+      try {
+        const walletClient = createWalletClient({
+          chain: mainnet,
+          transport: custom(window.ethereum)
+        });
+
+        if (!publicClient) {
+          publicClient = createPublicClient({
+            chain: mainnet,
+            transport: custom(window.ethereum)
+          });
+        }
+
+        const [address] = await walletClient.requestAddresses();
+        userAddress = getAddress(address);
+        statusEl.innerText = `Connected Wallet: ${userAddress}\nRetrieving market parameters from Morpho Blue API...`;
+
+        const marketId = document.getElementById('levMarketId').value.trim();
+        const ptAddress = getAddress(document.getElementById('levPtAddress').value.trim());
+        const usdcAddress = getAddress(document.getElementById('levUsdcAddress').value.trim());
+        const slippage = BigInt(Math.floor(parseFloat(document.getElementById('levSlippage').value) * 100)); // 1% = 100
+        const targetLeverage = parseFloat(document.getElementById('levSlider').value);
+
+        const marketParams = await fetchMarketParams(marketId);
+        const oraclePrice = await publicClient.readContract({
+          address: marketParams.oracle,
+          abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
+          functionName: 'price'
+        });
+
+        // 1. Solve parameters for adjustment
+        const swapPrice = oraclePrice; 
+        const params = calculateLeverageAdjustmentParams(levDebt, levCollateral, oraclePrice, swapPrice, targetLeverage);
+
+        let finalCalldata;
+        
+        if (params.mode === 'deleverage' || params.mode === 'deleverage-to-1x') {
+          // --- DELEVERAGING SWAP PATH: PT -> USDC ---
+          statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for deleverage swap (PT -> USDC)...`;
+          
+          const chainId = 1;
+          const pendleApiUrl = `https://api-v2.pendle.finance/core/v3/sdk/${chainId}/convert`;
+          
+          const response = await fetch(pendleApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              receiver: ETHER_GENERAL_ADAPTER_1,
+              slippage: Number(slippage) / 10000,
+              inputs: [
+                {
+                  token: ptAddress,
+                  amount: params.collateralAmount.toString()
+                }
+              ],
+              outputs: [
+                usdcAddress
+              ],
+              enableAggregator: true
+            })
+          });
+
+          if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.message || "Failed to fetch routing data from Pendle.");
+          }
+
+          const pendleRoute = await response.json();
+          const routeData = pendleRoute.routes[0];
+          const expectedUsdcOutput = BigInt(routeData.outputs[0].amount);
+          
+          statusEl.innerText = `Pendle Swap path resolved! Expected Output: ${(Number(expectedUsdcOutput)/1e6).toFixed(2)} USDC.\nGenerating atomic flashloan bundle...`;
+
+          // Setup multicall variables
+          const is1x = (params.mode === 'deleverage-to-1x');
+          const bufferAmount = 2n * 10n ** 6n; // 2 USDC buffer
+          const flashLoanAmount = is1x ? (params.debtAmount + bufferAmount) : params.debtAmount;
+          const repayAmount = is1x ? 0n : params.debtAmount;
+          const repayShares = is1x ? 2n ** 256n - 1n : 0n;
+
+          const reenterBundle = [];
+
+          // Call A: Repay the Morpho Blue debt
+          reenterBundle.push({
+            to: ETHER_GENERAL_ADAPTER_1,
+            data: encodeFunctionData({
+              abi: ADAPTER_ABI,
+              functionName: 'morphoRepay',
+              args: [marketParams, repayAmount, repayShares, 2n ** 256n - 1n, userAddress, '0x']
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          });
+
+          // Call B: Withdraw collateral PT from Morpho
+          reenterBundle.push({
+            to: ETHER_GENERAL_ADAPTER_1,
+            data: encodeFunctionData({
+              abi: ADAPTER_ABI,
+              functionName: 'morphoWithdrawCollateral',
+              args: [marketParams, params.collateralAmount, userAddress, ETHER_GENERAL_ADAPTER_1, '0x']
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          });
+
+          // Call C: Swap withdrawn PT to USDC via Pendle
+          reenterBundle.push({
+            to: ETHER_GENERAL_ADAPTER_1,
+            data: encodeFunctionData({
+              abi: ADAPTER_ABI,
+              functionName: 'swap',
+              args: [PENDLE_ROUTER, PENDLE_ROUTER, routeData.calldata, '0x']
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          });
+
+          // Wrap inside flashloan
+          const outerBundle = [
+            {
+              to: ETHER_GENERAL_ADAPTER_1,
+              data: encodeFunctionData({
+                abi: ADAPTER_ABI,
+                functionName: 'morphoFlashLoan',
+                args: [
+                  usdcAddress,
+                  flashLoanAmount,
+                  encodeFunctionData({
+                    abi: ADAPTER_ABI,
+                    functionName: 'reenter',
+                    args: [reenterBundle]
+                  })
+                ]
+              }),
+              value: 0n,
+              skipRevert: false,
+              callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+            }
+          ];
+
+          finalCalldata = encodeFunctionData({
+            abi: BUNDLER_ABI,
+            functionName: 'multicall',
+            args: [outerBundle]
+          });
+
+        } else {
+          // --- LEVERAGING UP SWAP PATH: USDC -> PT ---
+          statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for leverage-up swap (USDC -> PT)...`;
+          
+          const chainId = 1;
+          const pendleApiUrl = `https://api-v2.pendle.finance/core/v3/sdk/${chainId}/convert`;
+          
+          const response = await fetch(pendleApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              receiver: ETHER_GENERAL_ADAPTER_1,
+              slippage: Number(slippage) / 10000,
+              inputs: [
+                {
+                  token: usdcAddress,
+                  amount: params.debtAmount.toString()
+                }
+              ],
+              outputs: [
+                ptAddress
+              ],
+              enableAggregator: true
+            })
+          });
+
+          if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.message || "Failed to fetch routing data from Pendle.");
+          }
+
+          const pendleRoute = await response.json();
+          const routeData = pendleRoute.routes[0];
+          const expectedPtOutput = BigInt(routeData.outputs[0].amount);
+          
+          statusEl.innerText = `Pendle Swap path resolved! Expected Output: ${(Number(expectedPtOutput)/1e18).toFixed(4)} PT.\nGenerating atomic flashloan bundle...`;
+
+          const reenterBundle = [];
+
+          // Call A: Swap USDC to PT
+          reenterBundle.push({
+            to: ETHER_GENERAL_ADAPTER_1,
+            data: encodeFunctionData({
+              abi: ADAPTER_ABI,
+              functionName: 'swap',
+              args: [PENDLE_ROUTER, PENDLE_ROUTER, routeData.calldata, '0x']
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          });
+
+          // Call B: Supply PT collateral to Morpho Blue
+          reenterBundle.push({
+            to: ETHER_GENERAL_ADAPTER_1,
+            data: encodeFunctionData({
+              abi: ADAPTER_ABI,
+              functionName: 'morphoSupplyCollateral',
+              args: [marketParams, expectedPtOutput, userAddress, '0x']
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          });
+
+          // Call C: Borrow USDC from Morpho back to the Adapter to repay the flashloan
+          reenterBundle.push({
+            to: ETHER_GENERAL_ADAPTER_1,
+            data: encodeFunctionData({
+              abi: ADAPTER_ABI,
+              functionName: 'morphoBorrow',
+              args: [marketParams, params.debtAmount, 0n, 0n, ETHER_GENERAL_ADAPTER_1]
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          });
+
+          // Wrap inside flashloan
+          const outerBundle = [
+            {
+              to: ETHER_GENERAL_ADAPTER_1,
+              data: encodeFunctionData({
+                abi: ADAPTER_ABI,
+                functionName: 'morphoFlashLoan',
+                args: [
+                  usdcAddress,
+                  params.debtAmount,
+                  encodeFunctionData({
+                    abi: ADAPTER_ABI,
+                    functionName: 'reenter',
+                    args: [reenterBundle]
+                  })
+                ]
+              }),
+              value: 0n,
+              skipRevert: false,
+              callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+            }
+          ];
+
+          finalCalldata = encodeFunctionData({
+            abi: BUNDLER_ABI,
+            functionName: 'multicall',
+            args: [outerBundle]
+          });
+        }
+
+        // Display raw calldata
+        document.getElementById('rawCalldataTextarea').value = finalCalldata;
+        document.getElementById('payloadContainer').style.display = 'block';
+
+        statusEl.innerText += `\nCalldata compiled. Requesting transaction approval in Rabby...`;
+
+        // 6. Submit Transaction
+        const hash = await walletClient.sendTransaction({
+          account: userAddress,
+          to: MORPHO_BUNDLER_V3,
+          data: finalCalldata,
+          value: 0n
+        });
+
+        statusEl.className = 'success';
+        statusEl.innerText = `Leverage Adjustment Transaction Submitted Successfully!\n\nTx Hash: ${hash}\n\nTrack your status inside your Rabby Dashboard.`;
+      } catch (err) {
+        showError(err.message || err);
+      }
+    };
+
     function showError(msg) {
       const statusEl = document.getElementById('status');
       statusEl.className = 'error';
@@ -909,68 +1395,126 @@
     <h2>Morpho Blue PT Position Migrator</h2>
     <p style="color: #94a3b8; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">
       This page runs entirely locally and communicates directly with your browser's injected provider (such as Rabby
-      Wallet). It leverages Morpho Bundler V3 to execute a flashloan migration atomically, preventing capital lock-ups.
+      Wallet). It leverages Morpho Bundler V3 to execute atomic operations, preventing capital lock-ups.
     </p>
-    <hr style="border: 0; border-top: 1px solid #334155; margin: 20px 0;">
 
-    <!-- CONFIGURATION PARAMETERS -->
-    <div class="form-group">
-      <label>USDC Asset Contract Address</label>
-      <input type="text" id="usdcAddress" value="0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48">
+    <!-- Tab Selector Navigation -->
+    <div class="tabs-container">
+      <div id="tabHeaderRollover" class="tab-item active" onclick="switchTab('rollover')">Rollover Collateral</div>
+      <div id="tabHeaderLeverage" class="tab-item" onclick="switchTab('leverage')">Adjust Leverage</div>
     </div>
 
-    <div class="form-group">
-      <label>Old PT Token Address <span class="badge" id="oldPtBadge">PT-apyUSD-18JUN2026</span></label>
-      <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5" oninput="onPtAddressInput('oldPtAddress', 'oldPtBadge')">
-    </div>
-
-    <div class="form-group">
-      <label>New PT Token Address <span class="badge" id="newPtBadge">PT-apyUSD-5NOV2026</span></label>
-      <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150" oninput="onPtAddressInput('newPtAddress', 'newPtBadge')">
-    </div>
-
-    <div class="form-group">
-      <label>Old Morpho Market ID <span id="oldMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
-      <!-- UPDATED: Set default value to user provided Old Morpho ID -->
-      <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('oldMarketId', 'oldMarketLabel')">
-    </div>
-
-    <div class="form-group">
-      <label>New Morpho Market ID <span id="newMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-5NOV2026/USDC)</span></label>
-      <!-- UPDATED: Set default value to user provided New Morpho ID -->
-      <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c" oninput="onMarketIdInput('newMarketId', 'newMarketLabel')">
-    </div>
-
-    <button id="loadPositionBtn" onclick="connectAndLoadPosition()" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
-
-    <div id="positionInfo" class="position-info"></div>
-
-    <div id="migrationOptions" style="display: none;">
-      <label>Migration Type</label>
-      <div class="toggle-group">
-        <div id="toggleFull" class="toggle-btn active" onclick="selectMigrationType('full')">Full Migration</div>
-        <div id="togglePartial" class="toggle-btn" onclick="selectMigrationType('partial')">Partial Migration</div>
+    <!-- TAB 1: ROLLOVER COLLATERAL CONTENT -->
+    <div id="tabContentRollover" class="tab-content active">
+      <!-- CONFIGURATION PARAMETERS -->
+      <div class="form-group">
+        <label>USDC Asset Contract Address</label>
+        <input type="text" id="usdcAddress" value="0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48">
       </div>
-    </div>
 
-    <div class="form-group" style="display: flex; gap: 15px;">
-      <div style="flex: 1;">
-        <label>USDC Debt to Repay</label>
-        <!-- UPDATED: Added oninput handler for auto-calculating collateral proportionally -->
-        <input type="number" id="debtAmount" value="6195.88" step="any" oninput="onDebtInputChange()">
+      <div class="form-group">
+        <label>Old PT Token Address <span class="badge" id="oldPtBadge">PT-apyUSD-18JUN2026</span></label>
+        <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5" oninput="onPtAddressInput('oldPtAddress', 'oldPtBadge')">
       </div>
-      <div style="flex: 1;">
-        <label>PT Collateral to Migrate</label>
-        <input type="number" id="collateralAmount" value="8000.32" step="any">
-      </div>
-      <div style="flex: 0.5;">
-        <label>Slippage (%)</label>
-        <input type="number" id="slippage" value="1.0" step="0.1">
-      </div>
-    </div>
 
-    <button onclick="initiateMigration()">Simulate & Migrate Position</button>
+      <div class="form-group">
+        <label>New PT Token Address <span class="badge" id="newPtBadge">PT-apyUSD-5NOV2026</span></label>
+        <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150" oninput="onPtAddressInput('newPtAddress', 'newPtBadge')">
+      </div>
 
+      <div class="form-group">
+        <label>Old Morpho Market ID <span id="oldMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
+        <!-- UPDATED: Set default value to user provided Old Morpho ID -->
+        <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('oldMarketId', 'oldMarketLabel')">
+      </div>
+
+      <div class="form-group">
+        <label>New Morpho Market ID <span id="newMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-5NOV2026/USDC)</span></label>
+        <!-- UPDATED: Set default value to user provided New Morpho ID -->
+        <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c" oninput="onMarketIdInput('newMarketId', 'newMarketLabel')">
+      </div>
+
+      <button id="loadPositionBtn" onclick="connectAndLoadPosition()" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
+
+      <div id="positionInfo" class="position-info"></div>
+
+      <div id="migrationOptions" style="display: none;">
+        <label>Migration Type</label>
+        <div class="toggle-group">
+          <div id="toggleFull" class="toggle-btn active" onclick="selectMigrationType('full')">Full Migration</div>
+          <div id="togglePartial" class="toggle-btn" onclick="selectMigrationType('partial')">Partial Migration</div>
+        </div>
+      </div>
+
+      <div class="form-group" style="display: flex; gap: 15px;">
+        <div style="flex: 1;">
+          <label>USDC Debt to Repay</label>
+          <!-- UPDATED: Added oninput handler for auto-calculating collateral proportionally -->
+          <input type="number" id="debtAmount" value="6195.88" step="any" oninput="onDebtInputChange()">
+        </div>
+        <div style="flex: 1;">
+          <label>PT Collateral to Migrate</label>
+          <input type="number" id="collateralAmount" value="8000.32" step="any">
+        </div>
+        <div style="flex: 0.5;">
+          <label>Slippage (%)</label>
+          <input type="number" id="slippage" value="1.0" step="0.1">
+        </div>
+      </div>
+
+      <button onclick="initiateMigration()">Simulate & Migrate Position</button>
+    </div><!-- end tabContentRollover -->
+
+    <!-- TAB 2: ADJUST LEVERAGE CONTENT -->
+    <div id="tabContentLeverage" class="tab-content">
+      <div class="form-group">
+        <label>USDC Asset Contract Address</label>
+        <input type="text" id="levUsdcAddress" value="0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48">
+      </div>
+
+      <div class="form-group">
+        <label>Morpho Market ID <span id="levMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
+        <input type="text" id="levMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('levMarketId', 'levMarketLabel')">
+      </div>
+
+      <div class="form-group">
+        <label>PT Token Address <span class="badge" id="levPtBadge">PT-apyUSD-18JUN2026</span></label>
+        <input type="text" id="levPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5" oninput="onPtAddressInput('levPtAddress', 'levPtBadge')">
+      </div>
+
+      <button id="levLoadBtn" onclick="levConnectAndLoadPosition()" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
+
+      <div id="levPositionInfo" class="position-info"></div>
+
+      <!-- Leverage Selector Controls -->
+      <div id="levAdjustmentControls" style="display: none; margin-top: 20px; border-top: 1px solid #334155; padding-top: 20px;">
+        <div class="form-group">
+          <label style="display: flex; justify-content: space-between;">
+            <span>Target Leverage Level</span>
+            <span id="levTargetLeverageDisplay" style="color: #3b82f6; font-weight: 600;">3.00x</span>
+          </label>
+          <input type="range" id="levSlider" min="1.0" max="6.0" step="0.05" value="3.0" oninput="onLevSliderChange()" style="width: 100%; margin-top: 8px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; color: #64748b; margin-top: 4px;">
+            <span>1.00x (Debt-free)</span>
+            <span>3.50x</span>
+            <span>6.00x (Safe Max)</span>
+          </div>
+        </div>
+
+        <div id="levTargetMetrics" style="background-color: #1e293b; border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.5; color: #cbd5e1; margin-bottom: 20px;">
+          <!-- Real-time metrics will render here -->
+        </div>
+
+        <div class="form-group">
+          <label>Slippage (%)</label>
+          <input type="number" id="levSlippage" value="1.0" step="0.1" style="width: 120px;">
+        </div>
+
+        <button id="levExecuteBtn" onclick="executeLeverageAdjustment()" style="margin-top: 10px;">Simulate & Adjust Leverage</button>
+      </div>
+    </div><!-- end tabContentLeverage -->
+
+    <!-- SHARED FOOTER OUTPUTS (status log & payload previews) -->
     <div id="status"></div>
 
     <div id="payloadContainer" style="display: none; margin-top: 24px; padding: 16px; background: #1e293b; border-radius: 8px; border: 1px solid #334155;">
@@ -981,7 +1525,7 @@
       
       <div style="margin-bottom: 10px;">
         <strong style="color: #cbd5e1; font-size: 13px; display: block; margin-bottom: 4px;">Target Contract (To):</strong>
-        <code style="display: block; background: #0f172a; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; word-break: break-all; color: #38bdf8;">0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245</code>
+        <code style="display: block; background: #0f172a; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; word-break: break-all; color: #38bdf8;">0xbbbbbbbbbb9cced63b7b73fe30472d223547645e</code>
       </div>
       
       <div style="margin-bottom: 10px;">

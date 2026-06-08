@@ -339,3 +339,32 @@
   ```bash
   node tests/leverage_adjust.test.mjs
   ```
+
+---
+
+## 2026-06-08 - Integrated Tabbed UI and Leverage Adjustment Operations
+
+### Summary of Investigation
+1. **The Goal:** Build a tabbed interface separating "Rollover Collateral" and "Adjust Leverage" to isolate execution paths and protect existing functionality.
+2. **Analysis:**
+   * Tab 1: Rollover Collateral (fully preserved).
+   * Tab 2: Adjust Leverage (new features).
+   * Swapping token targets: PT -> USDC (deleverage) and USDC -> PT (leverage-up).
+   * Leveraging Morpho Bundler V3 multicalls for both paths.
+3. **Resolution:**
+   * Implemented CSS styles for tab selection and active containers hiding/showing.
+   * Created tab toggle handler `switchTab` resetting status previews.
+   * Defined Tab 2 page loading (`levConnectAndLoadPosition`) reading active Morpho Blue positions and resolving parameters.
+   * Defined range slider inputs capping LTV target at 6.0x leverage (83.33% LTV) safety margin.
+   * Structured deleveraging multicall (Flashloan -> Repay -> Withdraw -> Swap -> Repay Flashloan) and leveraging-up multicall (Flashloan -> Swap -> Supply -> Borrow -> Repay Flashloan).
+   * Integrated Pendle routing APIs and Rabby wallet broadcast handlers.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Restructured DOM layouts, added CSS styles, and implemented all JS orchestrators.
+
+### Verification Terminal Commands Run
+* Run all ESM test suites:
+  ```bash
+  node tests/leverage.test.mjs && node tests/leverage_adjust.test.mjs
+  ```
