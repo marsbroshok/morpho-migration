@@ -322,6 +322,7 @@
       statusEl.style.display = 'block';
       statusEl.className = 'info';
       statusEl.innerText = "Connecting to Rabby Wallet...";
+      document.getElementById('payloadContainer').style.display = 'none';
 
       if (!window.ethereum) {
         showError("No injected wallet found. Please make sure Rabby Wallet is unlocked and ready.");
@@ -531,6 +532,10 @@
           args: [outerBundle]
         });
 
+        // Display raw calldata for external simulations (Tenderly, Phalcon)
+        document.getElementById('rawCalldataTextarea').value = finalCalldata;
+        document.getElementById('payloadContainer').style.display = 'block';
+
         statusEl.innerText += `\nCalldata compiled. Requesting transaction approval in Rabby...`;
 
         // --- 6. Submit Transaction to Rabby ---
@@ -616,6 +621,27 @@
 
     <div id="status"></div>
 
+    <div id="payloadContainer" style="display: none; margin-top: 24px; padding: 16px; background: #1e293b; border-radius: 8px; border: 1px solid #334155;">
+      <h3 style="margin-top: 0; color: #f8fafc; font-size: 16px;">Raw Transaction Payload (Tenderly / Phalcon Simulator compatible)</h3>
+      <p style="color: #94a3b8; font-size: 13px; margin-bottom: 12px; line-height: 1.4;">
+        You can copy the raw parameters below and paste them into the <a href="https://dashboard.tenderly.co/tx-simulator" target="_blank" style="color: #60a5fa; text-decoration: underline;">Tenderly Transaction Simulator</a> or the <a href="https://phalcon.blocksec.com/" target="_blank" style="color: #60a5fa; text-decoration: underline;">Phalcon Simulator</a> to run an independent simulation.
+      </p>
+      
+      <div style="margin-bottom: 10px;">
+        <strong style="color: #cbd5e1; font-size: 13px; display: block; margin-bottom: 4px;">Target Contract (To):</strong>
+        <code style="display: block; background: #0f172a; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; word-break: break-all; color: #38bdf8;">0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245</code>
+      </div>
+      
+      <div style="margin-bottom: 10px;">
+        <strong style="color: #cbd5e1; font-size: 13px; display: block; margin-bottom: 4px;">Value:</strong>
+        <code style="display: block; background: #0f172a; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #e2e8f0;">0</code>
+      </div>
+      
+      <div>
+        <strong style="color: #cbd5e1; font-size: 13px; display: block; margin-bottom: 4px;">Calldata (Hex):</strong>
+        <textarea id="rawCalldataTextarea" readonly style="width: 100%; height: 100px; background: #0f172a; color: #4ade80; border: 1px solid #334155; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 11px; resize: vertical; box-sizing: border-box;"></textarea>
+      </div>
+    </div>
   </div>
 
 </body>

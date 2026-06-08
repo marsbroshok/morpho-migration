@@ -141,3 +141,24 @@
   * Set `receiver: ETHER_GENERAL_ADAPTER_1` in the Pendle API fetch payload.
   * Removed the obsolete Approve call on the new PT token.
   * Set `assets = 2n ** 256n - 1n` in the `morphoSupplyCollateral` call parameters.
+
+---
+
+## 2026-06-08 - Added Raw Calldata Output Block for External Simulations
+
+### Summary of Investigation
+1. **The Goal:** Provide the user with a method to run parallel, independent transaction simulations using external tools (Tenderly, Phalcon) to verify transaction safety.
+2. **Resolution:**
+   * Updated the frontend UI in `index.html` to output the raw, compiled transaction payload parameters (`To`, `Value`, and `Calldata` hex) directly on the screen.
+   * Users can copy this compiled hex payload and paste it directly into tools like **Tenderly Transaction Simulator** or **Phalcon by BlockSec** to examine call trees, stack traces, and net asset outputs independently of the wallet's internal simulator.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Appended the `#payloadContainer` elements to the page layout.
+  * Added logic in `initiateMigration` to display and write the compiled `finalCalldata` into the container's textarea.
+
+
+
+
+
+
