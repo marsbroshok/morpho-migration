@@ -1197,27 +1197,36 @@
             callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
           });
 
-          // Call B: Withdraw collateral PT from Morpho
+          // Call B: Withdraw collateral PT from Morpho (directly to Adapter)
           reenterBundle.push({
             to: ETHER_GENERAL_ADAPTER_1,
             data: encodeFunctionData({
               abi: ADAPTER_ABI,
               functionName: 'morphoWithdrawCollateral',
-              args: [marketParams, params.collateralAmount, userAddress, ETHER_GENERAL_ADAPTER_1, '0x']
+              args: [marketParams, params.collateralAmount, ETHER_GENERAL_ADAPTER_1]
             }),
             value: 0n,
             skipRevert: false,
             callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
           });
 
-          // Call C: Swap withdrawn PT to USDC via Pendle
+          // Call C: Approve the Pendle Swap Router to spend PT from the Adapter
           reenterBundle.push({
-            to: ETHER_GENERAL_ADAPTER_1,
+            to: ptAddress,
             data: encodeFunctionData({
-              abi: ADAPTER_ABI,
-              functionName: 'swap',
-              args: [PENDLE_ROUTER, PENDLE_ROUTER, routeData.calldata, '0x']
+              abi: ERC20_ABI,
+              functionName: 'approve',
+              args: [routeData.tx.to, params.collateralAmount]
             }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          });
+
+          // Call D: Execute Pendle Swap (PT -> USDC) via direct Router call
+          reenterBundle.push({
+            to: routeData.tx.to,
+            data: routeData.tx.data,
             value: 0n,
             skipRevert: false,
             callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
@@ -1291,14 +1300,23 @@
 
           const reenterBundle = [];
 
-          // Call A: Swap USDC to PT
+          // Call A: Approve Pendle Swap Router to spend USDC from the Adapter
           reenterBundle.push({
-            to: ETHER_GENERAL_ADAPTER_1,
+            to: usdcAddress,
             data: encodeFunctionData({
-              abi: ADAPTER_ABI,
-              functionName: 'swap',
-              args: [PENDLE_ROUTER, PENDLE_ROUTER, routeData.calldata, '0x']
+              abi: ERC20_ABI,
+              functionName: 'approve',
+              args: [routeData.tx.to, params.debtAmount]
             }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+          });
+
+          // Call B: Execute Pendle Swap (USDC -> PT) via direct Router call
+          reenterBundle.push({
+            to: routeData.tx.to,
+            data: routeData.tx.data,
             value: 0n,
             skipRevert: false,
             callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'

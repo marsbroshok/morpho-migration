@@ -368,3 +368,16 @@
   ```bash
   node tests/leverage.test.mjs && node tests/leverage_adjust.test.mjs
   ```
+
+---
+
+## 2026-06-08 - Fixed Leverage Adjustment Multicall Encoding Mismatch
+
+### Summary of Investigation
+1. **The Bug:** Clicking "Simulate & Adjust Leverage" threw an `ABI encoding params/values length mismatch` error: expected 3, given 5.
+2. **Analysis:**
+   * `morphoWithdrawCollateral` in the adapter ABI accepts exactly 3 parameters (`marketParams`, `assets`, `receiver`). The code incorrectly passed 5 arguments (including `userAddress` and callback data).
+   * The swap operation was incorrectly trying to call a non-existent `swap` function on the adapter.
+3. **Resolution:**
+   * Corrected `morphoWithdrawCollateral` to pass exactly 3 parameters (`marketParams`, `params.collateralAmount`, `ETHER_GENERAL_ADAPTER_1`).
+   * Replaced the incorrect `adapter.swap` call in both deleveraging and leveraging-up bundles with the correct Pendle Router direct call pattern (direct ERC20 approval and router call execution via `routeData.tx.to` and `routeData.tx.data`).
