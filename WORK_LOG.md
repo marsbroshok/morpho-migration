@@ -311,3 +311,31 @@
    * The `publicClient` variable was declared locally with `const` inside `connectAndLoadPosition()`, preventing it from being accessed by the outer scope or other functions.
 3. **Resolution:**
    * Declared `publicClient` globally at the top of the script (`let publicClient = null;`) and removed the `const` keyword from its assignment in `connectAndLoadPosition()`.
+
+---
+
+## 2026-06-08 - Added Leverage Level Adjustment Calculations (TDD)
+
+### Summary of Investigation
+1. **The Goal:** Define calculations to solve the exact transaction parameters for adjusting a position's leverage (leveraging up or deleveraging) on the same market.
+2. **Analysis:**
+   * Targeting $1\text{x}$ leverage means completely paying down debt using a proportion of collateral.
+   * Target leverage $L_{\text{target}}$ maps to $\text{LTV}_{\text{target}} = 1 - 1/L_{\text{target}}$.
+   * If target LTV < current LTV: We deleverage by withdrawing and selling a portion of PT collateral for USDC.
+   * If target LTV > current LTV: We leverage up by borrowing USDC to swap for PT.
+3. **Resolution:**
+   * Implemented `calculateLeverageAdjustmentParams` in `math.js` using native BigInts to handle high-precision calculations.
+   * Created a unit test suite `tests/leverage_adjust.test.mjs` verifying parameter results for deleveraging, leveraging up, unleveraging (1.0x), and safety guards (>6.0x).
+   * Verified all tests pass successfully.
+
+### Changes Applied
+* **File Updated:** [math.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/math.js)
+  * Implemented leverage adjustment math solvers.
+* **File Created:** [tests/leverage_adjust.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/leverage_adjust.test.mjs)
+  * Unit test suite for verifying calculation outputs.
+
+### Verification Terminal Commands Run
+* Run the leverage adjustment tests:
+  ```bash
+  node tests/leverage_adjust.test.mjs
+  ```
