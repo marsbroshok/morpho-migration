@@ -558,6 +558,36 @@
       const badgeEl = document.getElementById(badgeId);
       if (addressVal.length === 42 && addressVal.startsWith('0x')) {
         try {
+          // Attempt 1: Fetch via Morpho Blue GraphQL API (fast, public, no wallet needed)
+          try {
+            const query = `
+              query GetAsset($address: String!) {
+                assets(where: { address_in: [$address] }) {
+                  items { symbol }
+                }
+              }
+            `;
+            const response = await fetch('https://blue-api.morpho.org/graphql', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                query,
+                variables: { address: getAddress(addressVal) }
+              })
+            });
+            if (response.ok) {
+              const result = await response.json();
+              if (result.data && result.data.assets.items.length > 0) {
+                badgeEl.innerText = result.data.assets.items[0].symbol;
+                badgeEl.style.display = 'inline-block';
+                return;
+              }
+            }
+          } catch (gqlErr) {
+            console.warn("GraphQL symbol lookup failed, falling back to on-chain read:", gqlErr);
+          }
+
+          // Attempt 2: Fallback to on-chain read (only if GQL lookup failed or token is not on Morpho)
           const client = publicClient || (window.ethereum ? createPublicClient({ chain: mainnet, transport: custom(window.ethereum) }) : createPublicClient({ chain: mainnet, transport: http() }));
           const symbol = await client.readContract({
             address: addressVal,

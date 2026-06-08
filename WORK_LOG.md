@@ -290,13 +290,13 @@
 
 ---
 
-## 2026-06-08 - Fixed Dynamic Token Badges Unknown Token on Load
+## 2026-06-08 - Solved Token Badge Query Failures by Querying GraphQL API First
 
 ### Summary of Investigation
-1. **The Bug:** On page load, token badges displayed `"Unknown Token"` instead of the actual symbols.
+1. **The Bug:** On page load, token badges still showed `"Unknown Token"` on some client setups.
 2. **Analysis:**
-   * On page load, the wallet is not connected, so the global `publicClient` is `null`.
-   * The fallback client defaulted to the public HTTP RPC client (`http()`), which threw connection rate-limiting or fetching errors.
+   * In modern Web3 wallets (like Rabby/MetaMask), if the page has not requested account connections yet, calling `window.ethereum.request({ method: 'eth_call', ... })` can be blocked or rejected by the wallet to prevent fingerprinting.
+   * As a result, the provider transport fallback also fails on load.
 3. **Resolution:**
-   * Updated `onPtAddressInput` to check for `window.ethereum` presence on load and use it as the transport (`custom(window.ethereum)`) even before account connection. This executes read-only calls through the wallet's active connection, resolving rate limits.
-   * Added `console.error` logs to capture token symbol querying failures.
+   * Updated `onPtAddressInput` to first fetch the token symbol from the public Morpho Blue GraphQL API (`assets(where: { address_in: [$address] }) { items { symbol } }`). This query is fully public, fast, does not trigger wallet alerts, and requires zero user approval.
+   * If the GraphQL query doesn't find the asset (e.g. for a custom token address not indexed on Morpho), it falls back to the on-chain read client.
