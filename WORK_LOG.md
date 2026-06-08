@@ -421,3 +421,17 @@
    * Extended `onMarketIdInput` to accept target PT address input and badge element IDs as optional arguments.
    * On successful GraphQL lookup, populates the PT address value dynamically and triggers `onPtAddressInput` to resolve the symbol badge.
    * Bound the HTML input fields on both the Rollover and Leverage tabs to support this automated flow.
+
+---
+
+## 2026-06-08 - Fixed Morpho Bundler Address and Added Authorization Helper
+
+### Summary of Investigation
+1. **The Bug:** Live wallet simulations reverted with `ERC20: transfer amount exceeds balance` when executing rollover or leverage adjustments.
+2. **Analysis:**
+   * The DApp constant `MORPHO_BUNDLER_V3` was pointing to the local mock/test address instead of the real mainnet contract address (`0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e`).
+   * Morpho Blue requires that users explicitly authorize the Bundler contract (`setAuthorization`) to manage their positions. Without this approval, any attempt by the Bundler to withdraw collateral or repay on behalf of the user fails/reverts, triggering the ERC20 transfer balance error when the swap tries to pull non-withdrawn tokens from the adapter.
+3. **Resolution:**
+   * Configured `MORPHO_BUNDLER_V3` to point to the real mainnet address.
+   * Added on-chain authorization check (`isAuthorized`) on position fetch.
+   * Embedded an inline red warning box and "Authorize Bundler Contract" helper button when delegation is missing, allowing users to approve the Bundler in a single click.

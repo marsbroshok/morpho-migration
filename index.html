@@ -200,7 +200,7 @@
 
     // --- CONSTANTS & ABIs ---
     const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
-    const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
+    const MORPHO_BUNDLER_V3 = "0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e";
     const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
 
     // Minimal ABIs needed for ERC20 approvals and Morpho interactions
@@ -512,6 +512,23 @@
           LTV & Leverage: <span style="color: #34d399;">${ltv.toFixed(2)}% (${leverage} Leverage)</span>
         `;
         infoEl.style.display = 'block';
+
+        const isAuthorized = await publicClient.readContract({
+          address: MORPHO_BLUE,
+          abi: [{"inputs":[{"name":"","type":"address"},{"name":"","type":"address"}],"name":"isAuthorized","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"}],
+          functionName: 'isAuthorized',
+          args: [userAddress, MORPHO_BUNDLER_V3]
+        });
+
+        if (!isAuthorized) {
+          infoEl.innerHTML += `
+            <div style="margin-top: 15px; padding: 12px; background-color: #7f1d1d; border: 1px solid #b91c1c; border-radius: 8px; color: #fca5a5; font-size: 13px; text-align: left;">
+              <strong>⚠️ Morpho Bundler is not authorized:</strong><br>
+              You must authorize the Bundler contract to manage your position before simulating.<br>
+              <button onclick="authorizeBundler()" style="background-color: #b91c1c; margin-top: 8px; padding: 8px 16px; font-size: 13px; width: auto; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">Authorize Bundler Contract</button>
+            </div>
+          `;
+        }
 
         // Update form fields and enable controls
         document.getElementById('migrationOptions').style.display = 'block';
@@ -1037,6 +1054,23 @@
         `;
         infoEl.style.display = 'block';
 
+        const isAuthorized = await publicClient.readContract({
+          address: MORPHO_BLUE,
+          abi: [{"inputs":[{"name":"","type":"address"},{"name":"","type":"address"}],"name":"isAuthorized","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"}],
+          functionName: 'isAuthorized',
+          args: [userAddress, MORPHO_BUNDLER_V3]
+        });
+
+        if (!isAuthorized) {
+          infoEl.innerHTML += `
+            <div style="margin-top: 15px; padding: 12px; background-color: #7f1d1d; border: 1px solid #b91c1c; border-radius: 8px; color: #fca5a5; font-size: 13px; text-align: left;">
+              <strong>⚠️ Morpho Bundler is not authorized:</strong><br>
+              You must authorize the Bundler contract to manage your position before simulating.<br>
+              <button onclick="authorizeBundler()" style="background-color: #b91c1c; margin-top: 8px; padding: 8px 16px; font-size: 13px; width: auto; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">Authorize Bundler Contract</button>
+            </div>
+          `;
+        }
+
         // Display controls and calculate initial metrics
         document.getElementById('levAdjustmentControls').style.display = 'block';
         
@@ -1439,6 +1473,30 @@
 
         statusEl.className = 'success';
         statusEl.innerText = `Leverage Adjustment Transaction Submitted Successfully!\n\nTx Hash: ${hash}\n\nTrack your status inside your Rabby Dashboard.`;
+      } catch (err) {
+        showError(err.message || err);
+      }
+    };
+
+    window.authorizeBundler = async function () {
+      const statusEl = document.getElementById('status');
+      statusEl.style.display = 'block';
+      statusEl.className = 'info';
+      statusEl.innerText = "Requesting Bundler authorization signature in Rabby...";
+      try {
+        const walletClient = createWalletClient({
+          chain: mainnet,
+          transport: custom(window.ethereum)
+        });
+        const hash = await walletClient.writeContract({
+          address: MORPHO_BLUE,
+          abi: [{"inputs":[{"name":"handler","type":"address"},{"name":"authorized","type":"bool"}],"name":"setAuthorization","outputs":[],"stateMutability":"nonpayable","type":"function"}],
+          functionName: 'setAuthorization',
+          args: [MORPHO_BUNDLER_V3, true],
+          account: userAddress
+        });
+        statusEl.className = 'success';
+        statusEl.innerText = `Authorization Transaction Submitted Successfully!\n\nTx Hash: ${hash}\n\nPlease wait for the transaction to confirm, then refresh your position data to proceed with simulation.`;
       } catch (err) {
         showError(err.message || err);
       }
