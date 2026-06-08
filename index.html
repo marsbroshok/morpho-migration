@@ -399,6 +399,7 @@
     let liveDebt = 0n;
     let liveCollateral = 0n;
     let migrationType = 'full';
+    let publicClient = null;
 
     window.connectAndLoadPosition = async function () {
       const loadBtn = document.getElementById('loadPositionBtn');
@@ -420,7 +421,7 @@
           transport: custom(window.ethereum)
         });
 
-        const publicClient = createPublicClient({
+        publicClient = createPublicClient({
           chain: mainnet,
           transport: custom(window.ethereum)
         });

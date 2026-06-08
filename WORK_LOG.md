@@ -300,3 +300,14 @@
 3. **Resolution:**
    * Updated `onPtAddressInput` to first fetch the token symbol from the public Morpho Blue GraphQL API (`assets(where: { address_in: [$address] }) { items { symbol } }`). This query is fully public, fast, does not trigger wallet alerts, and requires zero user approval.
    * If the GraphQL query doesn't find the asset (e.g. for a custom token address not indexed on Morpho), it falls back to the on-chain read client.
+
+---
+
+## 2026-06-08 - Fixed publicClient Scope in Simulation
+
+### Summary of Investigation
+1. **The Bug:** Clicking "Simulate & Migrate Position" threw a `publicClient is not defined` error.
+2. **Analysis:**
+   * The `publicClient` variable was declared locally with `const` inside `connectAndLoadPosition()`, preventing it from being accessed by the outer scope or other functions.
+3. **Resolution:**
+   * Declared `publicClient` globally at the top of the script (`let publicClient = null;`) and removed the `const` keyword from its assignment in `connectAndLoadPosition()`.
