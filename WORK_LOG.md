@@ -225,3 +225,35 @@
    * In `index.html`, the template literal variables were mistakenly escaped with backslashes (`\${formattedCollateral}`), preventing the Javascript engine from performing string interpolation.
 3. **Resolution:**
    * Removed the backslash escape characters from the template literal strings in `index.html`.
+
+---
+
+## 2026-06-08 - Added LTV and Leverage Indicators (TDD)
+
+### Summary of Investigation
+1. **The Goal:** Provide the user with LTV and Leverage multipliers for both their active old position and their simulated target position to improve visibility.
+2. **Analysis:**
+   * Morpho Blue oracle prices are returned as a `uint256` scaled by $10^{36}$.
+   * Under collateral decimals $18$ (PT) and loan decimals $6$ (USDC), the actual USD collateral value calculation is: $\text{Collateral Value} = \text{Amount} \times \text{Price} / 10^{36}$, resulting in standard 6-decimal USDC values.
+   * LTV ratio: $\text{USDC Debt} / \text{Collateral Value} \times 100$.
+   * Leverage: $\text{Collateral Value} / (\text{Collateral Value} - \text{Debt})$.
+3. **Resolution:**
+   * Created a separate `math.js` module to hold these calculations.
+   * Developed a unit test suite `tests/leverage.test.mjs` using Node's native ESM assertions (TDD) and verified it passes successfully.
+   * Imported `math.js` inside `index.html`.
+   * Updated `connectAndLoadPosition` to fetch the old market's oracle price on-chain and display LTV & Leverage.
+   * Updated `initiateMigration` to fetch the new market's oracle price on-chain and display the simulated target LTV & Leverage on routing path resolution.
+
+### Changes Applied
+* **File Created:** [math.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/math.js)
+  * Calculation helpers with robust edge-case checks.
+* **File Created:** [tests/leverage.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/leverage.test.mjs)
+  * Unit test suite for LTV and Leverage calculations.
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Integrated math helpers, queried oracle price feeds, and rendered metrics in the UI cards.
+
+### Verification Terminal Commands Run
+* Run the calculations unit test suite:
+  ```bash
+  node tests/leverage.test.mjs
+  ```

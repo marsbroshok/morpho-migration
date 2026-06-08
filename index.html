@@ -168,6 +168,7 @@
   <script type="module">
     import { createWalletClient, createPublicClient, http, custom, getAddress, encodeFunctionData, encodeAbiParameters, keccak256 } from 'https://esm.sh/viem';
     import { mainnet } from 'https://esm.sh/viem/chains';
+    import { calculateCollateralValue, calculateLtv, calculateLeverage } from './math.js';
 
     // --- CONSTANTS & ABIs ---
     const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
@@ -457,6 +458,17 @@
           liveDebt = 0n;
         }
 
+        const oldMarketParams = await fetchMarketParams(oldMarketId);
+        const oraclePrice = await publicClient.readContract({
+          address: oldMarketParams.oracle,
+          abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
+          functionName: 'price'
+        });
+
+        const collateralValue = calculateCollateralValue(liveCollateral, oraclePrice);
+        const ltv = calculateLtv(liveDebt, collateralValue);
+        const leverage = calculateLeverage(collateralValue, liveDebt);
+
         const formattedCollateral = (Number(liveCollateral) / 1e18).toFixed(4);
         const formattedDebt = (Number(liveDebt) / 1e6).toFixed(2);
 
@@ -465,7 +477,8 @@
         infoEl.innerHTML = `
           <strong>Active Position Found:</strong><br>
           Collateral: <span style="color: #38bdf8;">${formattedCollateral} PT</span><br>
-          Current Debt: <span style="color: #f43f5e;">${formattedDebt} USDC</span>
+          Current Debt: <span style="color: #f43f5e;">${formattedDebt} USDC</span><br>
+          LTV & Leverage: <span style="color: #34d399;">${ltv.toFixed(2)}% (${leverage} Leverage)</span>
         `;
         infoEl.style.display = 'block';
 
@@ -624,7 +637,26 @@
 
         const routeData = pendleRoute.routes[0];
         const expectedOutput = (Number(routeData.outputs[0].amount) / 1e18).toFixed(4);
-        statusEl.innerText += `\nPendle Swap path resolved! Expected Output: ${expectedOutput} PT-apyUSD-5NOV2026.\nGenerating atomic flashloan bundle...`;
+
+        // Fetch new oracle price to simulate target market leverage
+        if (!publicClient) {
+          publicClient = createPublicClient({
+            chain: mainnet,
+            transport: custom(window.ethereum)
+          });
+        }
+        const newOraclePrice = await publicClient.readContract({
+          address: newMarketParams.oracle,
+          abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
+          functionName: 'price'
+        });
+
+        const expectedNewCollateral = BigInt(routeData.outputs[0].amount);
+        const newCollateralValue = calculateCollateralValue(expectedNewCollateral, newOraclePrice);
+        const newLtv = calculateLtv(borrowAmount, newCollateralValue);
+        const newLeverage = calculateLeverage(newCollateralValue, borrowAmount);
+
+        statusEl.innerText += `\nPendle Swap path resolved! Expected Output: ${expectedOutput} PT-apyUSD-5NOV2026 (Simulated LTV: ${newLtv.toFixed(2)}%, Leverage: ${newLeverage}).\nGenerating atomic flashloan bundle...`;
 
         // --- 3. Construct Morpho Bundler V3 Callback Bundle ---
         const reenterBundle = [];
