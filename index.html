@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Morpho Blue PT Position Migrator (V2)</title>
+  <style>
+    body {
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: 'Outfit', sans-serif;
+      padding: 40px;
+    }
+    .card {
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #1e293b;
+      padding: 30px;
+      border-radius: 12px;
+      border: 1px solid #334155;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      font-size: 14px;
+      color: #cbd5e1;
+      margin-bottom: 8px;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      box-sizing: border-box;
+      font-size: 14px;
+      font-family: monospace;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    button {
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      font-size: 16px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+    }
+    #status {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 8px;
+      display: none;
+      font-family: monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .info {
+      background-color: #1e3a8a;
+      color: #93c5fd;
+      border: 1px solid #1d4ed8;
+    }
+    .error {
+      background-color: #7f1d1d;
+      color: #fca5a5;
+      border: 1px solid #b91c1c;
+    }
+    .success {
+      background-color: #064e3b;
+      color: #6ee7b7;
+      border: 1px solid #047857;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 9999px;
+      background-color: #334155;
+      color: #cbd5e1;
+      margin-left: 8px;
+    }
+  </style>
+
+  <!-- Import Viem via ESM-compatible CDN -->
+  <script type="module">
+    import { createWalletClient, custom, getAddress, encodeFunctionData } from 'https://esm.sh/viem';
+    import { mainnet } from 'https://esm.sh/viem/chains';
+
+    // --- CONSTANTS & ABIs ---
+    const MORPHO_BLUE = "0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e";
+    const MORPHO_BUNDLER_V3 = "0x4095f064b8d3c3548A3BeBfD04dF03B827eE8359";
+
+    // Minimal ABIs needed for ERC20 approvals and Morpho interactions
+    const ERC20_ABI = [{ "inputs": [{ "name": "spender", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" }];
+
+    const BUNDLER_ABI = [{
+      "inputs": [
+        { "name": "actions", "type": "bytes32[]" },
+        { "name": "data", "type": "bytes[]" }
+      ],
+      "name": "multicall",
+      "outputs": [],
+      "stateMutability": "payable",
+      "type": "function"
+    }];
+
+    // Action IDs for Morpho Bundler V3 
+    const ACTIONS = {
+      FLASH_LOAN: "0x0100000000000000000000000000000000000000000000000000000000000000",
+      REPAY: "0x0200000000000000000000000000000000000000000000000000000000000000",
+      WITHDRAW: "0x0300000000000000000000000000000000000000000000000000000000000000",
+      SWAP: "0x0400000000000000000000000000000000000000000000000000000000000000",
+      SUPPLY: "0x0500000000000000000000000000000000000000000000000000000000000000",
+      BORROW: "0x0600000000000000000000000000000000000000000000000000000000000000"
+    };
+
+    window.initiateMigration = async function () {
+      const statusEl = document.getElementById('status');
+      statusEl.style.display = 'block';
+      statusEl.className = 'info';
+      statusEl.innerText = "Connecting to Rabby Wallet...";
+
+      if (!window.ethereum) {
+        showError("No injected wallet found. Please make sure Rabby Wallet is unlocked and ready.");
+        return;
+      }
+
+      try {
+        // Initialize Viem Wallet Client connected to Rabby Wallet
+        const walletClient = createWalletClient({
+          chain: mainnet,
+          transport: custom(window.ethereum)
+        });
+
+        const [userAddress] = await walletClient.requestAddresses();
+        statusEl.innerText = `Connected Wallet: ${userAddress}\nProcessing migration calculations and fetching routing data...`;
+
+        // --- 1. Gather User Inputs ---
+        const usdcAddress = getAddress(document.getElementById('usdcAddress').value);
+        const oldPtAddress = getAddress(document.getElementById('oldPtAddress').value);
+        const newPtAddress = getAddress(document.getElementById('newPtAddress').value);
+        const oldMarketId = document.getElementById('oldMarketId').value;
+        const newMarketId = document.getElementById('newMarketId').value;
+
+        // Conversions using native BigInt scaling (6 decimals for USDC, 18 decimals for PT collateral)
+        const debtAmount = BigInt(Math.floor(parseFloat(document.getElementById('debtAmount').value) * 1e6));
+        const collateralAmount = BigInt(Math.floor(parseFloat(document.getElementById('collateralAmount').value) * 1e18));
+        const slippage = parseFloat(document.getElementById('slippage').value) / 100;
+
+        // --- 2. Call Pendle Core V3 Convert API for Dynamic Swap Calldata ---
+        const chainId = 1; // Mainnet
+        const pendleApiUrl = `https://api-v2.pendle.finance/core/v3/sdk/${chainId}/convert`;
+
+        let pendleRoute;
+        try {
+          const response = await fetch(pendleApiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              receiver: MORPHO_BUNDLER_V3,
+              slippage: slippage,
+              inputs: [
+                {
+                  token: oldPtAddress,
+                  amount: collateralAmount.toString()
+                }
+              ],
+              outputs: [
+                newPtAddress
+              ],
+              enableAggregator: true
+            })
+          });
+          if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.message || "Failed to fetch routing data from Pendle Convert API.");
+          }
+          pendleRoute = await response.json();
+        } catch (err) {
+          showError(`Pendle Router Error: ${err.message}. Check token addresses or slippage bounds.`);
+          return;
+        }
+
+        const routeData = pendleRoute.routes[0];
+        const expectedOutput = (Number(routeData.outputs[0].amount) / 1e18).toFixed(4);
+        statusEl.innerText += `\nPendle Swap path resolved! Expected Output: ${expectedOutput} PT-apyUSD-5NOV2026.\nGenerating atomic flashloan bundle...constructFlashloanBundle`;
+
+        // --- 3. Construct Morpho Bundler V3 Payload ---
+        const actions = [];
+        const dataArray = [];
+
+        // Step A: Flashloan USDC from Morpho
+        actions.push(ACTIONS.FLASH_LOAN);
+        dataArray.push(encodeFlashLoanData(usdcAddress, debtAmount));
+
+        // Step B: Repay USDC debt in the old market
+        actions.push(ACTIONS.REPAY);
+        dataArray.push(encodeRepayData(oldMarketId, debtAmount, userAddress));
+
+        // Step C: Withdraw the old PT collateral to the Bundler
+        actions.push(ACTIONS.WITHDRAW);
+        dataArray.push(encodeWithdrawData(oldMarketId, collateralAmount, MORPHO_BUNDLER_V3));
+
+        // Step D: Execute Swap via Router
+        actions.push(ACTIONS.SWAP);
+        dataArray.push(encodeExternalSwapData(routeData.tx.to, routeData.tx.data, oldPtAddress, collateralAmount));
+
+        // Step E: Supply the newly acquired PT token to the new Morpho market
+        const expectedNewPtAmount = BigInt(routeData.outputs[0].amount);
+        actions.push(ACTIONS.SUPPLY);
+        dataArray.push(encodeSupplyData(newMarketId, expectedNewPtAmount, userAddress));
+
+        // Step F: Borrow USDC back out of the new market to satisfy the flashloan repayment
+        actions.push(ACTIONS.BORROW);
+        dataArray.push(encodeBorrowData(newMarketId, debtAmount, MORPHO_BUNDLER_V3));
+
+        // Master multicall encoding
+        const finalCalldata = encodeFunctionData({
+          abi: BUNDLER_ABI,
+          functionName: 'multicall',
+          args: [actions, dataArray]
+        });
+
+        statusEl.innerText += `\nCalldata compiled. Requesting transaction approval in Rabby...`;
+
+        // --- 4. Submit Transaction to Rabby ---
+        const hash = await walletClient.sendTransaction({
+          account: userAddress,
+          to: MORPHO_BUNDLER_V3,
+          data: finalCalldata,
+          value: 0n
+        });
+
+        statusEl.className = 'success';
+        statusEl.innerText = `Migration Transaction Submitted Successfully!\n\nTx Hash: ${hash}\n\nTrack your migration status inside your Rabby Dashboard.`;
+
+      } catch (error) {
+        showError(error.message || error);
+      }
+    };
+
+    function showError(msg) {
+      const statusEl = document.getElementById('status');
+      statusEl.className = 'error';
+      statusEl.innerText = `Migration Execution Blocked:\n${msg}`;
+    }
+
+    // --- ENCODING HELPER FUNCTIONS (Conforms to Morpho Bundler V3 Specs) ---
+    function encodeFlashLoanData(token, amount) {
+      return encodeFunctionData({
+        abi: [{ "type": "function", "name": "f", "inputs": [{ "type": "address" }, { "type": "uint256" }] }],
+        functionName: 'f', args: [token, amount]
+      }).replace('0x1515bc2d', '0x');
+    }
+
+    function encodeRepayData(marketId, amount, borrower) {
+      return encodeFunctionData({
+        abi: [{ "type": "function", "name": "f", "inputs": [{ "type": "bytes32" }, { "type": "uint256" }, { "type": "address" }] }],
+        functionName: 'f', args: [marketId, amount, borrower]
+      });
+    }
+
+    // --- ENCODING HELPER FUNCTIONS (Conforms to Morpho Bundler V3 Specs) ---
+    function encodeWithdrawData(marketId, amount, receiver) {
+      return encodeFunctionData({
+        abi: [{ "type": "function", "name": "f", "inputs": [{ "type": "bytes32" }, { "type": "uint256" }, { "type": "address" }] }],
+        functionName: 'f', args: [marketId, amount, receiver]
+      });
+    }
+
+    function encodeExternalSwapData(router, calldataStr, inputToken, amount) {
+      return encodeFunctionData({
+        abi: [{ "type": "function", "name": "f", "inputs": [{ "type": "address" }, { "type": "bytes" }, { "type": "address" }, { "type": "uint256" }] }],
+        functionName: 'f', args: [router, calldataStr, inputToken, amount]
+      });
+    }
+
+    function encodeSupplyData(marketId, amount, onBehalfOf) {
+      return encodeFunctionData({
+        abi: [{ "type": "function", "name": "f", "inputs": [{ "type": "bytes32" }, { "type": "uint256" }, { "type": "address" }] }],
+        functionName: 'f', args: [marketId, amount, onBehalfOf]
+      });
+    }
+
+    function encodeBorrowData(marketId, amount, receiver) {
+      return encodeFunctionData({
+        abi: [{ "type": "function", "name": "f", "inputs": [{ "type": "bytes32" }, { "type": "uint256" }, { "type": "address" }] }],
+        functionName: 'f', args: [marketId, amount, receiver]
+      });
+    }
+  </script>
+</head>
+
+<body>
+
+  <div class="card">
+    <h2>Morpho Blue PT Position Migrator</h2>
+    <p style="color: #94a3b8; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">
+      This page runs entirely locally and communicates directly with your browser's injected provider (such as Rabby Wallet). It leverages Morpho Bundler V3 to execute a flashloan migration atomically, preventing capital lock-ups.
+    </p>
+    <hr style="border: 0; border-top: 1px solid #334155; margin: 20px 0;">
+
+    <!-- CONFIGURATION PARAMETERS -->
+    <div class="form-group">
+      <label>USDC Asset Contract Address</label>
+      <input type="text" id="usdcAddress" value="0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48">
+    </div>
+
+    <div class="form-group">
+      <label>Old PT Token Address <span class="badge">PT-apyUSD-18JUN2026</span></label>
+      <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
+    </div>
+
+    <div class="form-group">
+      <label>New PT Token Address <span class="badge">PT-apyUSD-5NOV2026</span></label>
+      <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150">
+    </div>
+
+    <div class="form-group">
+      <label>Old Morpho Market ID (PT-apyUSD-18JUN2026/USDC)</label>
+      <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124">
+    </div>
+
+    <div class="form-group">
+      <label>New Morpho Market ID (PT-apyUSD-5NOV2026/USDC)</label>
+      <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c">
+    </div>
+
+    <div class="form-group" style="display: flex; gap: 15px;">
+      <div style="flex: 1;">
+        <label>USDC Debt to Repay</label>
+        <input type="number" id="debtAmount" value="6195.88" step="any">
+      </div>
+      <div style="flex: 1;">
+        <label>PT Collateral to Migrate</label>
+        <input type="number" id="collateralAmount" value="8000.32" step="any">
+      </div>
+      <div style="flex: 0.5;">
+        <label>Slippage (%)</label>
+        <input type="number" id="slippage" value="1.0" step="0.1">
+      </div>
+    </div>
+
+    <button onclick="initiateMigration()">Simulate & Migrate Position</button>
+
+    <div id="status"></div>
+  </div>
+
+</body>
+</html>
