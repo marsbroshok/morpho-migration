@@ -22,11 +22,12 @@ The transaction flow must execute the following actions within a single block:
 ### 2. Precise Position Parameters
 
 * **Network:** Ethereum Mainnet (Chain ID: 1)
-* **Morpho Blue Core Contract:** `0xBBBBBbbBBb9CCEd63b7B73fE30472d223547645E`
-* **Morpho Bundler V3 Contract:** `0x4095F064B8d3c3548A3beBFd04df03b827EE8359`
+* **Morpho Blue Core Contract:** `0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e`
+* **Morpho Bundler V3 Contract:** `0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`
+* **Ether General Adapter 1:** `0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0`
 * **USDC Stablecoin Address:** `0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48`
-* **Old Collateral (PT-apyUSD-18JUN2026):** `0x600170A2dEfA1ebE356A32791e84F17aC9eD3df6`
-* **New Collateral (PT-apyUSD-5NOV2026):** `0x8992BeF4Ecf6c21e64627CFF8f0376251b69C8b8`
+* **Old Collateral (PT-apyUSD-18JUN2026):** `0x3365554a61CeFF74A76528f9e86C1E87946d16a5`
+* **New Collateral (PT-apyUSD-5NOV2026):** `0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150`
 * **Old Morpho Market ID:** `0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124`
 * **New Morpho Market ID:** `0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c`
 * **Collateral Amount:** 8,000.32 PT

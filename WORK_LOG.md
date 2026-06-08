@@ -1,5 +1,37 @@
 # Project Work Log
 
+## 2026-06-08 - Migrated Pendle Swap API to Convert V3 & Verified PT Token Addresses
+
+### Summary of Investigation
+1. **The Bug:** The user experienced a `Failed to fetch routing data from Pendle AMM API` error on the frontend DApp.
+2. **Analysis:**
+   * Checked logs of the curl request to the legacy endpoint `https://api-v2.pendle.finance/core/v1/1/markets/swap`. The API returned a `400 Bad Request` with message `address must be a valid ethereum address`.
+   * Inspected Pendle's interactive documentation (`https://api-v2.pendle.finance/core/docs`) and discovered that the route `/core/v1/{chainId}/markets/{marketAddress}` expects a valid Ethereum address for the `{marketAddress}` path parameter. When the DApp requested `/markets/swap`, the API parsed `"swap"` as a malformed Ethereum address.
+   * Discovered that Pendle has deprecated individual `/swap` endpoints in favor of a unified **Convert API** (`POST /core/v3/sdk/{chainId}/convert`).
+3. **PT Address Verification:**
+   * Wrote a script to query `/v2/markets/all` and search for the user's Principal Token (PT) collateral addresses.
+   * Confirmed the active Pendle market contracts:
+     * **Old PT Market (maturing 18-JUN-2026):** `0x3c53fae231ad3c0408a8b6d33138bbff1caec330` for PT `0x3365554a61CeFF74A76528f9e86C1E87946d16a5`.
+     * **New PT Market (maturing 05-NOV-2026):** `0xc5f938a8ef5f3bf9e72f5aa094baf5e03f4727d3` for PT `0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150`.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Switched default token inputs to the correct active PT addresses provided by the user.
+  * Replaced the deprecated `GET /v1/markets/swap` call with a `POST` request to `/v3/sdk/{chainId}/convert`.
+  * Updated Javascript logic to build the payload using `TokenAmountDto` and retrieve routing data and transaction calldata from the `routes[0]` array in the response.
+
+### Verification Terminal Commands Run
+* To check the old endpoint response:
+  ```bash
+  curl -i -s "https://api-v2.pendle.finance/core/v1/1/markets/swap?from=0x3365554a61CeFF74A76528f9e86C1E87946d16a5&to=0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150&amountIn=8000320000000000000000&slippage=0.01&receiver=0x4095F064B8d3c3548A3beBFd04df03b827EE8359"
+  ```
+* To check the new POST Convert V3 endpoint response:
+  ```bash
+  curl -i -s -X POST -H "Content-Type: application/json" -d '{"receiver":"0x4095F064B8d3c3548A3beBFd04df03b827EE8359","slippage":0.01,"inputs":[{"token":"0x3365554a61CeFF74A76528f9e86C1E87946d16a5","amount":"8000320000000000000000"}],"outputs":["0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150"],"enableAggregator":true}' "https://api-v2.pendle.finance/core/v3/sdk/1/convert"
+  ```
+
+---
+
 ## 2026-06-08 - Fixed EIP-55 Checksum Errors
 
 ### Summary of Investigation
@@ -14,8 +46,31 @@
      ```
    * The corrected capitalizations are:
      * **MORPHO_BLUE:** `0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e` (corrected from `0xBBBBBbbBBb9CCEd63b7B73fE30472D223547645E`)
-     * **MORPHO_BUNDLER_V3:** `0x4095f064b8d3c3548A3BeBfD04dF03B827eE8359` (corrected from `0x4095F064B8d3beBFd04df03b827EE8359`)
+     * **MORPHO_BUNDLER_V3:** `0x4095f064b8d3c3548A3BeBfD04dF03B827eE8359` (corrected from `0x4095F064B8d3c3548A3beBFd04df03b827EE8359`)
 
 ### Changes Applied
 * **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
   * Replaced `MORPHO_BLUE` and `MORPHO_BUNDLER_V3` constants with their correct EIP-55 checksummed versions.
+
+---
+
+## 2026-06-08 - Migrated DApp to Morpho Bundler V3 & Dynamic Market Parameters Lookup
+
+### Summary of Investigation
+1. **The Goal:** Migrate the position rollover transaction encoding from the deprecated V2 structure to the active Morpho Bundler V3 (`0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`) and correct a malformed hardcoded bundler address.
+2. **Analysis:**
+   * Morpho Bundler V3 does not support V2-style `multicall(bytes32[] actions, bytes[] data)`. It acts as a call dispatcher executing an array of `Call` structs (`multicall(Call[] calldata bundle)`).
+   * Flashloans must be initiated via an adapter (such as `EthereumGeneralAdapter1` at `0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0`) which implements `onMorphoFlashLoan` and performs re-entry into `Bundler3` via `reenter(Call[] bundle)`.
+   * The `callbackHash` parameter for the flashloan call must be the `keccak256` of the ABI-encoded re-entry bundle.
+   * Standard Morpho Blue actions require a `MarketParams` tuple. To avoid manual or static values, we integrated dynamic parameters lookup targeting the public Morpho Blue GraphQL API (`https://blue-api.morpho.org/graphql`) using the inputs `oldMarketId` and `newMarketId`.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Set `MORPHO_BUNDLER_V3` to the correct mainnet Bundler V3 address `0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`.
+  * Added `ETHER_GENERAL_ADAPTER_1` constant for mainnet adapter `0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0`.
+  * Switched multicall ABI to use V3 `Call[]` struct format.
+  * Added `ADAPTER_ABI` for flashloan, repay, withdraw collateral, supply collateral, and borrow actions.
+  * Implemented dynamic lookup helper `fetchMarketParams` querying Morpho's public GraphQL API.
+  * Refactored transaction assembly in `initiateMigration` to construct, pack, and hash the re-entry bundle and submit it to the wallet.
+* **File Updated:** [HISTORY_LOG.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/HISTORY_LOG.md)
+  * Updated documented contract addresses to align with the correct mainnet configurations.
