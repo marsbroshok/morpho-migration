@@ -429,8 +429,9 @@
 ### Summary of Investigation
 1. **The Bug:** Live wallet simulations reverted with `ERC20: transfer amount exceeds balance` when executing rollover or leverage adjustments.
 2. **Analysis:**
-   * The DApp constant `MORPHO_BUNDLER_V3` was pointing to the local mock/test address instead of the real mainnet contract address (`0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e`).
+   * The DApp constant `MORPHO_BUNDLER_V3` was pointing to the local mock/test address instead of the real mainnet contract address.
    * Morpho Blue requires that users explicitly authorize the Bundler contract (`setAuthorization`) to manage their positions. Without this approval, any attempt by the Bundler to withdraw collateral or repay on behalf of the user fails/reverts, triggering the ERC20 transfer balance error when the swap tries to pull non-withdrawn tokens from the adapter.
+   * Verified correct mainnet contract address mappings using the [Morpho Addresses Documentation](https://docs.morpho.org/get-started/resources/addresses/#bundlers).
 3. **Resolution:**
    * Configured `MORPHO_BLUE` to point to the correct mainnet address `0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e`.
    * Configured `MORPHO_BUNDLER_V3` to point to the correct mainnet Bundler V3 address `0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`.
