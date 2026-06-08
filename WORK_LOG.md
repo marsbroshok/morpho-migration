@@ -395,3 +395,16 @@
    * Rewrote the flashloan wrapping in both deleveraging and leveraging-up builders to match the exact ABI serialization flow used in the rollover tab.
    * Registered `encodedReenterBundle` via `encodeAbiParameters` and calculated the hash via `keccak256`.
    * Appended a USDC refund sweep to the outer bundle in the deleveraging path to sweep leftovers from the buffer.
+
+---
+
+## 2026-06-08 - Fixed Deleveraging Flashloan ERC20 Transfer Balance Deficit Revert
+
+### Summary of Investigation
+1. **The Bug:** During Rabby simulation for deleveraging, the transaction failed with `revert: ERC20: transfer amount exceeds balance`.
+2. **Analysis:**
+   * In a deleveraging swap, the mathematical solver calculates a theoretical USDC debt reduction amount.
+   * However, the actual swap output USDC returned by the Pendle Convert API (`expectedUsdcOutput`) is slightly lower due to AMM price impact and swap fees.
+   * Because the flashloan borrowed the full theoretical amount to repay Morpho Blue, but the swap received slightly less USDC, the general adapter had a USDC balance deficit at the end of the block, preventing it from repaying the flashloan.
+3. **Resolution:**
+   * Aligned the deleveraging flashloan borrow and Morpho repayment amount directly with the actual quoted swap output (`expectedUsdcOutput`). This ensures the adapter's USDC balance sheet balances perfectly.

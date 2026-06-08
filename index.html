@@ -1178,8 +1178,8 @@
           // Setup multicall variables
           const is1x = (params.mode === 'deleverage-to-1x');
           const bufferAmount = 2n * 10n ** 6n; // 2 USDC buffer
-          const flashLoanAmount = is1x ? (params.debtAmount + bufferAmount) : params.debtAmount;
-          const repayAmount = is1x ? 0n : params.debtAmount;
+          const flashLoanAmount = is1x ? (params.debtAmount + bufferAmount) : expectedUsdcOutput;
+          const repayAmount = is1x ? 0n : expectedUsdcOutput;
           const repayShares = is1x ? 2n ** 256n - 1n : 0n;
 
           const reenterBundle = [];
