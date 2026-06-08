@@ -169,6 +169,7 @@
     import { createWalletClient, createPublicClient, http, custom, getAddress, encodeFunctionData, encodeAbiParameters, keccak256 } from 'https://esm.sh/viem';
     import { mainnet } from 'https://esm.sh/viem/chains';
     import { calculateCollateralValue, calculateLtv, calculateLeverage } from './math.js';
+    import { formatMarketLabel } from './labels.js';
 
     // --- CONSTANTS & ABIs ---
     const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
@@ -320,8 +321,8 @@
         query GetMarket($id: String!) {
           markets(where: { uniqueKey_in: [$id] }) {
             items {
-              loanAsset { address }
-              collateralAsset { address }
+              loanAsset { address symbol }
+              collateralAsset { address symbol }
               oracleAddress
               irmAddress
               lltv
@@ -352,6 +353,8 @@
       return {
         loanToken: getAddress(market.loanAsset.address),
         collateralToken: getAddress(market.collateralAsset.address),
+        loanSymbol: market.loanAsset.symbol,
+        collateralSymbol: market.collateralAsset.symbol,
         oracle: getAddress(market.oracleAddress),
         irm: getAddress(market.irmAddress),
         lltv: BigInt(market.lltv)
@@ -549,6 +552,51 @@
     window.onDebtInputChange = function () {
       calculateProportionalCollateral();
     };
+
+    window.onPtAddressInput = async function (inputId, badgeId) {
+      const addressVal = document.getElementById(inputId).value.trim();
+      const badgeEl = document.getElementById(badgeId);
+      if (addressVal.length === 42 && addressVal.startsWith('0x')) {
+        try {
+          const client = publicClient || createPublicClient({ chain: mainnet, transport: http() });
+          const symbol = await client.readContract({
+            address: addressVal,
+            abi: [{"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"stateMutability":"view","type":"function"}],
+            functionName: 'symbol'
+          });
+          badgeEl.innerText = symbol;
+          badgeEl.style.display = 'inline-block';
+        } catch (err) {
+          badgeEl.innerText = "Unknown Token";
+        }
+      } else {
+        badgeEl.innerText = "";
+        badgeEl.style.display = 'none';
+      }
+    };
+
+    window.onMarketIdInput = async function (inputId, labelId) {
+      const marketIdVal = document.getElementById(inputId).value.trim();
+      const labelEl = document.getElementById(labelId);
+      if (marketIdVal.length === 66 && marketIdVal.startsWith('0x')) {
+        try {
+          const params = await fetchMarketParams(marketIdVal);
+          labelEl.innerText = ` ${formatMarketLabel(params.collateralSymbol, params.loanSymbol)}`;
+        } catch (err) {
+          labelEl.innerText = " (Invalid Market)";
+        }
+      } else {
+        labelEl.innerText = "";
+      }
+    };
+
+    // Load dynamic labels on page load
+    window.addEventListener('load', () => {
+      window.onPtAddressInput('oldPtAddress', 'oldPtBadge');
+      window.onPtAddressInput('newPtAddress', 'newPtBadge');
+      window.onMarketIdInput('oldMarketId', 'oldMarketLabel');
+      window.onMarketIdInput('newMarketId', 'newMarketLabel');
+    });
 
     window.initiateMigration = async function () {
       const statusEl = document.getElementById('status');
@@ -840,25 +888,25 @@
     </div>
 
     <div class="form-group">
-      <label>Old PT Token Address <span class="badge">PT-apyUSD-18JUN2026</span></label>
-      <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
+      <label>Old PT Token Address <span class="badge" id="oldPtBadge">PT-apyUSD-18JUN2026</span></label>
+      <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5" oninput="onPtAddressInput('oldPtAddress', 'oldPtBadge')">
     </div>
 
     <div class="form-group">
-      <label>New PT Token Address <span class="badge">PT-apyUSD-5NOV2026</span></label>
-      <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150">
+      <label>New PT Token Address <span class="badge" id="newPtBadge">PT-apyUSD-5NOV2026</span></label>
+      <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150" oninput="onPtAddressInput('newPtAddress', 'newPtBadge')">
     </div>
 
     <div class="form-group">
-      <label>Old Morpho Market ID (PT-apyUSD-18JUN2026/USDC)</label>
+      <label>Old Morpho Market ID <span id="oldMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
       <!-- UPDATED: Set default value to user provided Old Morpho ID -->
-      <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124">
+      <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('oldMarketId', 'oldMarketLabel')">
     </div>
 
     <div class="form-group">
-      <label>New Morpho Market ID (PT-apyUSD-5NOV2026/USDC)</label>
+      <label>New Morpho Market ID <span id="newMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-5NOV2026/USDC)</span></label>
       <!-- UPDATED: Set default value to user provided New Morpho ID -->
-      <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c">
+      <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c" oninput="onMarketIdInput('newMarketId', 'newMarketLabel')">
     </div>
 
     <button id="loadPositionBtn" onclick="connectAndLoadPosition()" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>

@@ -257,3 +257,33 @@
   ```bash
   node tests/leverage.test.mjs
   ```
+
+---
+
+## 2026-06-08 - Made Token Badges and Market Labels Dynamic (TDD)
+
+### Summary of Investigation
+1. **The Goal:** Automatically update token symbols and market subtexts in the UI dynamically when the user edits or pastes token addresses or Market IDs.
+2. **Analysis:**
+   * Token symbols can be queried on-chain using the standard ERC20 `symbol()` signature.
+   * Market pair names (e.g. `(CollateralAsset/LoanAsset)`) can be resolved by retrieving asset symbols from Morpho Blue's GraphQL API.
+3. **Resolution:**
+   * Created a formatting module `labels.js` and verified it passes its unit tests in `tests/labels.test.mjs`.
+   * Expanded `fetchMarketParams` GraphQL query schema to fetch `symbol` fields for collateral and loan assets.
+   * Defined `onPtAddressInput` to fetch token symbols on-chain and update HTML badges.
+   * Defined `onMarketIdInput` to fetch market params and format subtext labels dynamically.
+   * Bound inputs to these event listeners and registered a `load` handler to resolve symbols dynamically for the default fields on page load.
+
+### Changes Applied
+* **File Created:** [labels.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/labels.js)
+  * Symbol formatting helpers.
+* **File Created:** [tests/labels.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/labels.test.mjs)
+  * Unit test suite for label format verification.
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Added dynamic listeners, bound inputs, and updated GraphQL parameter fetch structure.
+
+### Verification Terminal Commands Run
+* Run the labels unit test suite:
+  ```bash
+  node tests/labels.test.mjs
+  ```
