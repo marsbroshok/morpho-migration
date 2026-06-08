@@ -433,6 +433,6 @@
    * Morpho Blue requires that users explicitly authorize the Bundler contract (`setAuthorization`) to manage their positions. Without this approval, any attempt by the Bundler to withdraw collateral or repay on behalf of the user fails/reverts, triggering the ERC20 transfer balance error when the swap tries to pull non-withdrawn tokens from the adapter.
 3. **Resolution:**
    * Configured `MORPHO_BLUE` to point to the correct mainnet address `0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e`.
-   * Configured `MORPHO_BUNDLER_V3` to point to the correct mainnet address `0x4095f064b8d3c3548A3BeBfD04dF03B827eE8359`.
+   * Configured `MORPHO_BUNDLER_V3` to point to the correct mainnet Bundler V3 address `0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`.
    * Added on-chain authorization check (`isAuthorized`) on position fetch comparing user status against `MORPHO_BUNDLER_V3`.
    * Embedded an inline red warning box and "Authorize Bundler Contract" helper button when delegation is missing, allowing users to approve the Bundler in a single click.
