@@ -396,12 +396,6 @@
     let liveCollateral = 0n;
     let migrationType = 'full';
 
-    // Initialize Viem Public Client
-    const publicClient = createPublicClient({
-      chain: mainnet,
-      transport: http()
-    });
-
     window.connectAndLoadPosition = async function () {
       const loadBtn = document.getElementById('loadPositionBtn');
       const statusEl = document.getElementById('status');
@@ -418,6 +412,11 @@
 
       try {
         const walletClient = createWalletClient({
+          chain: mainnet,
+          transport: custom(window.ethereum)
+        });
+
+        const publicClient = createPublicClient({
           chain: mainnet,
           transport: custom(window.ethereum)
         });

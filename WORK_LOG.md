@@ -180,3 +180,20 @@
   * Added position toggling/loading elements and CSS styles.
   * Defined `MORPHO_BLUE_ABI` and implemented `connectAndLoadPosition` and proportional calculation handlers.
   * Refactored `initiateMigration` to dynamically compile and execute the unified multicall payload.
+
+---
+
+## 2026-06-08 - Solved RPC Connection Failure in Position Queries
+
+### Summary of Investigation
+1. **The Bug:** When clicking "Connect Wallet & Fetch Live Position", the page threw an `HTTP request failed. URL: https://eth.merkle.io/ Details: Failed to fetch` error.
+2. **Analysis:**
+   * Viem's default public RPC endpoint (`https://eth.merkle.io/`) can be rate-limited, unstable, or block queries initiated from local origins like `http://localhost:8080`.
+3. **Resolution:**
+   * Updated `publicClient` to instantiate using `custom(window.ethereum)` inside the connection function.
+   * This forces all read-only calls (like `eth_call` for `position` and `market` reads) to route directly through the user's active wallet connection (e.g. Rabby), bypassing external public HTTP constraints.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Removed global public RPC client instantiator.
+  * Initialized `publicClient` with `custom(window.ethereum)` inside the `connectAndLoadPosition` function.
