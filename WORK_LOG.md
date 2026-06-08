@@ -287,3 +287,16 @@
   ```bash
   node tests/labels.test.mjs
   ```
+
+---
+
+## 2026-06-08 - Fixed Dynamic Token Badges Unknown Token on Load
+
+### Summary of Investigation
+1. **The Bug:** On page load, token badges displayed `"Unknown Token"` instead of the actual symbols.
+2. **Analysis:**
+   * On page load, the wallet is not connected, so the global `publicClient` is `null`.
+   * The fallback client defaulted to the public HTTP RPC client (`http()`), which threw connection rate-limiting or fetching errors.
+3. **Resolution:**
+   * Updated `onPtAddressInput` to check for `window.ethereum` presence on load and use it as the transport (`custom(window.ethereum)`) even before account connection. This executes read-only calls through the wallet's active connection, resolving rate limits.
+   * Added `console.error` logs to capture token symbol querying failures.

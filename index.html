@@ -558,7 +558,7 @@
       const badgeEl = document.getElementById(badgeId);
       if (addressVal.length === 42 && addressVal.startsWith('0x')) {
         try {
-          const client = publicClient || createPublicClient({ chain: mainnet, transport: http() });
+          const client = publicClient || (window.ethereum ? createPublicClient({ chain: mainnet, transport: custom(window.ethereum) }) : createPublicClient({ chain: mainnet, transport: http() }));
           const symbol = await client.readContract({
             address: addressVal,
             abi: [{"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"stateMutability":"view","type":"function"}],
@@ -567,6 +567,7 @@
           badgeEl.innerText = symbol;
           badgeEl.style.display = 'inline-block';
         } catch (err) {
+          console.error("onPtAddressInput error for address", addressVal, err);
           badgeEl.innerText = "Unknown Token";
         }
       } else {
