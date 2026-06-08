@@ -157,8 +157,26 @@
   * Appended the `#payloadContainer` elements to the page layout.
   * Added logic in `initiateMigration` to display and write the compiled `finalCalldata` into the container's textarea.
 
+---
 
+## 2026-06-08 - Added Full & Partial Migration Options with Live On-Chain Queries
 
+### Summary of Investigation
+1. **The Goal:** Support both full position rollovers and partial position splits (migrating only a specific sum $X$ of debt).
+2. **Analysis:**
+   * Full migration requires repay-by-shares (repaying 100% of outstanding debt and retrieving 100% of old collateral) and utilizes a 2 USDC buffer.
+   * Partial migration requires repay-by-assets (repaying exactly $X$ USDC of debt and withdrawing a proportional amount of collateral). It does not require a repayment buffer.
+   * Dynamic on-chain queries are needed to display active position status and compute correct proportional collateral amounts to keep the remaining position healthy.
+3. **Resolution:**
+   * Initialized a Viem `publicClient` to read the user's active position debt and collateral directly from the Morpho Blue contract.
+   * Added toggle switches in the UI to select "Full Migration" vs "Partial Migration".
+   * For Full Migration, the input fields are locked to the retrieved live position quantities.
+   * For Partial Migration, the debt input is enabled, and a listener calculates and updates the collateral input proportionally: $C_{withdrawn} = Collateral_{total} \times X / Debt_{total}$.
+   * Unified the transaction builder logic (DRY/KISS) to map bundle parameters dynamically based on the active mode (e.g. mapping repayment to assets vs shares, adding/removing buffer, and conditionally appending the sweep refund).
 
-
-
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Imported `createPublicClient` and `http` from Viem.
+  * Added position toggling/loading elements and CSS styles.
+  * Defined `MORPHO_BLUE_ABI` and implemented `connectAndLoadPosition` and proportional calculation handlers.
+  * Refactored `initiateMigration` to dynamically compile and execute the unified multicall payload.

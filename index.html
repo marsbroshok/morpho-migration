@@ -122,11 +122,51 @@
       color: #cbd5e1;
       margin-left: 8px;
     }
+    .position-info {
+      background-color: #1e293b;
+      border: 1px dashed #475569;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      line-height: 1.5;
+      display: none;
+    }
+    .toggle-group {
+      display: flex;
+      background: #0f172a;
+      padding: 4px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      border: 1px solid #334155;
+    }
+    .toggle-btn {
+      flex: 1;
+      text-align: center;
+      padding: 8px 12px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #94a3b8;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .toggle-btn:hover {
+      color: #f8fafc;
+    }
+    .toggle-btn.active {
+      background: #2563eb;
+      color: white;
+    }
+    input:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
   </style>
 
   <!-- Import Viem via ESM-compatible CDN -->
   <script type="module">
-    import { createWalletClient, custom, getAddress, encodeFunctionData, encodeAbiParameters, keccak256 } from 'https://esm.sh/viem';
+    import { createWalletClient, createPublicClient, http, custom, getAddress, encodeFunctionData, encodeAbiParameters, keccak256 } from 'https://esm.sh/viem';
     import { mainnet } from 'https://esm.sh/viem/chains';
 
     // --- CONSTANTS & ABIs ---
@@ -317,6 +357,187 @@
       };
     }
 
+    // --- MORPHO BLUE ABI FOR POSITION & MARKET STATE QUERIES ---
+    const MORPHO_BLUE_ABI = [
+      {
+        "inputs": [
+          { "name": "id", "type": "bytes32" },
+          { "name": "user", "type": "address" }
+        ],
+        "name": "position",
+        "outputs": [
+          { "name": "supplyShares", "type": "uint256" },
+          { "name": "borrowShares", "type": "uint128" },
+          { "name": "collateral", "type": "uint128" }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+      },
+      {
+        "inputs": [
+          { "name": "id", "type": "bytes32" }
+        ],
+        "name": "market",
+        "outputs": [
+          { "name": "totalSupplyAssets", "type": "uint128" },
+          { "name": "totalSupplyShares", "type": "uint128" },
+          { "name": "totalBorrowAssets", "type": "uint128" },
+          { "name": "totalBorrowShares", "type": "uint128" },
+          { "name": "lastUpdate", "type": "uint128" },
+          { "name": "fee", "type": "uint128" }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+      }
+    ];
+
+    let userAddress = null;
+    let liveDebt = 0n;
+    let liveCollateral = 0n;
+    let migrationType = 'full';
+
+    // Initialize Viem Public Client
+    const publicClient = createPublicClient({
+      chain: mainnet,
+      transport: http()
+    });
+
+    window.connectAndLoadPosition = async function () {
+      const loadBtn = document.getElementById('loadPositionBtn');
+      const statusEl = document.getElementById('status');
+      
+      statusEl.style.display = 'block';
+      statusEl.className = 'info';
+      statusEl.innerText = "Connecting to wallet...";
+      document.getElementById('payloadContainer').style.display = 'none';
+
+      if (!window.ethereum) {
+        showError("No injected wallet found. Please make sure Rabby Wallet is unlocked.");
+        return;
+      }
+
+      try {
+        const walletClient = createWalletClient({
+          chain: mainnet,
+          transport: custom(window.ethereum)
+        });
+
+        const [address] = await walletClient.requestAddresses();
+        userAddress = getAddress(address);
+        statusEl.innerText = `Connected Wallet: ${userAddress}\nLoading position data from Morpho Blue...`;
+
+        const oldMarketId = document.getElementById('oldMarketId').value.trim();
+        if (!oldMarketId || oldMarketId.length !== 66) {
+          throw new Error("Please enter a valid 32-byte hex Market ID (66 characters).");
+        }
+
+        // Query Morpho Blue position and market state in parallel
+        const [posData, marketData] = await Promise.all([
+          publicClient.readContract({
+            address: MORPHO_BLUE,
+            abi: MORPHO_BLUE_ABI,
+            functionName: 'position',
+            args: [oldMarketId, userAddress]
+          }),
+          publicClient.readContract({
+            address: MORPHO_BLUE,
+            abi: MORPHO_BLUE_ABI,
+            functionName: 'market',
+            args: [oldMarketId]
+          })
+        ]);
+
+        const [, borrowShares, collateral] = posData;
+        const [,, totalBorrowAssets, totalBorrowShares] = marketData;
+
+        liveCollateral = collateral;
+
+        if (borrowShares > 0n && totalBorrowShares > 0n) {
+          liveDebt = (borrowShares * totalBorrowAssets) / totalBorrowShares;
+        } else {
+          liveDebt = 0n;
+        }
+
+        const formattedCollateral = (Number(liveCollateral) / 1e18).toFixed(4);
+        const formattedDebt = (Number(liveDebt) / 1e6).toFixed(2);
+
+        // Display position info
+        const infoEl = document.getElementById('positionInfo');
+        infoEl.innerHTML = `
+          <strong>Active Position Found:</strong><br>
+          Collateral: <span style="color: #38bdf8;">\${formattedCollateral} PT</span><br>
+          Current Debt: <span style="color: #f43f5e;">\${formattedDebt} USDC</span>
+        `;
+        infoEl.style.display = 'block';
+
+        // Update form fields and enable controls
+        document.getElementById('migrationOptions').style.display = 'block';
+        
+        // Default to Full Migration
+        selectMigrationType('full');
+
+        statusEl.style.display = 'none';
+        loadBtn.innerText = "Refresh Position Data";
+      } catch (err) {
+        showError(err.message || err);
+      }
+    };
+
+    window.selectMigrationType = function (type) {
+      migrationType = type;
+      const debtInput = document.getElementById('debtAmount');
+      const collateralInput = document.getElementById('collateralAmount');
+      const toggleFull = document.getElementById('toggleFull');
+      const togglePartial = document.getElementById('togglePartial');
+
+      if (type === 'full') {
+        toggleFull.className = 'toggle-btn active';
+        togglePartial.className = 'toggle-btn';
+        
+        debtInput.value = (Number(liveDebt) / 1e6).toFixed(2);
+        collateralInput.value = (Number(liveCollateral) / 1e18).toFixed(4);
+        
+        debtInput.disabled = true;
+        collateralInput.disabled = true;
+      } else {
+        toggleFull.className = 'toggle-btn';
+        togglePartial.className = 'toggle-btn active';
+        
+        debtInput.disabled = false;
+        // Pre-fill with half of the position for convenience
+        debtInput.value = (Number(liveDebt / 2n) / 1e6).toFixed(2);
+        calculateProportionalCollateral();
+        
+        // Collateral is auto-calculated proportionally to keep it healthy
+        collateralInput.disabled = true;
+      }
+    };
+
+    function calculateProportionalCollateral() {
+      const debtInputVal = parseFloat(document.getElementById('debtAmount').value);
+      if (isNaN(debtInputVal) || debtInputVal <= 0 || liveDebt === 0n) {
+        document.getElementById('collateralAmount').value = "0.0000";
+        return;
+      }
+      
+      const debtInputBig = BigInt(Math.floor(debtInputVal * 1e6));
+      if (debtInputBig > liveDebt) {
+        // Cap it at live position maximum
+        document.getElementById('debtAmount').value = (Number(liveDebt) / 1e6).toFixed(2);
+        document.getElementById('collateralAmount').value = (Number(liveCollateral) / 1e18).toFixed(4);
+        return;
+      }
+
+      // Proportional collateral: C_withdrawn = Collateral_total * X / Debt_total
+      const collateralWithdrawnBig = (liveCollateral * debtInputBig) / liveDebt;
+      document.getElementById('collateralAmount').value = (Number(collateralWithdrawnBig) / 1e18).toFixed(4);
+    }
+
+    // Attach listener for debt input changes under partial mode
+    window.onDebtInputChange = function () {
+      calculateProportionalCollateral();
+    };
+
     window.initiateMigration = async function () {
       const statusEl = document.getElementById('status');
       statusEl.style.display = 'block';
@@ -354,9 +575,15 @@
         const collateralAmount = BigInt(Math.floor(parseFloat(document.getElementById('collateralAmount').value) * 1e18));
         const slippage = parseFloat(document.getElementById('slippage').value) / 100;
 
-        // Buffer of 2 USDC to cover accrued interest during repayment. The leftover is returned to the user at the end.
-        const bufferAmount = 2n * 10n ** 6n;
-        const flashLoanAmount = debtAmount + bufferAmount;
+        const isFull = (migrationType === 'full');
+
+        // Dynamic parameters mapping (DRY & KISS)
+        const bufferAmount = 2n * 10n ** 6n; // 2 USDC interest buffer
+        const flashLoanAmount = isFull ? (debtAmount + bufferAmount) : debtAmount;
+        const repayAmount = isFull ? 0n : debtAmount;
+        const repayShares = isFull ? 2n ** 256n - 1n : 0n;
+        const supplyAmount = 2n ** 256n - 1n; // Always supply entire swapped balance
+        const borrowAmount = flashLoanAmount;
 
         statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data from Pendle Convert API...`;
 
@@ -403,13 +630,13 @@
         // --- 3. Construct Morpho Bundler V3 Callback Bundle ---
         const reenterBundle = [];
 
-        // Call A: Repay the user's ENTIRE debt in the old market (caps automatically at actual debt, utilizing the adapter balance)
+        // Call A: Repay the old market debt (full by shares, or partial by assets)
         reenterBundle.push({
           to: ETHER_GENERAL_ADAPTER_1,
           data: encodeFunctionData({
             abi: ADAPTER_ABI,
             functionName: 'morphoRepay',
-            args: [oldMarketParams, 0n, 2n ** 256n - 1n, 2n ** 256n - 1n, userAddress, '0x']
+            args: [oldMarketParams, repayAmount, repayShares, 2n ** 256n - 1n, userAddress, '0x']
           }),
           value: 0n,
           skipRevert: false,
@@ -457,7 +684,7 @@
           data: encodeFunctionData({
             abi: ADAPTER_ABI,
             functionName: 'morphoSupplyCollateral',
-            args: [newMarketParams, 2n ** 256n - 1n, userAddress, '0x']
+            args: [newMarketParams, supplyAmount, userAddress, '0x']
           }),
           value: 0n,
           skipRevert: false,
@@ -470,7 +697,7 @@
           data: encodeFunctionData({
             abi: ADAPTER_ABI,
             functionName: 'morphoBorrow',
-            args: [newMarketParams, flashLoanAmount, 0n, 0n, ETHER_GENERAL_ADAPTER_1]
+            args: [newMarketParams, borrowAmount, 0n, 0n, ETHER_GENERAL_ADAPTER_1]
           }),
           value: 0n,
           skipRevert: false,
@@ -510,9 +737,12 @@
             value: 0n,
             skipRevert: false,
             callbackHash: callbackHash
-          },
-          // Action 2: Refund any leftover USDC buffer to the user's wallet
-          {
+          }
+        ];
+
+        // Action 2: Refund any leftover USDC buffer to the user's wallet (only in Full mode where buffer is used)
+        if (isFull) {
+          outerBundle.push({
             to: ETHER_GENERAL_ADAPTER_1,
             data: encodeFunctionData({
               abi: ADAPTER_ABI,
@@ -522,8 +752,8 @@
             value: 0n,
             skipRevert: false,
             callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-          }
-        ];
+          });
+        }
 
         // Master multicall encoding
         const finalCalldata = encodeFunctionData({
@@ -600,15 +830,26 @@
       <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c">
     </div>
 
+    <button id="loadPositionBtn" onclick="connectAndLoadPosition()" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
+
+    <div id="positionInfo" class="position-info"></div>
+
+    <div id="migrationOptions" style="display: none;">
+      <label>Migration Type</label>
+      <div class="toggle-group">
+        <div id="toggleFull" class="toggle-btn active" onclick="selectMigrationType('full')">Full Migration</div>
+        <div id="togglePartial" class="toggle-btn" onclick="selectMigrationType('partial')">Partial Migration</div>
+      </div>
+    </div>
+
     <div class="form-group" style="display: flex; gap: 15px;">
       <div style="flex: 1;">
         <label>USDC Debt to Repay</label>
-        <!-- UPDATED: Updated default value to user's exact USDC debt (6195.88) -->
-        <input type="number" id="debtAmount" value="6195.88" step="any">
+        <!-- UPDATED: Added oninput handler for auto-calculating collateral proportionally -->
+        <input type="number" id="debtAmount" value="6195.88" step="any" oninput="onDebtInputChange()">
       </div>
       <div style="flex: 1;">
         <label>PT Collateral to Migrate</label>
-        <!-- UPDATED: Updated default value to user's exact collateral amount (8000.32) -->
         <input type="number" id="collateralAmount" value="8000.32" step="any">
       </div>
       <div style="flex: 0.5;">
