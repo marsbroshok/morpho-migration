@@ -99,3 +99,22 @@
   * Added `bufferAmount = 2 USDC` and configured the flashloan to request `debtAmount + bufferAmount`.
   * Updated borrowing to request `flashLoanAmount`.
   * Appended the sweep refund `Call` struct to the outer multicall bundle.
+
+---
+
+## 2026-06-08 - Fixed Arithmetic Underflow Panic (0x11) in Repayment Step
+
+### Summary of Investigation
+1. **The Bug:** During simulation of the updated buffer transaction flow, the wallet threw a `Simulation Failed (panic: arithmetic underflow or overflow (0x11) #-39000)` error.
+2. **Analysis:**
+   * In Morpho Blue, repayment can be executed by assets or by shares.
+   * Capping by assets causes the contract to calculate shares to burn. If the assets provided exceed the user's actual debt assets (due to the added buffer), the calculated shares to burn exceed the user's actual borrow shares.
+   * This triggers an arithmetic underflow (`borrowShares -= shares` goes below zero) resulting in the Solidity `0x11` panic code.
+3. **Resolution:**
+   * Switched the repayment mode to full repayment by shares.
+   * Configured the repayment parameters to set `assets = 0` and `shares = type(uint256).max` (`2n ** 256n - 1n`).
+   * This instructs Morpho Blue to look up your actual borrow shares, burn exactly those shares, calculate the precise corresponding USDC debt assets dynamically, and pull only that amount from the adapter.
+   * This resolves the underflow panic and correctly clears the entire debt position.
+
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Set `assets = 0n` and `shares = 2n ** 256n - 1n` in the `morphoRepay` call parameters.
