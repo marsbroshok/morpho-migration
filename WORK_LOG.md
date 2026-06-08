@@ -197,3 +197,20 @@
 * **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
   * Removed global public RPC client instantiator.
   * Initialized `publicClient` with `custom(window.ethereum)` inside the `connectAndLoadPosition` function.
+
+---
+
+## 2026-06-08 - Corrected Mainnet Morpho Blue Address
+
+### Summary of Investigation
+1. **The Bug:** Querying position data returned no data (`0x`), indicating the contract address was invalid or did not host the requested bytecode.
+2. **Analysis:**
+   * Checked the mainnet Morpho Blue deployment registry.
+   * The actual mainnet address is `0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb`.
+   * The constant in the code had been hardcoded to `0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e`, which was a transcription error from the original setup.
+3. **Resolution:**
+   * Corrected the `MORPHO_BLUE` address constant to `0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb`.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Updated `MORPHO_BLUE` constant.
