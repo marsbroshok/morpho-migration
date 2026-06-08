@@ -214,3 +214,14 @@
 ### Changes Applied
 * **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
   * Updated `MORPHO_BLUE` constant.
+
+---
+
+## 2026-06-08 - Fixed Template Literal Interpolation Escaping
+
+### Summary of Investigation
+1. **The Bug:** The position status box rendered literally `${formattedCollateral} PT` and `${formattedDebt} USDC` on-screen instead of their numeric values.
+2. **Analysis:**
+   * In `index.html`, the template literal variables were mistakenly escaped with backslashes (`\${formattedCollateral}`), preventing the Javascript engine from performing string interpolation.
+3. **Resolution:**
+   * Removed the backslash escape characters from the template literal strings in `index.html`.
