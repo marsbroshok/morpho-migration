@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node leverage.test.mjs && node leverage_adjust.test.mjs && node builders.test.mjs && node integration.test.mjs"
+    "test": "node leverage.test.mjs && node leverage_adjust.test.mjs && node builders.test.mjs && node integration.test.mjs && node app.test.mjs"
   },
   "keywords": [],
   "author": "",
@@ -12,5 +12,8 @@
   "type": "commonjs",
   "dependencies": {
     "viem": "^2.52.2"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
   }
 }

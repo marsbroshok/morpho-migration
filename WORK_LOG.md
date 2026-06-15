@@ -664,3 +664,37 @@
   ```bash
   npm test --prefix tests
   ```
+
+---
+
+## 2026-06-15 - Extracted app.js and Implemented JSDOM Integration Tests
+
+### Summary of Investigation
+1. **The Goal:** Follow industry best practices to move JavaScript logic out of HTML tags into a dedicated module, enabling automated JSDOM-based testing of frontend compilation and bindings in Node.js.
+2. **Analysis:**
+   - Single-file HTML/JS scripting makes testing frontend code difficult.
+   - Using JSDOM allows running browser-scoped code in Node.js by mocking DOM interfaces.
+   - Rewriting ES module CDN urls (`esm.sh/viem`) to local packages (`viem`) during preprocessing allows testing scripts offline.
+3. **Resolution:**
+   - Extracted script logic from [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html) into a standalone [app.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/app.js) module.
+   - Installed `jsdom` in the `tests/` directory.
+   - Created [tests/app.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/app.test.mjs) which loads [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html) into a JSDOM context, mocks standard Web3 objects (`window.ethereum`), intercepts HTTP requests, and imports the remapped script dynamically.
+   - Configured `npm test` pipeline in [tests/package.json](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/package.json) to execute JSDOM tests.
+
+### Changes Applied
+* **File Created:** [app.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/app.js)
+  - Standalone module logic containing all frontend interactions and bindings.
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  - References `app.js` and loads it as a module.
+* **File Created:** [tests/app.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/app.test.mjs)
+  - Simulates the DOM environment and verifies script loading, exports, and click listener bindings.
+* **File Updated:** [tests/package.json](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/package.json)
+  - Registered `jsdom` dependency and updated the test running suite.
+* **File Updated:** [DEVELOPMENT_RULE.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/DEVELOPMENT_RULE.md)
+  - Updated architectural separation guidelines and JSDOM constraints.
+
+### Verification Terminal Commands Run
+* Run the entire unit and integration test suite:
+  ```bash
+  npm test --prefix tests
+  ```

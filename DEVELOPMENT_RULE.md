@@ -10,14 +10,14 @@ Ensure all frontend scripts compile, import, and execute without runtime errors,
 - Stale browser caching of imported ES module dependencies (like `builders.js`, `math.js`) can lead to missing exports, syntax errors, and unresolved references.
 
 ## Constraints
-1. **No Inline HTML Event Listeners**: All DOM event handlers (e.g., button clicks, tab selections) must be bound programmatically using `addEventListener()` within the `<script type="module">` block, avoiding global `window` object pollution and preventing `ReferenceError`.
-2. **Visual Error Boundary**: A global error listener must capture and display all uncaught exceptions, syntax/import errors, and unhandled promise rejections in a prominent UI banner at the top of the viewport.
-3. **No Placeholders / Clean Imports**: Every imported JS module must export its components explicitly, and `index.html` must import them correctly without spelling or syntax mismatches.
+1. **Architectural Separation**: All JavaScript logic must reside in `app.js`. No inline scripts are allowed in `index.html` except for the global error boundary hook.
+2. **No Inline HTML Event Listeners**: All DOM event handlers (e.g., button clicks, tab selections, input fields) must be bound programmatically using `addEventListener()` inside the `app.js` module.
+3. **Visual Error Boundary**: A global error listener must capture and display all uncaught exceptions, syntax/import errors, and unhandled promise rejections in a prominent UI banner at the top of the viewport in `index.html`.
+4. **Automated Sanity Testing**: A JSDOM-based integration test (`tests/app.test.mjs`) must verify script loading, relative import path resolution, DOM queries, and event listener attachments without requiring a real browser.
 
 ## Done-when
 1. A `<script>` block is placed at the top of `<head>` in `index.html` to register global `'error'` and `'unhandledrejection'` event listeners.
 2. A styled `globalErrorBanner` element is added at the top of the body in `index.html`.
-3. All inline `onclick` attributes are removed from `index.html` HTML elements.
-4. Corresponding event listeners are bound programmatically in `index.html` using `addEventListener()`.
-5. The specific ESM import syntax error for `ADAPTER_ABI` is resolved, and the app loads/runs successfully.
-6. The test suite (`npm test --prefix tests`) passes successfully.
+3. JavaScript is completely separated into `app.js`, and `index.html` references it as `<script type="module" src="./app.js"></script>`.
+4. All event listeners are programmatically bound inside `app.js`.
+5. The `npm test --prefix tests` suite runs successfully, including the JSDOM integration test (`node app.test.mjs`).
