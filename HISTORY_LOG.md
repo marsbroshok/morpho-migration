@@ -22,7 +22,7 @@ The transaction flow must execute the following actions within a single block:
 ### 2. Precise Position Parameters
 
 * **Network:** Ethereum Mainnet (Chain ID: 1)
-* **Morpho Blue Core Contract:** `0xbBbbBBbBBb9CCEd63b7B73Fe30472d223547645e`
+* **Morpho Blue Core Contract:** `0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb`
 * **Morpho Bundler V3 Contract:** `0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`
 * **Ether General Adapter 1:** `0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0`
 * **USDC Stablecoin Address:** `0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48`

@@ -1,5 +1,29 @@
 # Project Work Log
 
+## 2026-06-15 - Corrected Outdated/Malformed Ethereum Addresses and Enhanced Simulation UI
+
+### Summary of Investigation
+1. **The Goal:** Resolve references to the transcription-error/malformed Ethereum address `0xbbbbbbbbbb9cced63b7b73fe30472d223547645e` in the UI and logs, and expose the transaction's sender (`From`) address.
+2. **Analysis:**
+   * The core `MORPHO_BLUE` contract address was previously corrected to the correct mainnet deployment address `0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb`.
+   * However, the malformed typo address `0xbbbbbbbbbb9cced63b7b73fe30472d223547645e` remained in `HISTORY_LOG.md` and the frontend simulation UI container of `index.html`.
+   * In the simulation UI, the target contract should be the Morpho Bundler V3 address (`0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`) rather than the Morpho Blue contract.
+   * To facilitate external simulations in tools like Tenderly and Phalcon, exposing the active sender (`From`) address dynamically alongside the target contract, value, and calldata payload is highly beneficial.
+3. **Resolution:**
+   * Replaced the malformed target contract address in the simulation payload UI of `index.html` with the correct Morpho Bundler V3 address.
+   * Updated the Morpho Blue Core Contract address in `HISTORY_LOG.md` to the correct mainnet address.
+   * Integrated a dynamic `Sender (From)` field in the raw transaction payload section of `index.html`, populated dynamically with the active connected wallet address (`userAddress`).
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Corrected Target Contract (To) address in `payloadContainer` to `0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`.
+  * Added `rawFromAddress` HTML element to the payload simulation container block.
+  * Added Javascript logic in both migration and leverage adjustment compilation flows to dynamically populate `rawFromAddress` with `userAddress`.
+* **File Updated:** [HISTORY_LOG.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/HISTORY_LOG.md)
+  * Corrected Morpho Blue Core Contract address to `0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb`.
+
+---
+
 ## 2026-06-08 - Resolved Deleveraging Swap Simulation Revert and Refactored Leverage Adjustment Builders
 
 ### Summary of Investigation
@@ -467,3 +491,40 @@
    * Configured `MORPHO_BUNDLER_V3` to point to the correct mainnet Bundler V3 address `0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`.
    * Created a live on-chain integration sanity test (`tests/integration.test.mjs`) to test the address constants against live mainnet state during development, preventing regression errors.
    * **Bypassed Bundler Delegation Prompt:** Removed the unnecessary `isAuthorized` checks and delegation UI buttons. Because the multicall continues to route position modifications (withdraw, repay, supply, borrow) through the already-authorized **Ether General Adapter 1** (`0x4A6c312e...`) rather than calling raw Bundler actions, no new delegation or authorization of the Bundler contract (`MORPHO_BUNDLER_V3`) is required.
+
+---
+
+## 2026-06-15 - Created README for Running DApp as Localhost Server
+
+### Summary of Investigation
+1. **The Goal:** Create a comprehensive README guide instructing the user on how to run `index.html` locally on macOS.
+2. **Analysis:**
+   * Browser extensions like Rabby or MetaMask block DApp integration when pages are loaded directly from a filesystem path (e.g. `file:///Users/...`).
+   * Serving `index.html` from a local origin (e.g., `http://localhost:8000`) is a strict security requirement of standard browser Web3 providers.
+3. **Resolution:**
+   * Created a central reference document [README.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/README.md) listing multiple macOS terminal server commands (Python 3, Node/npx, Ruby, PHP) for maximum utility.
+   * Documented wallet connection guides and developer test-running commands.
+
+### Changes Applied
+* **File Created:** [README.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/README.md)
+  * Created setup documentation for macOS local server hosting, Web3 interaction guidelines, and testing.
+
+### Verification Terminal Commands Run
+* Verified unit tests pass:
+  ```bash
+  npm test --prefix tests
+  ```
+
+---
+
+## 2026-06-15 - Refined README to Remove Promotional Language
+
+### Summary of Investigation
+1. **The Goal:** Remove non-technical/marketing terminology (such as "premium", "dynamically", "real-time") from the tool documentation to focus purely on functional clarity.
+2. **Resolution:**
+   * Simplified the description to describe the repository as a client-side web utility focusing strictly on its features.
+
+### Changes Applied
+* **File Updated:** [README.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/README.md)
+  * Refined the introductory paragraph to remove marketing adjectives.
+
