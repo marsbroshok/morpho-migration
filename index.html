@@ -5,8 +5,41 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    // Global Error Boundary to capture and display initialization/runtime/ESM errors in the UI
+    window.addEventListener('error', function (e) {
+      console.error(e);
+      const banner = document.getElementById('globalErrorBanner');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.innerText = 'Uncaught Runtime/Syntax Error: ' + (e.error ? e.error.stack || e.error.message : e.message) + '\n\nFile: ' + e.filename + ' (Line ' + e.lineno + ', Col ' + e.colno + ')';
+      }
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      console.error(e);
+      const banner = document.getElementById('globalErrorBanner');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.innerText = 'Unhandled Promise Rejection: ' + (e.reason && e.reason.stack ? e.reason.stack : e.reason);
+      }
+    });
+  </script>
   <title>Morpho Blue PT Position Migrator</title>
   <style>
+    #globalErrorBanner {
+      display: none;
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+      color: #ffffff;
+      padding: 16px 20px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      font-family: monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      border: 1px solid #f87171;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       max-width: 800px;
@@ -367,7 +400,7 @@
       return data.routes[0];
     }
 
-    window.connectAndLoadPosition = async function () {
+    async function connectAndLoadPosition() {
       const loadBtn = document.getElementById('loadPositionBtn');
       const statusEl = document.getElementById('status');
       
@@ -442,7 +475,7 @@
       }
     };
 
-    window.selectMigrationType = function (type) {
+    function selectMigrationType(type) {
       migrationType = type;
       const debtInput = document.getElementById('debtAmount');
       const collateralInput = document.getElementById('collateralAmount');
@@ -493,11 +526,11 @@
     }
 
     // Attach listener for debt input changes under partial mode
-    window.onDebtInputChange = function () {
+    function onDebtInputChange() {
       calculateProportionalCollateral();
-    };
+    }
 
-    window.onPtAddressInput = async function (inputId, badgeId) {
+    async function onPtAddressInput(inputId, badgeId) {
       const addressVal = document.getElementById(inputId).value.trim();
       const badgeEl = document.getElementById(badgeId);
       if (addressVal.length === 42 && addressVal.startsWith('0x')) {
@@ -550,7 +583,7 @@
       }
     };
 
-    window.onMarketIdInput = async function (inputId, labelId, ptInputId, ptBadgeId) {
+    async function onMarketIdInput(inputId, labelId, ptInputId, ptBadgeId) {
       const marketIdVal = document.getElementById(inputId).value.trim();
       const labelEl = document.getElementById(labelId);
       if (marketIdVal.length === 66 && marketIdVal.startsWith('0x')) {
@@ -561,7 +594,7 @@
           if (ptInputId && ptBadgeId) {
             const ptInput = document.getElementById(ptInputId);
             ptInput.value = params.collateralToken;
-            window.onPtAddressInput(ptInputId, ptBadgeId);
+            onPtAddressInput(ptInputId, ptBadgeId);
           }
         } catch (err) {
           labelEl.innerText = " (Invalid Market)";
@@ -569,19 +602,9 @@
       } else {
         labelEl.innerText = "";
       }
-    };
+    }
 
-    // Load dynamic labels on page load
-    window.addEventListener('load', () => {
-      window.onPtAddressInput('oldPtAddress', 'oldPtBadge');
-      window.onPtAddressInput('newPtAddress', 'newPtBadge');
-      window.onPtAddressInput('levPtAddress', 'levPtBadge');
-      window.onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldPtAddress', 'oldPtBadge');
-      window.onMarketIdInput('newMarketId', 'newMarketLabel', 'newPtAddress', 'newPtBadge');
-      window.onMarketIdInput('levMarketId', 'levMarketLabel', 'levPtAddress', 'levPtBadge');
-    });
-
-    window.initiateMigration = async function () {
+    async function initiateMigration() {
       const statusEl = document.getElementById('status');
       statusEl.style.display = 'block';
       statusEl.className = 'info';
@@ -821,7 +844,7 @@
     let levDebt = 0n;
     let levCollateral = 0n;
 
-    window.switchTab = function (tabName) {
+    function switchTab(tabName) {
       document.getElementById('tabContentRollover').classList.remove('active');
       document.getElementById('tabContentLeverage').classList.remove('active');
       document.getElementById('tabHeaderRollover').classList.remove('active');
@@ -837,9 +860,9 @@
         document.getElementById('tabContentLeverage').classList.add('active');
         document.getElementById('tabHeaderLeverage').classList.add('active');
       }
-    };
+    }
 
-    window.levConnectAndLoadPosition = async function () {
+    async function levConnectAndLoadPosition() {
       const loadBtn = document.getElementById('levLoadBtn');
       const statusEl = document.getElementById('status');
 
@@ -920,7 +943,7 @@
       }
     };
 
-    window.onLevSliderChange = function () {
+    function onLevSliderChange() {
       const targetLeverage = parseFloat(document.getElementById('levSlider').value);
       document.getElementById('levTargetLeverageDisplay').innerText = `${targetLeverage.toFixed(2)}x`;
 
@@ -963,7 +986,7 @@
       `;
     };
 
-    window.executeLeverageAdjustment = async function () {
+    async function executeLeverageAdjustment() {
       const statusEl = document.getElementById('status');
       statusEl.style.display = 'block';
       statusEl.className = 'info';
@@ -1184,10 +1207,49 @@
       statusEl.className = 'error';
       statusEl.innerText = `Migration Execution Blocked:\n${msg}`;
     }
+
+    // Programmatic Event Listener Bindings & Initializations
+    try {
+      // Tab Selection Navigation
+      document.getElementById('tabHeaderRollover').addEventListener('click', () => switchTab('rollover'));
+      document.getElementById('tabHeaderLeverage').addEventListener('click', () => switchTab('leverage'));
+
+      // Tab 1 (Rollover) Inputs & Buttons
+      document.getElementById('oldPtAddress').addEventListener('input', () => onPtAddressInput('oldPtAddress', 'oldPtBadge'));
+      document.getElementById('newPtAddress').addEventListener('input', () => onPtAddressInput('newPtAddress', 'newPtBadge'));
+      document.getElementById('oldMarketId').addEventListener('input', () => onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldPtAddress', 'oldPtBadge'));
+      document.getElementById('newMarketId').addEventListener('input', () => onMarketIdInput('newMarketId', 'newMarketLabel', 'newPtAddress', 'newPtBadge'));
+      document.getElementById('loadPositionBtn').addEventListener('click', connectAndLoadPosition);
+      document.getElementById('toggleFull').addEventListener('click', () => selectMigrationType('full'));
+      document.getElementById('togglePartial').addEventListener('click', () => selectMigrationType('partial'));
+      document.getElementById('debtAmount').addEventListener('input', onDebtInputChange);
+      document.getElementById('migrateBtn').addEventListener('click', initiateMigration);
+
+      // Tab 2 (Leverage) Inputs & Buttons
+      document.getElementById('levMarketId').addEventListener('input', () => onMarketIdInput('levMarketId', 'levMarketLabel', 'levPtAddress', 'levPtBadge'));
+      document.getElementById('levPtAddress').addEventListener('input', () => onPtAddressInput('levPtAddress', 'levPtBadge'));
+      document.getElementById('levLoadBtn').addEventListener('click', levConnectAndLoadPosition);
+      document.getElementById('levSlider').addEventListener('input', onLevSliderChange);
+      document.getElementById('levExecuteBtn').addEventListener('click', executeLeverageAdjustment);
+
+      // Run Initial dynamic setups
+      onPtAddressInput('oldPtAddress', 'oldPtBadge');
+      onPtAddressInput('newPtAddress', 'newPtBadge');
+      onPtAddressInput('levPtAddress', 'levPtBadge');
+      onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldPtAddress', 'oldPtBadge');
+      onMarketIdInput('newMarketId', 'newMarketLabel', 'newPtAddress', 'newPtBadge');
+      onMarketIdInput('levMarketId', 'levMarketLabel', 'levPtAddress', 'levPtBadge');
+    } catch (err) {
+      console.error("Failed to bind event listeners:", err);
+      showError("Initialization Error: " + err.message);
+    }
   </script>
 </head>
 
 <body>
+
+  <!-- Global Error Banner for runtime/compile issues -->
+  <div id="globalErrorBanner"></div>
 
   <div class="card">
     <h2>Morpho Blue PT Position Migrator</h2>
@@ -1198,8 +1260,8 @@
 
     <!-- Tab Selector Navigation -->
     <div class="tabs-container">
-      <div id="tabHeaderRollover" class="tab-item active" onclick="switchTab('rollover')">Rollover Collateral</div>
-      <div id="tabHeaderLeverage" class="tab-item" onclick="switchTab('leverage')">Adjust Leverage</div>
+      <div id="tabHeaderRollover" class="tab-item active">Rollover Collateral</div>
+      <div id="tabHeaderLeverage" class="tab-item">Adjust Leverage</div>
     </div>
 
     <!-- TAB 1: ROLLOVER COLLATERAL CONTENT -->
@@ -1211,36 +1273,36 @@
       </div>
 
       <div class="form-group">
-        <label>Old PT Token Address <span class="badge" id="oldPtBadge">PT-apyUSD-18JUN2026</span></label>
-        <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5" oninput="onPtAddressInput('oldPtAddress', 'oldPtBadge')">
+        <label>PT Token Address <span class="badge" id="oldPtBadge">PT-apyUSD-18JUN2026</span></label>
+        <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
       </div>
 
       <div class="form-group">
-        <label>New PT Token Address <span class="badge" id="newPtBadge">PT-apyUSD-5NOV2026</span></label>
-        <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150" oninput="onPtAddressInput('newPtAddress', 'newPtBadge')">
+        <label>Target PT Token Address <span class="badge" id="newPtBadge">PT-apyUSD-5NOV2026</span></label>
+        <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150">
       </div>
 
       <div class="form-group">
         <label>Old Morpho Market ID <span id="oldMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
         <!-- UPDATED: Set default value to user provided Old Morpho ID -->
-        <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldPtAddress', 'oldPtBadge')">
+        <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124">
       </div>
 
       <div class="form-group">
         <label>New Morpho Market ID <span id="newMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-5NOV2026/USDC)</span></label>
         <!-- UPDATED: Set default value to user provided New Morpho ID -->
-        <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c" oninput="onMarketIdInput('newMarketId', 'newMarketLabel', 'newPtAddress', 'newPtBadge')">
+        <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c">
       </div>
 
-      <button id="loadPositionBtn" onclick="connectAndLoadPosition()" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
+      <button id="loadPositionBtn" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
 
       <div id="positionInfo" class="position-info"></div>
 
       <div id="migrationOptions" style="display: none;">
         <label>Migration Type</label>
         <div class="toggle-group">
-          <div id="toggleFull" class="toggle-btn active" onclick="selectMigrationType('full')">Full Migration</div>
-          <div id="togglePartial" class="toggle-btn" onclick="selectMigrationType('partial')">Partial Migration</div>
+          <div id="toggleFull" class="toggle-btn active">Full Migration</div>
+          <div id="togglePartial" class="toggle-btn">Partial Migration</div>
         </div>
       </div>
 
@@ -1248,7 +1310,7 @@
         <div style="flex: 1;">
           <label>USDC Debt to Repay</label>
           <!-- UPDATED: Added oninput handler for auto-calculating collateral proportionally -->
-          <input type="number" id="debtAmount" value="6195.88" step="any" oninput="onDebtInputChange()">
+          <input type="number" id="debtAmount" value="6195.88" step="any">
         </div>
         <div style="flex: 1;">
           <label>PT Collateral to Migrate</label>
@@ -1260,7 +1322,7 @@
         </div>
       </div>
 
-      <button onclick="initiateMigration()">Simulate & Migrate Position</button>
+      <button id="migrateBtn">Simulate & Migrate Position</button>
     </div><!-- end tabContentRollover -->
 
     <!-- TAB 2: ADJUST LEVERAGE CONTENT -->
@@ -1272,15 +1334,15 @@
 
       <div class="form-group">
         <label>Morpho Market ID <span id="levMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
-        <input type="text" id="levMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124" oninput="onMarketIdInput('levMarketId', 'levMarketLabel', 'levPtAddress', 'levPtBadge')">
+        <input type="text" id="levMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124">
       </div>
 
       <div class="form-group">
         <label>PT Token Address <span class="badge" id="levPtBadge">PT-apyUSD-18JUN2026</span></label>
-        <input type="text" id="levPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5" oninput="onPtAddressInput('levPtAddress', 'levPtBadge')">
+        <input type="text" id="levPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
       </div>
 
-      <button id="levLoadBtn" onclick="levConnectAndLoadPosition()" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
+      <button id="levLoadBtn" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
 
       <div id="levPositionInfo" class="position-info"></div>
 
@@ -1291,7 +1353,7 @@
             <span>Target Leverage Level</span>
             <span id="levTargetLeverageDisplay" style="color: #3b82f6; font-weight: 600;">3.00x</span>
           </label>
-          <input type="range" id="levSlider" min="1.0" max="6.0" step="0.05" value="3.0" oninput="onLevSliderChange()" style="width: 100%; margin-top: 8px;">
+          <input type="range" id="levSlider" min="1.0" max="6.0" step="0.05" value="3.0" style="width: 100%; margin-top: 8px;">
           <div style="display: flex; justify-content: space-between; font-size: 11px; color: #64748b; margin-top: 4px;">
             <span>1.00x (Debt-free)</span>
             <span>3.50x</span>
@@ -1308,7 +1370,7 @@
           <input type="number" id="levSlippage" value="1.0" step="0.1" style="width: 120px;">
         </div>
 
-        <button id="levExecuteBtn" onclick="executeLeverageAdjustment()" style="margin-top: 10px;">Simulate & Adjust Leverage</button>
+        <button id="levExecuteBtn" style="margin-top: 10px;">Simulate & Adjust Leverage</button>
       </div>
     </div><!-- end tabContentLeverage -->
 

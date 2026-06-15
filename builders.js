@@ -3,6 +3,17 @@ export const ERC20_ABI = [{ "inputs": [{ "name": "spender", "type": "address" },
 export const ADAPTER_ABI = [
   {
     "inputs": [
+      { "name": "token", "type": "address" },
+      { "name": "assets", "type": "uint256" },
+      { "name": "data", "type": "bytes" }
+    ],
+    "name": "morphoFlashLoan",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
       {
         "components": [
           { "name": "loanToken", "type": "address" },

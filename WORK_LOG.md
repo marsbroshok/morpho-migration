@@ -612,3 +612,55 @@
   npm test --prefix tests
   ```
 
+---
+
+## 2026-06-15 - Fixed ESM Import & Reference Errors via Programmatic Event Bindings
+
+### Summary of Investigation
+1. **The Bug:** After codebase simplification, the app failed to run with:
+   - `Uncaught SyntaxError: The requested module './builders.js' does not provide an export named 'ADAPTER_ABI' (at (index):200:75)`
+   - `(index):1235 Uncaught ReferenceError: connectAndLoadPosition is not defined at HTMLButtonElement.onclick ((index):1235:170)`
+2. **Analysis:**
+   - The syntax error occurred because the browser loaded a cached/stale version of `builders.js` that did not yet contain the exported `ADAPTER_ABI`.
+   - The reference error occurred because the module script failed to compile/evaluate due to the import syntax error, leaving the global functions undefined when clicked.
+3. **Resolution:**
+   - **Formulated Rule:** Created [DEVELOPMENT_RULE.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/DEVELOPMENT_RULE.md) using the GCCD framework to establish standard practices for avoiding inline event listeners and adding global error UI boundaries.
+   - **Added Error Boundary:** Added a global error boundary script and a styled visual alert banner at the top of [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html) to instantly catch and expose ESM/syntax errors to the developer.
+   - **Programmatic Event Binding:** Removed all inline `onclick` and `oninput` handlers from HTML elements and replaced them with `addEventListener` programmatic bindings inside the module script block, preventing runtime `ReferenceError` when scripts fail to evaluate.
+
+### Changes Applied
+* **File Created:** [DEVELOPMENT_RULE.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/DEVELOPMENT_RULE.md)
+  - Documented future development rules to handle ESM and event bindings safely.
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  - Implemented visual error boundary elements and script.
+  - Converted all inline HTML event handlers to programmatic DOM bindings.
+  - Cleaned up global `window` function assignments.
+
+### Verification Terminal Commands Run
+* Run the test runner script:
+  ```bash
+  npm test --prefix tests
+  ```
+
+---
+
+## 2026-06-15 - Added morphoFlashLoan Signature to builders.js ADAPTER_ABI
+
+### Summary of Investigation
+1. **The Bug:** During live testing, the application displayed a validation blockage error: `Migration Execution Blocked: Function "morphoFlashLoan" not found on ABI.`
+2. **Analysis:**
+   - The refactoring to deduplicate the ABI structures replaced `index.html`'s local `ADAPTER_ABI` (which included `morphoFlashLoan` signature) with the one from `builders.js`.
+   - However, `builders.js`'s `ADAPTER_ABI` did not include the `morphoFlashLoan` signature because the transaction builder utility functions only execute the inner callback logic (`morphoRepay`, `morphoWithdrawCollateral`, `erc20Transfer`, etc.) and do not initiate the outer flashloan.
+   - The ESM unit tests passed because they only test the unit functions of `builders.js` and do not simulate the outer page-level wallet interaction flow.
+3. **Resolution:**
+   - Restored `morphoFlashLoan` definition to the imported `ADAPTER_ABI` structure by adding the method signature to `ADAPTER_ABI` inside [builders.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/builders.js).
+
+### Changes Applied
+* **File Updated:** [builders.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/builders.js)
+  - Added the `morphoFlashLoan` function signature back into the exported `ADAPTER_ABI` array.
+
+### Verification Terminal Commands Run
+* Run the unit and integration tests:
+  ```bash
+  npm test --prefix tests
+  ```
