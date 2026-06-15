@@ -1,19 +1,6 @@
 import assert from 'assert';
 
-let math;
-try {
-  math = await import('../math.js');
-} catch (err) {
-  console.log('Test failed as expected: math.js does not yet export leverage adjustment functions.');
-  process.exit(0);
-}
-
-const { calculateLeverageAdjustmentParams } = math;
-
-if (typeof calculateLeverageAdjustmentParams !== 'function') {
-  console.log('Test failed as expected: calculateLeverageAdjustmentParams is not defined.');
-  process.exit(0);
-}
+import { calculateLeverageAdjustmentParams } from '../math.js';
 
 console.log('Running leverage adjustment unit tests...');
 

@@ -1,6 +1,6 @@
-const ERC20_ABI = [{ "inputs": [{ "name": "spender", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" }];
+export const ERC20_ABI = [{ "inputs": [{ "name": "spender", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" }];
 
-const ADAPTER_ABI = [
+export const ADAPTER_ABI = [
   {
     "inputs": [
       {

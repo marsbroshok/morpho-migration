@@ -76,7 +76,21 @@ ruby -run -e httpd . -p 8000
 
 ---
 
-## Developer Reference: Running Unit Tests
+## Developer Reference
+
+### Architecture & Tech Stack
+
+The application coordinates atomic position migrations and leverage adjustments by interacting with the following protocol contracts, APIs, and libraries:
+
+* **Morpho Blue Core (`0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb`)**: The main lending contract where lending/borrowing states are tracked.
+* **Morpho Bundler V3 (`0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`)**: The multicall utility contract enabling sequential operations (flashloan, repay, withdraw, supply, borrow, transfers) in a single atomic transaction.
+* **Ether General Adapter 1 (`0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0`)**: A helper adapter contract integrated with the Bundler to handle deposits, borrowings, ERC20 transfers, and interface with Morpho.
+* **Pendle AMM & SDK API (`https://api-v2.pendle.finance`)**: Used to query optimal swap routes and fetch raw transaction calldata to execute exchange operations for Pendle Principal Tokens (PT).
+* **Morpho Blue GraphQL API (`https://blue-api.morpho.org/graphql`)**: Provides real-time metadata query capabilities for loan assets, collateral assets, oracles, IRMs, and LLTV properties.
+* **Viem**: ESM-compatible client library used to interact with Ethereum, read contract states, and compile custom multicall calldata.
+* **Web3 Wallets (e.g., Rabby, MetaMask)**: Interfaces with the application via the standard `window.ethereum` JSON-RPC provider to simulate, approve, and sign transaction payloads.
+
+### Running Unit Tests
 
 The project includes unit tests for calculations, token badge labeling, and multicall bundle generation.
 

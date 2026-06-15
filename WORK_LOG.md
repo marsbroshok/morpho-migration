@@ -1,5 +1,26 @@
 # Project Work Log
 
+## 2026-06-15 - Enriched Developer Reference in README with Tech Stack & Architecture Details
+
+### Summary of Investigation
+1. **The Goal:** Enrich the "Developer Reference" section of the README with details about the project's technical architecture, core smart contracts, and external APIs used.
+2. **Resolution:**
+   * Updated `README.md` to add a new "Architecture & Tech Stack" sub-section under "Developer Reference".
+   * Documented details for: Morpho Blue Core, Morpho Bundler V3, Ether General Adapter 1, Pendle AMM & SDK API, Morpho Blue GraphQL API, Viem client library, and Web3 Wallets integration.
+   * Ran the test suite to verify everything is working properly.
+
+### Changes Applied
+* **File Updated:** [README.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/README.md)
+  * Restructured the `Developer Reference` section to list the architecture components.
+
+### Verification Terminal Commands Run
+* Verified unit and integration tests:
+  ```bash
+  npm test --prefix tests
+  ```
+
+---
+
 ## 2026-06-15 - Corrected Outdated/Malformed Ethereum Addresses and Enhanced Simulation UI
 
 ### Summary of Investigation
@@ -527,4 +548,67 @@
 ### Changes Applied
 * **File Updated:** [README.md](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/README.md)
   * Refined the introductory paragraph to remove marketing adjectives.
+
+---
+
+## 2026-06-15 - Simplified Codebase & KISS Optimization
+
+### Summary of Investigation
+1. **The Goal**: Clean up and simplify the codebase following the KISS (Keep It Simple, Stupid) principle, removing duplicated logic, and ensuring the same exact functionality with no regressions.
+2. **Analysis**:
+   - **ABI Duplication**: `ERC20_ABI` and `ADAPTER_ABI` were declared both in `index.html` and `builders.js`.
+   - **Position Fetching Duplication**: Both `connectAndLoadPosition` (rollover tab) and `levConnectAndLoadPosition` (leverage tab) duplicated the logic for fetching position details (collateral/debt shares) and computing the net debt balance from Morpho Blue core.
+   - **Pendle Route Fetching Duplication**: Pendle Convert API calls were duplicated across three different locations: the rollover migration flow, the deleverage adjustment flow, and the leverage-up adjustment flow.
+3. **Resolution**:
+   - **Deduplicated ABIs**: Exported `ERC20_ABI` and `ADAPTER_ABI` from [builders.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/builders.js) and imported them into [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html). Removed local duplicate declarations in `index.html`.
+   - **Abstracted Position Loading**: Created the `fetchMorphoPosition(publicClient, marketId, userAddress)` helper function in [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html) to encapsulate contract reads and debt calculations.
+   - **Abstracted Pendle Routing**: Introduced `fetchPendleRoute(inputToken, inputAmount, outputToken, slippage)` helper function in [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html) to centralize HTTP calls to Pendle's Convert V3 API.
+   - **Verification**: Verified that the ESM unit test suite passes successfully.
+
+### Changes Applied
+* **File Updated**: [builders.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/builders.js)
+  - Added `export` keyword to `ERC20_ABI` and `ADAPTER_ABI`.
+* **File Updated**: [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  - Imported `ERC20_ABI` and `ADAPTER_ABI` from `./builders.js`.
+  - Removed duplicate `ERC20_ABI` and `ADAPTER_ABI` declarations.
+  - Implemented `fetchMorphoPosition` helper function.
+  - Implemented `fetchPendleRoute` helper function.
+  - Refactored `connectAndLoadPosition`, `levConnectAndLoadPosition`, `initiateMigration`, and `executeLeverageAdjustment` to use the new helper functions.
+
+### Verification Terminal Commands Run
+  ```bash
+  npm test --prefix tests
+  ```
+
+---
+
+## 2026-06-15 - Simplified Unit Tests & Cleaned Up Comments
+
+### Summary of Investigation
+1. **The Goal**: Clean up the unit and integration tests under the `tests/` directory to follow the KISS framework, replacing dynamic placeholder imports with static top-level imports and streamlining overly verbose comments.
+2. **Analysis**:
+   - The `try/catch` dynamic imports used in tests were original placeholders when source files did not exist. Since source files are now implemented, these are unnecessary.
+   - [builders.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/builders.test.mjs) had a mid-file import and rambled about design decisions in the comments instead of being concise.
+3. **Resolution**:
+   - Replaced dynamic import placeholders with direct static imports at the top of each test file.
+   - Relocated nested imports to the top level in `builders.test.mjs`.
+   - Streamlined verbose comments to keep them helpful, descriptive, and concise.
+
+### Changes Applied
+* **File Updated**: [tests/builders.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/builders.test.mjs)
+  - Converted dynamic `try/catch` imports to top-level static imports.
+  - Relocated `viem` imports to the top of the file.
+  - Streamlined verbose stream-of-consciousness design comments.
+* **File Updated**: [tests/labels.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/labels.test.mjs)
+  - Replaced dynamic import with top-level static import.
+* **File Updated**: [tests/leverage.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/leverage.test.mjs)
+  - Replaced dynamic import with top-level static import.
+* **File Updated**: [tests/leverage_adjust.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/leverage_adjust.test.mjs)
+  - Replaced dynamic import with top-level static import.
+
+### Verification Terminal Commands Run
+* Run the test runner script:
+  ```bash
+  npm test --prefix tests
+  ```
 

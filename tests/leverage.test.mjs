@@ -1,14 +1,6 @@
 import assert from 'assert';
 
-let math;
-try {
-  math = await import('../math.js');
-} catch (err) {
-  console.log('Test failed as expected: math.js is not yet implemented.');
-  process.exit(0);
-}
-
-const { calculateCollateralValue, calculateLtv, calculateLeverage } = math;
+import { calculateCollateralValue, calculateLtv, calculateLeverage } from '../math.js';
 
 console.log('Running leverage and LTV tests...');
 

@@ -197,15 +197,12 @@
     import { mainnet } from 'https://esm.sh/viem/chains';
     import { calculateCollateralValue, calculateLtv, calculateLeverage, calculateLeverageAdjustmentParams } from './math.js';
     import { formatMarketLabel } from './labels.js';
-    import { buildDeleveragingBundle, buildLeveragingUpBundle } from './builders.js';
+    import { buildDeleveragingBundle, buildLeveragingUpBundle, ERC20_ABI, ADAPTER_ABI } from './builders.js';
 
     // --- CONSTANTS & ABIs ---
     const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
     const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
     const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
-
-    // Minimal ABIs needed for ERC20 approvals and Morpho interactions
-    const ERC20_ABI = [{ "inputs": [{ "name": "spender", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" }];
 
     const BUNDLER_ABI = [
       {
@@ -225,121 +222,6 @@
         "name": "multicall",
         "outputs": [],
         "stateMutability": "payable",
-        "type": "function"
-      }
-    ];
-
-    const ADAPTER_ABI = [
-      {
-        "inputs": [
-          { "name": "token", "type": "address" },
-          { "name": "assets", "type": "uint256" },
-          { "name": "data", "type": "bytes" }
-        ],
-        "name": "morphoFlashLoan",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-      },
-      {
-        "inputs": [
-          {
-            "components": [
-              { "name": "loanToken", "type": "address" },
-              { "name": "collateralToken", "type": "address" },
-              { "name": "oracle", "type": "address" },
-              { "name": "irm", "type": "address" },
-              { "name": "lltv", "type": "uint256" }
-            ],
-            "name": "marketParams",
-            "type": "tuple"
-          },
-          { "name": "assets", "type": "uint256" },
-          { "name": "shares", "type": "uint256" },
-          { "name": "maxSharePriceE27", "type": "uint256" },
-          { "name": "onBehalf", "type": "address" },
-          { "name": "data", "type": "bytes" }
-        ],
-        "name": "morphoRepay",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-      },
-      {
-        "inputs": [
-          {
-            "components": [
-              { "name": "loanToken", "type": "address" },
-              { "name": "collateralToken", "type": "address" },
-              { "name": "oracle", "type": "address" },
-              { "name": "irm", "type": "address" },
-              { "name": "lltv", "type": "uint256" }
-            ],
-            "name": "marketParams",
-            "type": "tuple"
-          },
-          { "name": "assets", "type": "uint256" },
-          { "name": "receiver", "type": "address" }
-        ],
-        "name": "morphoWithdrawCollateral",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-      },
-      {
-        "inputs": [
-          {
-            "components": [
-              { "name": "loanToken", "type": "address" },
-              { "name": "collateralToken", "type": "address" },
-              { "name": "oracle", "type": "address" },
-              { "name": "irm", "type": "address" },
-              { "name": "lltv", "type": "uint256" }
-            ],
-            "name": "marketParams",
-            "type": "tuple"
-          },
-          { "name": "assets", "type": "uint256" },
-          { "name": "onBehalf", "type": "address" },
-          { "name": "data", "type": "bytes" }
-        ],
-        "name": "morphoSupplyCollateral",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-      },
-      {
-        "inputs": [
-          {
-            "components": [
-              { "name": "loanToken", "type": "address" },
-              { "name": "collateralToken", "type": "address" },
-              { "name": "oracle", "type": "address" },
-              { "name": "irm", "type": "address" },
-              { "name": "lltv", "type": "uint256" }
-            ],
-            "name": "marketParams",
-            "type": "tuple"
-          },
-          { "name": "assets", "type": "uint256" },
-          { "name": "shares", "type": "uint256" },
-          { "name": "minSharePriceE27", "type": "uint256" },
-          { "name": "receiver", "type": "address" }
-        ],
-        "name": "morphoBorrow",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-      },
-      {
-        "inputs": [
-          { "name": "token", "type": "address" },
-          { "name": "receiver", "type": "address" },
-          { "name": "amount", "type": "uint256" }
-        ],
-        "name": "erc20Transfer",
-        "outputs": [],
-        "stateMutability": "nonpayable",
         "type": "function"
       }
     ];
@@ -429,6 +311,62 @@
     let migrationType = 'full';
     let publicClient = null;
 
+    async function fetchMorphoPosition(publicClient, marketId, userAddress) {
+      const [posData, marketData] = await Promise.all([
+        publicClient.readContract({
+          address: MORPHO_BLUE,
+          abi: MORPHO_BLUE_ABI,
+          functionName: 'position',
+          args: [marketId, userAddress]
+        }),
+        publicClient.readContract({
+          address: MORPHO_BLUE,
+          abi: MORPHO_BLUE_ABI,
+          functionName: 'market',
+          args: [marketId]
+        })
+      ]);
+
+      const [, borrowShares, collateral] = posData;
+      const [,, totalBorrowAssets, totalBorrowShares] = marketData;
+
+      let debt = 0n;
+      if (borrowShares > 0n && totalBorrowShares > 0n) {
+        debt = (borrowShares * totalBorrowAssets) / totalBorrowShares;
+      }
+
+      return { collateral, debt };
+    }
+
+    async function fetchPendleRoute(inputToken, inputAmount, outputToken, slippage) {
+      const chainId = 1;
+      const pendleApiUrl = `https://api-v2.pendle.finance/core/v3/sdk/${chainId}/convert`;
+      const response = await fetch(pendleApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receiver: ETHER_GENERAL_ADAPTER_1,
+          slippage: slippage,
+          inputs: [
+            {
+              token: inputToken,
+              amount: inputAmount.toString()
+            }
+          ],
+          outputs: [
+            outputToken
+          ],
+          enableAggregator: true
+        })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.message || "Failed to fetch routing data from Pendle.");
+      }
+      const data = await response.json();
+      return data.routes[0];
+    }
+
     window.connectAndLoadPosition = async function () {
       const loadBtn = document.getElementById('loadPositionBtn');
       const statusEl = document.getElementById('status');
@@ -463,32 +401,9 @@
           throw new Error("Please enter a valid 32-byte hex Market ID (66 characters).");
         }
 
-        // Query Morpho Blue position and market state in parallel
-        const [posData, marketData] = await Promise.all([
-          publicClient.readContract({
-            address: MORPHO_BLUE,
-            abi: MORPHO_BLUE_ABI,
-            functionName: 'position',
-            args: [oldMarketId, userAddress]
-          }),
-          publicClient.readContract({
-            address: MORPHO_BLUE,
-            abi: MORPHO_BLUE_ABI,
-            functionName: 'market',
-            args: [oldMarketId]
-          })
-        ]);
-
-        const [, borrowShares, collateral] = posData;
-        const [,, totalBorrowAssets, totalBorrowShares] = marketData;
-
-        liveCollateral = collateral;
-
-        if (borrowShares > 0n && totalBorrowShares > 0n) {
-          liveDebt = (borrowShares * totalBorrowAssets) / totalBorrowShares;
-        } else {
-          liveDebt = 0n;
-        }
+        const position = await fetchMorphoPosition(publicClient, oldMarketId, userAddress);
+        liveCollateral = position.collateral;
+        liveDebt = position.debt;
 
         const oldMarketParams = await fetchMarketParams(oldMarketId);
         const oraclePrice = await publicClient.readContract({
@@ -715,43 +630,13 @@
 
         statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data from Pendle Convert API...`;
 
-        // --- 2. Call Pendle Core V3 Convert API for Dynamic Swap Calldata ---
-        const chainId = 1; // Mainnet
-        const pendleApiUrl = `https://api-v2.pendle.finance/core/v3/sdk/${chainId}/convert`;
-
-        let pendleRoute;
+        let routeData;
         try {
-          const response = await fetch(pendleApiUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              receiver: ETHER_GENERAL_ADAPTER_1,
-              slippage: slippage,
-              inputs: [
-                {
-                  token: oldPtAddress,
-                  amount: collateralAmount.toString()
-                }
-              ],
-              outputs: [
-                newPtAddress
-              ],
-              enableAggregator: true
-            })
-          });
-          if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.message || "Failed to fetch routing data from Pendle Convert API.");
-          }
-          pendleRoute = await response.json();
+          routeData = await fetchPendleRoute(oldPtAddress, collateralAmount, newPtAddress, slippage);
         } catch (err) {
           showError(`Pendle Router Error: ${err.message}. Check token addresses or slippage bounds.`);
           return;
         }
-
-        const routeData = pendleRoute.routes[0];
         const expectedOutput = (Number(routeData.outputs[0].amount) / 1e18).toFixed(4);
 
         // Fetch new oracle price to simulate target market leverage
@@ -990,31 +875,9 @@
           throw new Error("Please enter a valid 32-byte hex Market ID.");
         }
 
-        const [posData, marketData] = await Promise.all([
-          publicClient.readContract({
-            address: MORPHO_BLUE,
-            abi: MORPHO_BLUE_ABI,
-            functionName: 'position',
-            args: [marketId, userAddress]
-          }),
-          publicClient.readContract({
-            address: MORPHO_BLUE,
-            abi: MORPHO_BLUE_ABI,
-            functionName: 'market',
-            args: [marketId]
-          })
-        ]);
-
-        const [, borrowShares, collateral] = posData;
-        const [,, totalBorrowAssets, totalBorrowShares] = marketData;
-
-        levCollateral = collateral;
-
-        if (borrowShares > 0n && totalBorrowShares > 0n) {
-          levDebt = (borrowShares * totalBorrowAssets) / totalBorrowShares;
-        } else {
-          levDebt = 0n;
-        }
+        const position = await fetchMorphoPosition(publicClient, marketId, userAddress);
+        levCollateral = position.collateral;
+        levDebt = position.debt;
 
         const marketParams = await fetchMarketParams(marketId);
         const oraclePrice = await publicClient.readContract({
@@ -1152,35 +1015,7 @@
           // --- DELEVERAGING SWAP PATH: PT -> USDC ---
           statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for deleverage swap (PT -> USDC)...`;
           
-          const chainId = 1;
-          const pendleApiUrl = `https://api-v2.pendle.finance/core/v3/sdk/${chainId}/convert`;
-          
-          const response = await fetch(pendleApiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              receiver: ETHER_GENERAL_ADAPTER_1,
-              slippage: Number(slippage) / 10000,
-              inputs: [
-                {
-                  token: ptAddress,
-                  amount: params.collateralAmount.toString()
-                }
-              ],
-              outputs: [
-                usdcAddress
-              ],
-              enableAggregator: true
-            })
-          });
-
-          if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.message || "Failed to fetch routing data from Pendle.");
-          }
-
-          const pendleRoute = await response.json();
-          const routeData = pendleRoute.routes[0];
+          const routeData = await fetchPendleRoute(ptAddress, params.collateralAmount, usdcAddress, Number(slippage) / 10000);
           const expectedUsdcOutput = BigInt(routeData.outputs[0].amount);
           
           statusEl.innerText = `Pendle Swap path resolved! Expected Output: ${(Number(expectedUsdcOutput)/1e6).toFixed(2)} USDC.\nGenerating atomic flashloan bundle...`;
@@ -1263,35 +1098,7 @@
           // --- LEVERAGING UP SWAP PATH: USDC -> PT ---
           statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for leverage-up swap (USDC -> PT)...`;
           
-          const chainId = 1;
-          const pendleApiUrl = `https://api-v2.pendle.finance/core/v3/sdk/${chainId}/convert`;
-          
-          const response = await fetch(pendleApiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              receiver: ETHER_GENERAL_ADAPTER_1,
-              slippage: Number(slippage) / 10000,
-              inputs: [
-                {
-                  token: usdcAddress,
-                  amount: params.debtAmount.toString()
-                }
-              ],
-              outputs: [
-                ptAddress
-              ],
-              enableAggregator: true
-            })
-          });
-
-          if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.message || "Failed to fetch routing data from Pendle.");
-          }
-
-          const pendleRoute = await response.json();
-          const routeData = pendleRoute.routes[0];
+          const routeData = await fetchPendleRoute(usdcAddress, params.debtAmount, ptAddress, Number(slippage) / 10000);
           const expectedPtOutput = BigInt(routeData.outputs[0].amount);
           
           statusEl.innerText = `Pendle Swap path resolved! Expected Output: ${(Number(expectedPtOutput)/1e18).toFixed(4)} PT.\nGenerating atomic flashloan bundle...`;

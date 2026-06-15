@@ -1,14 +1,6 @@
 import assert from 'assert';
-
-let builders;
-try {
-  builders = await import('../builders.js');
-} catch (err) {
-  console.log('Test failed as expected: builders.js does not exist yet.');
-  process.exit(0);
-}
-
-const { buildDeleveragingBundle, buildLeveragingUpBundle } = builders;
+import { decodeFunctionData as viemDecode, encodeFunctionData } from 'viem';
+import { buildDeleveragingBundle, buildLeveragingUpBundle } from '../builders.js';
 
 console.log('Running transaction builder unit tests...');
 
@@ -56,22 +48,8 @@ const bundle1 = buildDeleveragingBundle({
 // 3: Execute Swap
 assert.strictEqual(bundle1.length, 4);
 assert.strictEqual(bundle1[1].to, ETHER_GENERAL_ADAPTER_1);
-// Let's decode the call to verify the recipient is MORPHO_BUNDLER_V3
-// We'll inspect the parameters if we can, or just mock the encoding to check.
-// Since we want the test to be independent of viem's complex setup if possible,
-// we can have our builders.js return the array of calls structured,
-// and the main index.html will encode them.
-// Wait! If builders.js returns the unencoded or decoded Call objects, that's even better for testing!
-// Let's see: if builders.js returns the array of Call objects before they are abi-encoded as bytes inside the bundle?
-// No, the call data (data field) of each Call in the bundle is a hex string (abi-encoded function call).
-// To decode it or test it, we can import viem helpers in the test.
-
 console.log('Test 1: Deleveraging bundle recipient check');
-// Let's write the assertion for the decoded target recipient of withdraw collateral.
-// Wait, we can define the function in builders.js to build the structural list of calls,
-// or encode them. Let's make builders.js encode them, and we decode them in the test.
-// Yes, tests package.json has "viem" dependency! So we can just import from 'viem'.
-import { decodeFunctionData as viemDecode, encodeFunctionData } from 'viem';
+// Decode and verify the PT withdraw recipient is MORPHO_BUNDLER_V3
 
 const decodedWithdraw = viemDecode({
   abi: [

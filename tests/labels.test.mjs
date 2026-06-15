@@ -1,14 +1,6 @@
 import assert from 'assert';
 
-let labels;
-try {
-  labels = await import('../labels.js');
-} catch (err) {
-  console.log('Test failed as expected: labels.js is not yet implemented.');
-  process.exit(0);
-}
-
-const { formatMarketLabel } = labels;
+import { formatMarketLabel } from '../labels.js';
 
 console.log('Running market label tests...');
 
