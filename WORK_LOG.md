@@ -1,5 +1,30 @@
 # Project Work Log
 
+## 2026-06-15 - Adjusted Frontend Layout: Renamed and Reordered Rollover Fields & Kept Only Tenderly Simulator
+
+### Summary of Investigation
+1. **The Goal:** Rename and reorder the input fields in the "Rollover Collateral" tab of `index.html` to align with the new source/destination flow nomenclature, and remove the Phalcon Simulator from the simulation layout, keeping only Tenderly.
+2. **Resolution:**
+   * Reordered fields in `index.html` to place "Source Morpho Market ID" (formerly "Old Morpho Market ID") second and "Source PT Token Address" (formerly "PT Token Address") third.
+   * Renamed "New Morpho Market ID" to "Destination Morpho Market ID" and "Target PT Token Address" to "Destination PT Token Address".
+   * Kept DOM IDs (`usdcAddress`, `oldPtAddress`, `newPtAddress`, `oldMarketId`, `newMarketId`) intact to prevent breaking any programmatic flow or DOM element queries in test scripts.
+   * Removed "Phalcon Simulator" links and references in both `index.html` and the compilation comments in `app.js`.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Renamed and reordered the form groups in the "Rollover Collateral" tab.
+  * Updated `payloadContainer` text and links to point only to the Tenderly Transaction Simulator.
+* **File Updated:** [app.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/app.js)
+  * Updated comment in transaction encoding flow to reference only Tenderly.
+
+### Verification Terminal Commands Run
+* Verified unit and integration tests:
+  ```bash
+  npm test
+  ```
+
+---
+
 ## 2026-06-15 - Enriched Developer Reference in README with Tech Stack & Architecture Details
 
 ### Summary of Investigation
@@ -698,3 +723,42 @@
   ```bash
   npm test --prefix tests
   ```
+
+---
+
+## 2026-06-16 - Implemented Pre-Transaction Preview, PT Maturity Checks, and Post-Transaction Realized Price Audit
+
+### Summary of Investigation
+1. **The Goal:** Upgrade the transaction workflow to provide advanced execution guardrails and price checks.
+2. **Analysis:**
+   * Instantly requesting wallet signature on button click prevents users from evaluating slippage and rates.
+   * Standardizing a two-stage preview-then-execute flow lets users inspect estimated swap rates vs. oracle rates and potential price impact.
+   * If a Principal Token (PT) matures, swapping on AMM is inefficient. A redemption check is required to warn users if a PT has matured.
+   * After execution, the actual slippage and realized price should be tracked by reading the transaction receipt transfer logs.
+3. **Resolution:**
+   * **UI updates in [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html):** Added a `#previewContainer` block that renders the swap preview, maturity alert notice, and confirmation button.
+   * **Two-Stage Execution in [app.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/app.js):**
+     * Stage 1: Action triggers calculate expected swap rates, fair-value oracle prices, and price impact, rendering the preview card without triggering a signature prompt.
+     * Stage 2: Renders a "Confirm & Execute via Wallet" button to dispatch the pre-compiled transaction.
+   * **PT Maturity Check:** Added `checkPtMaturity` to query the PT contract `expiry()` function and flag matured assets in the UI.
+   * **Post-Transaction Audit:** Added `auditRealizedPrice` which awaits transaction receipt, parses the ERC-20 `Transfer` events, and prints the exact net inputs, outputs, and realized rates.
+   * **TDD Verification:** Added JSDOM integration test `tests/preview_workflow.test.mjs` verifying UI updates, maturity warning triggers, and log parsing.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  - Inserted `#previewContainer`, `#previewMetrics`, `#previewSlippageBadge`, `#maturityNotice`, and `#confirmExecuteBtn`.
+* **File Updated:** [app.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/app.js)
+  - Refactored `initiateMigration` and `executeLeverageAdjustment` to run in preview mode.
+  - Implemented `checkPtMaturity`, `confirmAndSubmitTransaction`, and `auditRealizedPrice` logic.
+  - Bound events for the new confirmation button.
+* **File Created:** [tests/preview_workflow.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/preview_workflow.test.mjs)
+  - Checks DOM elements presence, state transitions, maturity alert rendering, and transfer log parser logic.
+* **File Updated:** [tests/package.json](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/package.json)
+  - Registered `preview_workflow.test.mjs` in the primary test script.
+
+### Verification Terminal Commands Run
+* Run the entire unit and integration test suite:
+  ```bash
+  npm test --prefix tests
+  ```
+

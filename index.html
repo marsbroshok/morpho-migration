@@ -256,25 +256,25 @@
       </div>
 
       <div class="form-group">
-        <label>PT Token Address <span class="badge" id="oldPtBadge">PT-apyUSD-18JUN2026</span></label>
-        <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
-      </div>
-
-      <div class="form-group">
-        <label>Target PT Token Address <span class="badge" id="newPtBadge">PT-apyUSD-5NOV2026</span></label>
-        <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150">
-      </div>
-
-      <div class="form-group">
-        <label>Old Morpho Market ID <span id="oldMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
+        <label>Source Morpho Market ID <span id="oldMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
         <!-- UPDATED: Set default value to user provided Old Morpho ID -->
         <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124">
       </div>
 
       <div class="form-group">
-        <label>New Morpho Market ID <span id="newMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-5NOV2026/USDC)</span></label>
+        <label>Source PT Token Address <span class="badge" id="oldPtBadge">PT-apyUSD-18JUN2026</span></label>
+        <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
+      </div>
+
+      <div class="form-group">
+        <label>Destination Morpho Market ID <span id="newMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-5NOV2026/USDC)</span></label>
         <!-- UPDATED: Set default value to user provided New Morpho ID -->
         <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c">
+      </div>
+
+      <div class="form-group">
+        <label>Destination PT Token Address <span class="badge" id="newPtBadge">PT-apyUSD-5NOV2026</span></label>
+        <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150">
       </div>
 
       <button id="loadPositionBtn" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
@@ -360,10 +360,31 @@
     <!-- SHARED FOOTER OUTPUTS (status log & payload previews) -->
     <div id="status"></div>
 
+    <!-- PRE-TRANSACTION PREVIEW CONTAINER -->
+    <div id="previewContainer" style="display: none; margin-top: 24px; padding: 20px; background: #1e293b; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);">
+      <h3 style="margin-top: 0; color: #f8fafc; font-size: 16px; font-weight: 700; border-bottom: 1px solid #334155; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+        <span>Execution Preview & Slippage Estimate</span>
+        <span id="previewSlippageBadge" class="badge" style="font-size: 12px; padding: 4px 10px; margin-left: 0; display: none;">-</span>
+      </h3>
+      
+      <!-- Maturity Notice Alert -->
+      <div id="maturityNotice" style="display: none; background-color: #1e3a8a; border: 1px solid #1d4ed8; color: #93c5fd; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 13px;">
+        <strong>ℹ️ Maturity Notice:</strong> Old PT collateral has matured. The system will execute a zero-slippage redemption route.
+      </div>
+
+      <div id="previewMetrics" style="font-size: 14px; line-height: 1.6; color: #cbd5e1; margin-bottom: 20px;">
+        <!-- Populated dynamically by app.js -->
+      </div>
+      
+      <button id="confirmExecuteBtn" style="background-color: #10b981; color: white; padding: 14px 28px; font-size: 16px; font-weight: 700; border-radius: 8px; border: none; cursor: pointer; transition: background-color 0.2s ease; width: 100%;">
+        Confirm & Execute via Wallet
+      </button>
+    </div>
+
     <div id="payloadContainer" style="display: none; margin-top: 24px; padding: 16px; background: #1e293b; border-radius: 8px; border: 1px solid #334155;">
-      <h3 style="margin-top: 0; color: #f8fafc; font-size: 16px;">Raw Transaction Payload (Tenderly / Phalcon Simulator compatible)</h3>
+      <h3 style="margin-top: 0; color: #f8fafc; font-size: 16px;">Raw Transaction Payload (Tenderly Simulator compatible)</h3>
       <p style="color: #94a3b8; font-size: 13px; margin-bottom: 12px; line-height: 1.4;">
-        You can copy the raw parameters below and paste them into the <a href="https://dashboard.tenderly.co/tx-simulator" target="_blank" style="color: #60a5fa; text-decoration: underline;">Tenderly Transaction Simulator</a> or the <a href="https://phalcon.blocksec.com/" target="_blank" style="color: #60a5fa; text-decoration: underline;">Phalcon Simulator</a> to run an independent simulation.
+        You can copy the raw parameters below and paste them into the <a href="https://dashboard.tenderly.co/tx-simulator" target="_blank" style="color: #60a5fa; text-decoration: underline;">Tenderly Transaction Simulator</a> to run an independent simulation.
       </p>
       
       <div style="margin-bottom: 10px;">

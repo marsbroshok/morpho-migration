@@ -115,6 +115,115 @@ let liveDebt = 0n;
 let liveCollateral = 0n;
 let migrationType = 'full';
 let publicClient = null;
+let pendingTx = null;
+
+async function checkPtMaturity(client, ptAddress) {
+  try {
+    const expiry = await client.readContract({
+      address: ptAddress,
+      abi: [{"inputs":[],"name":"expiry","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
+      functionName: 'expiry'
+    });
+    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+    return {
+      expiryDate: new Date(Number(expiry) * 1000).toLocaleDateString(),
+      isExpired: expiry <= currentTimestamp
+    };
+  } catch (err) {
+    console.warn("Failed to fetch PT expiry info:", err);
+    return { expiryDate: "Unknown", isExpired: false };
+  }
+}
+
+async function confirmAndSubmitTransaction() {
+  if (!pendingTx || !userAddress) return;
+  const statusEl = document.getElementById('status');
+  statusEl.style.display = 'block';
+  statusEl.className = 'info';
+  statusEl.innerText = "Requesting transaction approval in wallet...";
+  
+  try {
+    const walletClient = createWalletClient({
+      chain: mainnet,
+      transport: custom(window.ethereum)
+    });
+    
+    const hash = await walletClient.sendTransaction({
+      account: userAddress,
+      to: pendingTx.to,
+      data: pendingTx.data,
+      value: pendingTx.value
+    });
+    
+    statusEl.className = 'info';
+    statusEl.innerText = `Transaction Submitted! Hash: ${hash}\nAwaiting block confirmation to audit execution price...`;
+    
+    // Hide preview container since tx is broadcasted
+    document.getElementById('previewContainer').style.display = 'none';
+    
+    // Start tracking realized price
+    await auditRealizedPrice(hash);
+  } catch (err) {
+    showError(err.message || err);
+  }
+}
+
+async function auditRealizedPrice(txHash) {
+  const statusEl = document.getElementById('status');
+  try {
+    if (!publicClient) {
+      publicClient = createPublicClient({
+        chain: mainnet,
+        transport: custom(window.ethereum)
+      });
+    }
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+    
+    const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+    
+    // Summarize relevant transfers in logs to audit execution rate
+    let oldPtTransfers = 0n;
+    let newPtTransfers = 0n;
+    let usdcTransfers = 0n;
+    
+    // We can extract input/output tokens dynamically from input fields if available
+    const oldPt = document.getElementById('oldPtAddress')?.value || document.getElementById('levPtAddress')?.value;
+    const newPt = document.getElementById('newPtAddress')?.value || oldPt; // fallback
+    const usdc = document.getElementById('usdcAddress')?.value || document.getElementById('levUsdcAddress')?.value;
+    
+    for (const log of receipt.logs) {
+      if (log.topics[0] === TRANSFER_TOPIC) {
+        const value = BigInt(log.data === '0x' ? '0' : log.data);
+        const tokenAddr = getAddress(log.address);
+        if (oldPt && tokenAddr === getAddress(oldPt)) {
+          oldPtTransfers += value;
+        } else if (newPt && tokenAddr === getAddress(newPt)) {
+          newPtTransfers += value;
+        } else if (usdc && tokenAddr === getAddress(usdc)) {
+          usdcTransfers += value;
+        }
+      }
+    }
+    
+    let auditMessage = "";
+    if (oldPtTransfers > 0n && newPtTransfers > 0n) {
+      // Rollover rate
+      const realizedRate = Number(newPtTransfers * 10n**18n / oldPtTransfers) / 1e18;
+      auditMessage = `\n[Post-Execution Audit]\nRealized Swap Rate: 1 PT-old = ${realizedRate.toFixed(4)} PT-new.\n(Checked via transfer events: spent ${oldPtTransfers / 10n**18n} PT, received ${newPtTransfers / 10n**18n} PT).`;
+    } else if (oldPtTransfers > 0n && usdcTransfers > 0n) {
+      // Deleveraging swap (PT -> USDC)
+      const realizedRate = Number(usdcTransfers * 10n**18n / oldPtTransfers) / 1e18;
+      auditMessage = `\n[Post-Execution Audit]\nRealized Exchange Rate: 1 PT = ${realizedRate.toFixed(4)} USDC.\n(Checked via transfer events: spent ${oldPtTransfers / 10n**18n} PT, received ${usdcTransfers / 10n**6n} USDC).`;
+    }
+    
+    statusEl.className = 'success';
+    statusEl.innerText = `Migration Transaction Confirmed Successfully!\n\nTx Hash: ${txHash}\n${auditMessage}`;
+  } catch (err) {
+    console.error("Audit log parsing failed:", err);
+    statusEl.className = 'success';
+    statusEl.innerText = `Migration Transaction Confirmed!\n\nTx Hash: ${txHash}\n\nNote: Transaction confirmed, but realized price audit failed: ${err.message}`;
+  }
+}
 
 async function fetchMorphoPosition(publicClient, marketId, userAddress) {
   const [posData, marketData] = await Promise.all([
@@ -434,25 +543,41 @@ async function initiateMigration() {
     }
     const expectedOutput = (Number(routeData.outputs[0].amount) / 1e18).toFixed(4);
 
-    // Fetch new oracle price to simulate target market leverage
     if (!publicClient) {
       publicClient = createPublicClient({
         chain: mainnet,
         transport: custom(window.ethereum)
       });
     }
-    const newOraclePrice = await publicClient.readContract({
-      address: newMarketParams.oracle,
-      abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
-      functionName: 'price'
-    });
+
+    // Fetch oracle prices for old and new markets to compute fair exchange rate
+    const [oldOraclePrice, newOraclePrice, maturity] = await Promise.all([
+      publicClient.readContract({
+        address: oldMarketParams.oracle,
+        abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
+        functionName: 'price'
+      }),
+      publicClient.readContract({
+        address: newMarketParams.oracle,
+        abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
+        functionName: 'price'
+      }),
+      checkPtMaturity(publicClient, oldPtAddress)
+    ]);
 
     const expectedNewCollateral = BigInt(routeData.outputs[0].amount);
     const newCollateralValue = calculateCollateralValue(expectedNewCollateral, newOraclePrice);
     const newLtv = calculateLtv(borrowAmount, newCollateralValue);
     const newLeverage = calculateLeverage(newCollateralValue, borrowAmount);
 
-    statusEl.innerText += `\nPendle Swap path resolved! Expected Output: ${expectedOutput} PT-apyUSD-5NOV2026 (Simulated LTV: ${newLtv.toFixed(2)}%, Leverage: ${newLeverage}).\nGenerating atomic flashloan bundle...`;
+    // Calculate rates and slippage
+    const oracleRatio = (oldOraclePrice * 10n ** 18n) / newOraclePrice;
+    const quotedRate = (expectedNewCollateral * 10n ** 18n) / collateralAmount;
+    
+    // Slippage percentage: positive represents loss relative to oracle, negative represents gain
+    const slippagePct = oracleRatio > 0n ? Number((oracleRatio - quotedRate) * 10000n / oracleRatio) / 100 : 0.0;
+
+    statusEl.innerText = "Compiling atomic flashloan bundle...";
 
     // --- 3. Construct Morpho Bundler V3 Callback Bundle ---
     const reenterBundle = [];
@@ -589,23 +714,55 @@ async function initiateMigration() {
       args: [outerBundle]
     });
 
-    // Display raw calldata for external simulations (Tenderly, Phalcon)
+    // Update state for confirm execute button
+    pendingTx = {
+      to: MORPHO_BUNDLER_V3,
+      data: finalCalldata,
+      value: 0n
+    };
+
+    // Render Preview
+    const badgeEl = document.getElementById('previewSlippageBadge');
+    badgeEl.innerText = `Slippage: ${slippagePct.toFixed(2)}%`;
+    badgeEl.style.display = 'inline-block';
+    if (slippagePct < 0.5) {
+      badgeEl.style.backgroundColor = '#10b981'; // Green
+    } else if (slippagePct <= 1.5) {
+      badgeEl.style.backgroundColor = '#f59e0b'; // Yellow/Orange
+    } else {
+      badgeEl.style.backgroundColor = '#ef4444'; // Red
+    }
+
+    if (maturity.isExpired) {
+      document.getElementById('maturityNotice').style.display = 'block';
+    } else {
+      document.getElementById('maturityNotice').style.display = 'none';
+    }
+
+    document.getElementById('previewMetrics').innerHTML = `
+      <div style="margin-bottom: 12px;">
+        <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Token Swap Exchange Rates</strong>
+        Expected Swap Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${(Number(quotedRate)/1e18).toFixed(4)} PT-new</span><br>
+        Oracle Fair Value Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${(Number(oracleRatio)/1e18).toFixed(4)} PT-new</span><br>
+        Price Impact / Slippage: <span style="font-weight: 600; color: ${slippagePct > 1.0 ? '#f87171' : '#34d399'}">${slippagePct.toFixed(2)}%</span>
+      </div>
+      
+      <div style="margin-bottom: 12px;">
+        <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Simulated Target Position</strong>
+        Migrated Collateral: <span style="font-family: monospace; color: #38bdf8;">${expectedOutput} PT-new</span><br>
+        New Borrow Debt: <span style="font-family: monospace; color: #f43f5e;">${(Number(borrowAmount)/1e6).toFixed(2)} USDC</span><br>
+        New LTV & Leverage: <span style="color: #34d399;">${newLtv.toFixed(2)}% (${newLeverage})</span>
+      </div>
+    `;
+
+    // Display raw calldata in payload preview container
     document.getElementById('rawFromAddress').innerText = userAddress;
     document.getElementById('rawCalldataTextarea').value = finalCalldata;
     document.getElementById('payloadContainer').style.display = 'block';
 
-    statusEl.innerText += `\nCalldata compiled. Requesting transaction approval in Rabby...`;
-
-    // --- 6. Submit Transaction to Rabby ---
-    const hash = await walletClient.sendTransaction({
-      account: userAddress,
-      to: MORPHO_BUNDLER_V3,
-      data: finalCalldata,
-      value: 0n
-    });
-
-    statusEl.className = 'success';
-    statusEl.innerText = `Migration Transaction Submitted Successfully!\n\nTx Hash: ${hash}\n\nTrack your migration status inside your Rabby Dashboard.`;
+    // Show Preview Container & hide loading status
+    document.getElementById('previewContainer').style.display = 'block';
+    statusEl.style.display = 'none';
 
   } catch (error) {
     showError(error.message || error);
@@ -952,23 +1109,86 @@ async function executeLeverageAdjustment() {
       });
     }
 
-    // Display raw calldata
+    // Update state for confirm execute button
+    pendingTx = {
+      to: MORPHO_BUNDLER_V3,
+      data: finalCalldata,
+      value: 0n
+    };
+
+    // Calculate rates and slippage for preview
+    const oracleRate = oraclePrice / 10n ** 6n; // USDC per PT in 18 decimals
+    let quotedRate = 0n;
+    let detailsText = "";
+
+    if (params.mode === 'deleverage' || params.mode === 'deleverage-to-1x') {
+      const expectedUsdcOutput = BigInt(routeData.outputs[0].amount);
+      if (params.collateralAmount > 0n) {
+        quotedRate = (expectedUsdcOutput * 10n ** 30n) / params.collateralAmount;
+      }
+      detailsText = `
+        Expected Output: <span style="font-family: monospace; color: #34d399;">${(Number(expectedUsdcOutput)/1e6).toFixed(2)} USDC</span><br>
+        Collateral to Sell: <span style="font-family: monospace; color: #f8fafc;">${(Number(params.collateralAmount)/1e18).toFixed(4)} PT</span>
+      `;
+    } else {
+      const expectedPtOutput = BigInt(routeData.outputs[0].amount);
+      if (expectedPtOutput > 0n) {
+        quotedRate = (params.debtAmount * 10n ** 30n) / expectedPtOutput;
+      }
+      detailsText = `
+        Expected Output: <span style="font-family: monospace; color: #38bdf8;">${(Number(expectedPtOutput)/1e18).toFixed(4)} PT</span><br>
+        USDC to Spend: <span style="font-family: monospace; color: #f43f5e;">${(Number(params.debtAmount)/1e6).toFixed(2)} USDC</span>
+      `;
+    }
+
+    const slippagePct = oracleRate > 0n ? Number((oracleRate - quotedRate) * 10000n / oracleRate) / 100 : 0.0;
+    const slippageLimit = parseFloat(document.getElementById('levSlippage').value);
+
+    // Fetch old PT maturity for info
+    const maturity = await checkPtMaturity(publicClient, ptAddress);
+
+    // Render Preview UI
+    const badgeEl = document.getElementById('previewSlippageBadge');
+    badgeEl.innerText = `Slippage: ${slippagePct.toFixed(2)}%`;
+    badgeEl.style.display = 'inline-block';
+    if (slippagePct < 0.5) {
+      badgeEl.style.backgroundColor = '#10b981'; // Green
+    } else if (slippagePct <= 1.5) {
+      badgeEl.style.backgroundColor = '#f59e0b'; // Yellow/Orange
+    } else {
+      badgeEl.style.backgroundColor = '#ef4444'; // Red
+    }
+
+    if (maturity.isExpired) {
+      document.getElementById('maturityNotice').style.display = 'block';
+    } else {
+      document.getElementById('maturityNotice').style.display = 'none';
+    }
+
+    document.getElementById('previewMetrics').innerHTML = `
+      <div style="margin-bottom: 12px;">
+        <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Execution Exchange Rates</strong>
+        Expected Price: <span style="font-family: monospace; color: #f8fafc;">1 PT = ${(Number(quotedRate)/1e18).toFixed(4)} USDC</span><br>
+        Oracle Price: <span style="font-family: monospace; color: #f8fafc;">1 PT = ${(Number(oracleRate)/1e18).toFixed(4)} USDC</span><br>
+        Price Impact / Slippage: <span style="font-weight: 600; color: ${slippagePct > 1.0 ? '#f87171' : '#34d399'}">${slippagePct.toFixed(2)}%</span>
+      </div>
+      
+      <div style="margin-bottom: 12px;">
+        <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Simulated Outputs</strong>
+        ${detailsText}
+        Slippage Limit: <span style="font-family: monospace; color: #cbd5e1;">${slippageLimit.toFixed(1)}%</span>
+      </div>
+    `;
+
+    // Display raw calldata in payload preview container
     document.getElementById('rawFromAddress').innerText = userAddress;
     document.getElementById('rawCalldataTextarea').value = finalCalldata;
     document.getElementById('payloadContainer').style.display = 'block';
 
-    statusEl.innerText += `\nCalldata compiled. Requesting transaction approval in Rabby...`;
+    // Show Preview Container & hide loading status
+    document.getElementById('previewContainer').style.display = 'block';
+    statusEl.style.display = 'none';
 
-    // 6. Submit Transaction
-    const hash = await walletClient.sendTransaction({
-      account: userAddress,
-      to: MORPHO_BUNDLER_V3,
-      data: finalCalldata,
-      value: 0n
-    });
-
-    statusEl.className = 'success';
-    statusEl.innerText = `Leverage Adjustment Transaction Submitted Successfully!\n\nTx Hash: ${hash}\n\nTrack your status inside your Rabby Dashboard.`;
   } catch (err) {
     showError(err.message || err);
   }
@@ -1003,6 +1223,7 @@ try {
   document.getElementById('levLoadBtn').addEventListener('click', levConnectAndLoadPosition);
   document.getElementById('levSlider').addEventListener('input', onLevSliderChange);
   document.getElementById('levExecuteBtn').addEventListener('click', executeLeverageAdjustment);
+  document.getElementById('confirmExecuteBtn').addEventListener('click', confirmAndSubmitTransaction);
 
   // Run Initial dynamic setups
   onPtAddressInput('oldPtAddress', 'oldPtBadge');
