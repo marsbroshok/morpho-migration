@@ -762,3 +762,14 @@
   npm test --prefix tests
   ```
 
+## 2026-06-17 - Completed Codebase Security Audit
+* **The Goal**: Audit the repository for private data leaks, supply-chain vulnerabilities, and API trust boundaries as requested by the user.
+* **Audit Performed**:
+  - Searched the codebase for hardcoded private keys, mnemonic phrases, API keys, passwords, and other credentials. Verified that the dApp is client-side and relies securely on `window.ethereum` injected wallets.
+  - Performed a threat modeling mapping entry points, trust boundaries, sensitive data paths, and privileged actions.
+  - Identified critical supply-chain risks (direct CDN imports of `viem` from `esm.sh`) and API trust boundaries (blind execution of Pendle API calldata).
+  - Evaluated dependency vulnerabilities in `tests` directory via `npm audit`.
+* **File Created**:
+  - Created a local security audit report artifact (`security_audit_report.md`) detailing the findings, threat model, and recommendations.
+
+
