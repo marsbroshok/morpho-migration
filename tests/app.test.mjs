@@ -125,6 +125,14 @@ try {
   const loadBtn = document.getElementById('loadPositionBtn');
   assert.ok(loadBtn, "loadPositionBtn should exist in DOM");
 
+  const labels = Array.from(document.querySelectorAll('label'));
+  const slippageLabels = labels.filter(el => el.textContent.includes('Slippage'));
+  assert.strictEqual(slippageLabels.length, 2, "Should find exactly two slippage labels");
+  slippageLabels.forEach(label => {
+    assert.strictEqual(label.textContent, 'Slippage (%)', "Label text should be 'Slippage (%)'");
+  });
+
+
   // Check event bindings
   // Test click connection triggers (verify function connection by running action)
   console.log('Testing wallet connect click binding...');

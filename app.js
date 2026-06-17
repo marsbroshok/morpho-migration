@@ -209,11 +209,29 @@ async function auditRealizedPrice(txHash) {
     if (oldPtTransfers > 0n && newPtTransfers > 0n) {
       // Rollover rate
       const realizedRate = Number(newPtTransfers * 10n**18n / oldPtTransfers) / 1e18;
-      auditMessage = `\n[Post-Execution Audit]\nRealized Swap Rate: 1 PT-old = ${realizedRate.toFixed(4)} PT-new.\n(Checked via transfer events: spent ${oldPtTransfers / 10n**18n} PT, received ${newPtTransfers / 10n**18n} PT).`;
+      let rateCompare = "";
+      let priceImpactMessage = "";
+      if (pendingTx && pendingTx.type === 'rollover' && pendingTx.estimatedRate) {
+        rateCompare = ` (Estimated: ${pendingTx.estimatedRate.toFixed(4)} PT-new)`;
+        if (pendingTx.oracleRate) {
+          const realizedPriceImpact = ((pendingTx.oracleRate - realizedRate) / pendingTx.oracleRate) * 100;
+          priceImpactMessage = `\nRealized Price Impact: ${realizedPriceImpact.toFixed(2)}% (Estimated: ${pendingTx.estimatedPriceImpact.toFixed(2)}%, vs. Oracle).`;
+        }
+      }
+      auditMessage = `\n[Post-Execution Audit]\nRealized Swap Rate: 1 PT-old = ${realizedRate.toFixed(4)} PT-new${rateCompare}.${priceImpactMessage}\n(Checked via transfer events: spent ${oldPtTransfers / 10n**18n} PT, received ${newPtTransfers / 10n**18n} PT).`;
     } else if (oldPtTransfers > 0n && usdcTransfers > 0n) {
       // Deleveraging swap (PT -> USDC)
       const realizedRate = Number(usdcTransfers * 10n**18n / oldPtTransfers) / 1e18;
-      auditMessage = `\n[Post-Execution Audit]\nRealized Exchange Rate: 1 PT = ${realizedRate.toFixed(4)} USDC.\n(Checked via transfer events: spent ${oldPtTransfers / 10n**18n} PT, received ${usdcTransfers / 10n**6n} USDC).`;
+      let rateCompare = "";
+      let priceImpactMessage = "";
+      if (pendingTx && pendingTx.type === 'leverage' && pendingTx.estimatedRate) {
+        rateCompare = ` (Estimated: ${pendingTx.estimatedRate.toFixed(4)} USDC)`;
+        if (pendingTx.oracleRate) {
+          const realizedPriceImpact = ((pendingTx.oracleRate - realizedRate) / pendingTx.oracleRate) * 100;
+          priceImpactMessage = `\nRealized Price Impact: ${realizedPriceImpact.toFixed(2)}% (Estimated: ${pendingTx.estimatedPriceImpact.toFixed(2)}%, vs. Oracle).`;
+        }
+      }
+      auditMessage = `\n[Post-Execution Audit]\nRealized Exchange Rate: 1 PT = ${realizedRate.toFixed(4)} USDC${rateCompare}.${priceImpactMessage}\n(Checked via transfer events: spent ${oldPtTransfers / 10n**18n} PT, received ${usdcTransfers / 10n**6n} USDC).`;
     }
     
     statusEl.className = 'success';
@@ -718,12 +736,16 @@ async function initiateMigration() {
     pendingTx = {
       to: MORPHO_BUNDLER_V3,
       data: finalCalldata,
-      value: 0n
+      value: 0n,
+      type: 'rollover',
+      oracleRate: Number(oracleRatio) / 1e18,
+      estimatedRate: Number(quotedRate) / 1e18,
+      estimatedPriceImpact: slippagePct
     };
 
     // Render Preview
     const badgeEl = document.getElementById('previewSlippageBadge');
-    badgeEl.innerText = `Slippage: ${slippagePct.toFixed(2)}%`;
+    badgeEl.innerText = `Price Impact: ${slippagePct.toFixed(2)}%`;
     badgeEl.style.display = 'inline-block';
     if (slippagePct < 0.5) {
       badgeEl.style.backgroundColor = '#10b981'; // Green
@@ -744,7 +766,7 @@ async function initiateMigration() {
         <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Token Swap Exchange Rates</strong>
         Expected Swap Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${(Number(quotedRate)/1e18).toFixed(4)} PT-new</span><br>
         Oracle Fair Value Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${(Number(oracleRatio)/1e18).toFixed(4)} PT-new</span><br>
-        Price Impact / Slippage: <span style="font-weight: 600; color: ${slippagePct > 1.0 ? '#f87171' : '#34d399'}">${slippagePct.toFixed(2)}%</span>
+        Price Impact (vs. Oracle): <span style="font-weight: 600; color: ${slippagePct > 1.0 ? '#f87171' : '#34d399'}">${slippagePct.toFixed(2)}%</span>
       </div>
       
       <div style="margin-bottom: 12px;">
@@ -1109,13 +1131,6 @@ async function executeLeverageAdjustment() {
       });
     }
 
-    // Update state for confirm execute button
-    pendingTx = {
-      to: MORPHO_BUNDLER_V3,
-      data: finalCalldata,
-      value: 0n
-    };
-
     // Calculate rates and slippage for preview
     const oracleRate = oraclePrice / 10n ** 6n; // USDC per PT in 18 decimals
     let quotedRate = 0n;
@@ -1144,12 +1159,23 @@ async function executeLeverageAdjustment() {
     const slippagePct = oracleRate > 0n ? Number((oracleRate - quotedRate) * 10000n / oracleRate) / 100 : 0.0;
     const slippageLimit = parseFloat(document.getElementById('levSlippage').value);
 
+    // Update state for confirm execute button
+    pendingTx = {
+      to: MORPHO_BUNDLER_V3,
+      data: finalCalldata,
+      value: 0n,
+      type: 'leverage',
+      oracleRate: Number(oracleRate) / 1e18,
+      estimatedRate: Number(quotedRate) / 1e18,
+      estimatedPriceImpact: slippagePct
+    };
+
     // Fetch old PT maturity for info
     const maturity = await checkPtMaturity(publicClient, ptAddress);
 
     // Render Preview UI
     const badgeEl = document.getElementById('previewSlippageBadge');
-    badgeEl.innerText = `Slippage: ${slippagePct.toFixed(2)}%`;
+    badgeEl.innerText = `Price Impact: ${slippagePct.toFixed(2)}%`;
     badgeEl.style.display = 'inline-block';
     if (slippagePct < 0.5) {
       badgeEl.style.backgroundColor = '#10b981'; // Green
@@ -1170,13 +1196,13 @@ async function executeLeverageAdjustment() {
         <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Execution Exchange Rates</strong>
         Expected Price: <span style="font-family: monospace; color: #f8fafc;">1 PT = ${(Number(quotedRate)/1e18).toFixed(4)} USDC</span><br>
         Oracle Price: <span style="font-family: monospace; color: #f8fafc;">1 PT = ${(Number(oracleRate)/1e18).toFixed(4)} USDC</span><br>
-        Price Impact / Slippage: <span style="font-weight: 600; color: ${slippagePct > 1.0 ? '#f87171' : '#34d399'}">${slippagePct.toFixed(2)}%</span>
+        Price Impact (vs. Oracle): <span style="font-weight: 600; color: ${slippagePct > 1.0 ? '#f87171' : '#34d399'}">${slippagePct.toFixed(2)}%</span>
       </div>
       
       <div style="margin-bottom: 12px;">
         <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Simulated Outputs</strong>
         ${detailsText}
-        Slippage Limit: <span style="font-family: monospace; color: #cbd5e1;">${slippageLimit.toFixed(1)}%</span>
+        Slippage Tolerance Limit: <span style="font-family: monospace; color: #cbd5e1;">${slippageLimit.toFixed(1)}%</span>
       </div>
     `;
 

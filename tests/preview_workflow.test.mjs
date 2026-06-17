@@ -180,7 +180,7 @@ try {
   assert.strictEqual(maturityNotice.style.display, 'none', "maturityNotice should be hidden since PT is not expired");
 
   // Verify that slippage badge contains calculated rate
-  assert.ok(previewSlippageBadge.innerText.includes("Slippage:"), "Slippage badge should display slippage text");
+  assert.ok(previewSlippageBadge.innerText.includes("Price Impact:"), "Slippage badge should display Price Impact text");
 
   // Step 3: Trigger confirm execution
   console.log("Confirming execution to send transaction to wallet...");
@@ -191,10 +191,12 @@ try {
   assert.strictEqual(previewContainer.style.display, 'none', "previewContainer should be hidden post-execution");
 
   const statusEl = document.getElementById('status');
+  console.log("Status text printed: \n" + statusEl.innerText);
 
   assert.ok(statusEl.innerText.includes("Migration Transaction Confirmed Successfully!"), "Success notification should be active");
   assert.ok(statusEl.innerText.includes("[Post-Execution Audit]"), "Audit section should be included in output");
-
+  assert.ok(statusEl.innerText.includes("Realized Swap Rate: 1 PT-old = 0.9949 PT-new (Estimated: 1.0000 PT-new)."), "Should display comparison of realized vs estimated swap rate");
+  assert.ok(statusEl.innerText.includes("Realized Price Impact: 0.51% (Estimated: 0.00%, vs. Oracle)."), "Should display comparison of realized vs estimated price impact");
   console.log("All pre-transaction workflow & slippage audit tests passed!");
 } finally {
   if (fs.existsSync(shadowPath)) {

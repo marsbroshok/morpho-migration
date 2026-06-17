@@ -1,5 +1,82 @@
 # Project Work Log
 
+## 2026-06-17 - Renamed UI Slippage Tolerance Labels to Slippage to Prevent Layout Wrapping
+
+### Summary of Investigation
+1. **The Goal:** Align the "Slippage Tolerance (%)" label in the UI rows, preventing text wrapping onto a new line and preserving form layout aesthetics.
+2. **Resolution:**
+   * Renamed the "Slippage Tolerance (%)" labels to "Slippage (%)" in both the Rollover Migration and Adjust Leverage sections of `index.html`.
+   * Added JSDOM frontend unit test assertions in `tests/app.test.mjs` to verify that both slippage label texts match exactly `Slippage (%)`.
+
+### Changes Applied
+* **File Updated:** [index.html](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/index.html)
+  * Renamed slippage labels from "Slippage Tolerance (%)" to "Slippage (%)".
+* **File Updated:** [tests/app.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/app.test.mjs)
+  * Added unit test asserting that both slippage labels read "Slippage (%)".
+
+### Verification Terminal Commands Run
+* Verified unit and integration tests:
+  ```bash
+  npm test
+  ```
+
+---
+
+## 2026-06-17 - Compare Realized Rate and Price Impact with Estimated Values in Post-Execution Audit
+
+
+### Summary of Investigation
+1. **The Goal:** Provide the user with a direct comparison of the *real* (realized) swap/exchange rate and price impact against the *estimated* values computed during the pre-transaction preview.
+2. **Resolution:**
+   * Captured the estimated rate, oracle rate, estimated price impact, and transaction type in `pendingTx` state during the simulation preview phase for both Rollover and Leverage Adjustment workflows.
+   * Modified the post-execution audit function (`auditRealizedPrice`) to retrieve these estimated values from the global `pendingTx` state.
+   * Computed the realized price impact using the same oracle rate formula used in the preview.
+   * Appended comparison details (`(Estimated: ...)` and `Realized Price Impact: ... (Estimated: ..., vs. Oracle)`) into the transaction success status display.
+   * Updated the JSDOM integration test suite (`tests/preview_workflow.test.mjs`) to assert the correct formatting and presence of comparison values in the transaction confirmation log.
+
+### Changes Applied
+* **File Updated:** `app.js`
+  * Stored preview estimation metadata in `pendingTx` inside the Rollover and Leverage preview functions.
+  * Enhanced the audit message formatting in `auditRealizedPrice` to print comparison logs.
+* **File Updated:** `tests/preview_workflow.test.mjs`
+  * Added assertions to verify the presence of compared rates and price impacts in the transaction success message.
+
+### Verification Terminal Commands Run
+* Verified unit and integration tests:
+  ```bash
+  npm test --prefix tests
+  ```
+
+---
+
+## 2026-06-17 - Clarified Slippage Terminology in UI: Renamed Slippage Tolerance vs Price Impact
+
+### Summary of Investigation
+1. **The Goal:** Clear up confusion between "Slippage Tolerance" (maximum deviation from quoted price allowed during execution) and "Price Impact" (market price deviation relative to the oracle fair value).
+2. **Resolution:**
+   * Renamed the slippage inputs in `index.html` from "Slippage (%)" to "Slippage Tolerance (%)".
+   * Renamed "Execution Preview & Slippage Estimate" title to "Execution Preview & Price Impact Estimate".
+   * Renamed the badge in `app.js` from "Slippage: X.XX%" to "Price Impact: X.XX%".
+   * Renamed execution rate "Price Impact / Slippage" details to "Price Impact (vs. Oracle)".
+   * Renamed "Slippage Limit" detail to "Slippage Tolerance Limit".
+   * Updated JSDOM pre-transaction workflow unit test expectations from "Slippage:" to "Price Impact:".
+
+### Changes Applied
+* **File Updated:** `index.html`
+  * Clarified labels and headers for slippage tolerance vs price impact.
+* **File Updated:** `app.js`
+  * Updated badge texts and metrics lists rendering.
+* **File Updated:** `tests/preview_workflow.test.mjs`
+  * Updated assertion to check for "Price Impact:" instead of "Slippage:".
+
+### Verification Terminal Commands Run
+* Verified unit and integration tests:
+  ```bash
+  npm test --prefix tests
+  ```
+
+---
+
 ## 2026-06-15 - Adjusted Frontend Layout: Renamed and Reordered Rollover Fields & Kept Only Tenderly Simulator
 
 ### Summary of Investigation
