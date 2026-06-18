@@ -1,5 +1,50 @@
 # Project Work Log
 
+## 2026-06-18 - Fixed Post-Execution Audit Calculations and Intermediate Transfer Double-Counting
+
+### Summary of Investigation
+1. **The Bug:** During live execution of position rollovers, the post-transaction audit logged a massive, incorrect price impact (e.g., 31.52%) and incorrect spent/received swap counts.
+2. **Analysis:** The previous audit logic summed all `Transfer` event logs in the receipt matching the token addresses. Because atomic multicall transactions route tokens through intermediate contracts (Morpho Blue -> Bundler -> Pendle Router -> AMM), the same tokens were double or triple-counted.
+3. **Resolution:**
+   * Updated the adjust-leverage flow to capture `subType: 'deleverage' | 'leverage_up'` in `pendingTx` state.
+   * Redesigned `auditRealizedPrice` in `app.js` to parse indexed `from` and `to` topics of the ERC-20 `Transfer` events.
+   * Filtered logs to only count the specific transfers representing swap inputs (where `from` matches `MORPHO_BUNDLER_V3`) and swap outputs (where `to` matches `ETHER_GENERAL_ADAPTER_1`).
+   * Implemented precise realized swap rate calculations and price impact comparison vs. Oracle for all three execution flows (rollover, deleveraging, and leveraging up) using correct decimal scaling.
+   * Updated `tests/preview_workflow.test.mjs` mock logs to include indexed topics and dummy transfer events to verify that intermediate transfers are successfully ignored by the new audit logic.
+
+### Changes Applied
+* **File Updated:** [app.js](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/app.js)
+  * Captured `subType` in `pendingTx` state during leverage adjustment transactions.
+  * Added topic decoding and address filtering in `auditRealizedPrice` to isolate swap-specific transfer events.
+  * Implemented rate and price-impact comparisons for rollover, deleveraging, and leveraging-up.
+* **File Updated:** [tests/preview_workflow.test.mjs](file:///Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration/tests/preview_workflow.test.mjs)
+  * Updated mock receipt logs with indexed `from` and `to` topics.
+  * Added dummy logs to assert that the audit calculations ignore unrelated transfer events.
+
+### Verification Terminal Commands Run
+* Verified unit and integration tests:
+  ```bash
+  npm test
+  ```
+
+---
+
+## 2026-06-18 - Researched and Documented Anvil-based Mainnet Fork Simulation
+
+### Summary of Investigation
+1. **The Goal:** Research how to test smart contract transactions locally before execution using a real mainnet fork simulation with Anvil, Alchemy, and Viem, focusing entirely on programmatic testing.
+2. **Resolution:**
+   * Researched Anvil fork configuration, explaining how to use Alchemy URLs and the benefits of pinning a specific block number (determinism, caching, reproducibility).
+   * Provided a sample Node.js integration script template (`tests/simulate_mainnet_fork.mjs`) demonstrating client setups, account impersonation (`impersonateAccount`), ETH funding (`setBalance`), transaction payload construction, and receipt verification.
+   * Documented the complete setup, concepts, and script template in a design/plan document.
+   * Saved the document in the repository under `future_features/anvil_simulation.md` with a preamble instructing AI agents to ignore it for now.
+
+### Changes Applied
+* **File Created:** `future_features/anvil_simulation.md`
+  * Includes the research notes, concepts, installation steps, and the code template for `tests/simulate_mainnet_fork.mjs` with an ignore notice for AI agents.
+
+---
+
 ## 2026-06-17 - Integrated Oracle and Implied Swap Prices in Pre-Transaction Preview
 
 ### Summary of Investigation
@@ -924,5 +969,39 @@
   ```bash
   npm test --prefix tests
   ```
+
+---
+
+## 2026-06-18 - Fixed Full Migration Arithmetic Underflow Panic (0x11) in Repayment Step
+
+### Summary of Investigation
+1. **The Bug:** During wallet transaction simulation, full migration (rollover) failed with error: `Simulation Failed (panic: arithmetic underflow or overflow (0x11) #-39000)`.
+2. **Analysis:** 
+   * In a full migration, the transaction builder previously compiled the repayment step with `repayAmount = 0` and `repayShares = type(uint256).max` (`2**256 - 1`) as a sentinel.
+   * However, the core Morpho Blue protocol does not support `type(uint256).max` for `repayShares` (it is not a protocol sentinel for "repay all").
+   * During the execution of `repay`, the contract performs a checked subtraction in Solidity 0.8+: `borrowShares - shares` where `shares` is `type(uint256).max`.
+   * Because the input `shares` value is much larger than the user's actual `borrowShares`, this subtraction underflows, triggering the Solidity `0x11` panic code.
+   * Partial migrations did not fail because they specified a non-zero `repayAmount` and `repayShares = 0`.
+3. **Resolution:**
+   * Updated the frontend to retrieve the user's exact raw `borrowShares` when fetching the active position from the Morpho Blue contract.
+   * Stored the user's borrow shares in a global state variable `liveBorrowShares`.
+   * Updated the full migration transaction compiler to pass `liveBorrowShares` as the `repayShares` argument instead of `type(uint256).max`.
+   * Added automated verification tests to `tests/preview_workflow.test.mjs` that decode the generated transaction bundle's calldata parameters to assert that `repayShares` matches the exact fetched borrow shares.
+
+### Changes Applied
+* **File Updated:** [app.js](app.js)
+  - Updated `fetchMorphoPosition` to return `borrowShares`.
+  - Updated `connectAndLoadPosition` to assign the fetched `borrowShares` to `liveBorrowShares`.
+  - Updated `initiateMigration` to compile `repayShares = liveBorrowShares` in full migration mode.
+* **File Updated:** [tests/preview_workflow.test.mjs](tests/preview_workflow.test.mjs)
+  - Imported `decodeFunctionData` and `decodeAbiParameters` from `viem`.
+  - Decoded the compiled multicall calldata before submitting to verify that the `repayShares` parameter matches the exact user borrow shares value (`6195880000n`).
+
+### Verification Terminal Commands Run
+* Run all unit and integration tests:
+  ```bash
+  npm test --prefix tests
+  ```
+
 
 

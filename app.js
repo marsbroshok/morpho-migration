@@ -113,6 +113,7 @@ const MORPHO_BLUE_ABI = [
 let userAddress = null;
 let liveDebt = 0n;
 let liveCollateral = 0n;
+let liveBorrowShares = 0n;
 let migrationType = 'full';
 let publicClient = null;
 let pendingTx = null;
@@ -181,57 +182,85 @@ async function auditRealizedPrice(txHash) {
     
     const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
     
-    // Summarize relevant transfers in logs to audit execution rate
-    let oldPtTransfers = 0n;
-    let newPtTransfers = 0n;
-    let usdcTransfers = 0n;
-    
     // We can extract input/output tokens dynamically from input fields if available
     const oldPt = document.getElementById('oldPtAddress')?.value || document.getElementById('levPtAddress')?.value;
     const newPt = document.getElementById('newPtAddress')?.value || oldPt; // fallback
     const usdc = document.getElementById('usdcAddress')?.value || document.getElementById('levUsdcAddress')?.value;
-    
+
+    let spentToken = null;
+    let receivedToken = null;
+    let isLeverageUp = false;
+
+    if (pendingTx) {
+      if (pendingTx.type === 'rollover') {
+        spentToken = oldPt ? getAddress(oldPt) : null;
+        receivedToken = newPt ? getAddress(newPt) : null;
+      } else if (pendingTx.type === 'leverage') {
+        if (pendingTx.subType === 'deleverage') {
+          spentToken = oldPt ? getAddress(oldPt) : null;
+          receivedToken = usdc ? getAddress(usdc) : null;
+        } else if (pendingTx.subType === 'leverage_up') {
+          spentToken = usdc ? getAddress(usdc) : null;
+          receivedToken = oldPt ? getAddress(oldPt) : null;
+          isLeverageUp = true;
+        }
+      }
+    }
+
+    let spentAmount = 0n;
+    let receivedAmount = 0n;
+
     for (const log of receipt.logs) {
-      if (log.topics[0] === TRANSFER_TOPIC) {
+      if (log.topics[0] === TRANSFER_TOPIC && log.topics.length >= 3) {
         const value = BigInt(log.data === '0x' ? '0' : log.data);
         const tokenAddr = getAddress(log.address);
-        if (oldPt && tokenAddr === getAddress(oldPt)) {
-          oldPtTransfers += value;
-        } else if (newPt && tokenAddr === getAddress(newPt)) {
-          newPtTransfers += value;
-        } else if (usdc && tokenAddr === getAddress(usdc)) {
-          usdcTransfers += value;
+        const fromAddr = getAddress('0x' + log.topics[1].slice(26));
+        const toAddr = getAddress('0x' + log.topics[2].slice(26));
+
+        if (spentToken && tokenAddr === spentToken && fromAddr === getAddress(MORPHO_BUNDLER_V3)) {
+          spentAmount += value;
+        }
+        if (receivedToken && tokenAddr === receivedToken && toAddr === getAddress(ETHER_GENERAL_ADAPTER_1)) {
+          receivedAmount += value;
         }
       }
     }
     
     let auditMessage = "";
-    if (oldPtTransfers > 0n && newPtTransfers > 0n) {
-      // Rollover rate
-      const realizedRate = Number(newPtTransfers * 10n**18n / oldPtTransfers) / 1e18;
-      let rateCompare = "";
-      let priceImpactMessage = "";
-      if (pendingTx && pendingTx.type === 'rollover' && pendingTx.estimatedRate) {
-        rateCompare = ` (Estimated: ${pendingTx.estimatedRate.toFixed(4)} PT-new)`;
+    if (spentAmount > 0n && receivedAmount > 0n) {
+      let realizedRate = 0;
+      if (pendingTx && pendingTx.type === 'rollover') {
+        realizedRate = Number(receivedAmount * 10n**18n / spentAmount) / 1e18;
+        let rateCompare = ` (Estimated: ${pendingTx.estimatedRate.toFixed(4)} PT-new)`;
+        let priceImpactMessage = "";
         if (pendingTx.oracleRate) {
           const realizedPriceImpact = ((pendingTx.oracleRate - realizedRate) / pendingTx.oracleRate) * 100;
           priceImpactMessage = `\nRealized Price Impact: ${realizedPriceImpact.toFixed(2)}% (Estimated: ${pendingTx.estimatedPriceImpact.toFixed(2)}%, vs. Oracle).`;
         }
-      }
-      auditMessage = `\n[Post-Execution Audit]\nRealized Swap Rate: 1 PT-old = ${realizedRate.toFixed(4)} PT-new${rateCompare}.${priceImpactMessage}\n(Checked via transfer events: spent ${oldPtTransfers / 10n**18n} PT, received ${newPtTransfers / 10n**18n} PT).`;
-    } else if (oldPtTransfers > 0n && usdcTransfers > 0n) {
-      // Deleveraging swap (PT -> USDC)
-      const realizedRate = Number(usdcTransfers * 10n**18n / oldPtTransfers) / 1e18;
-      let rateCompare = "";
-      let priceImpactMessage = "";
-      if (pendingTx && pendingTx.type === 'leverage' && pendingTx.estimatedRate) {
-        rateCompare = ` (Estimated: ${pendingTx.estimatedRate.toFixed(4)} USDC)`;
-        if (pendingTx.oracleRate) {
-          const realizedPriceImpact = ((pendingTx.oracleRate - realizedRate) / pendingTx.oracleRate) * 100;
-          priceImpactMessage = `\nRealized Price Impact: ${realizedPriceImpact.toFixed(2)}% (Estimated: ${pendingTx.estimatedPriceImpact.toFixed(2)}%, vs. Oracle).`;
+        auditMessage = `\n[Post-Execution Audit]\nRealized Swap Rate: 1 PT-old = ${realizedRate.toFixed(4)} PT-new${rateCompare}.${priceImpactMessage}\n(Checked via transfer events: spent ${spentAmount / 10n**18n} PT, received ${receivedAmount / 10n**18n} PT).`;
+      } else if (pendingTx && pendingTx.type === 'leverage') {
+        if (isLeverageUp) {
+          // Leveraging up (USDC -> PT)
+          realizedRate = Number(spentAmount * 10n**30n / receivedAmount) / 1e18; // Price of 1 PT in USDC
+          let rateCompare = ` (Estimated: ${pendingTx.estimatedRate.toFixed(4)} USDC)`;
+          let priceImpactMessage = "";
+          if (pendingTx.oracleRate) {
+            const realizedPriceImpact = ((pendingTx.oracleRate - realizedRate) / pendingTx.oracleRate) * 100;
+            priceImpactMessage = `\nRealized Price Impact: ${realizedPriceImpact.toFixed(2)}% (Estimated: ${pendingTx.estimatedPriceImpact.toFixed(2)}%, vs. Oracle).`;
+          }
+          auditMessage = `\n[Post-Execution Audit]\nRealized Exchange Rate: 1 PT = ${realizedRate.toFixed(4)} USDC${rateCompare}.${priceImpactMessage}\n(Checked via transfer events: spent ${spentAmount / 10n**6n} USDC, received ${receivedAmount / 10n**18n} PT).`;
+        } else {
+          // Deleveraging (PT -> USDC)
+          realizedRate = Number(receivedAmount * 10n**30n / spentAmount) / 1e18; // Price of 1 PT in USDC
+          let rateCompare = ` (Estimated: ${pendingTx.estimatedRate.toFixed(4)} USDC)`;
+          let priceImpactMessage = "";
+          if (pendingTx.oracleRate) {
+            const realizedPriceImpact = ((pendingTx.oracleRate - realizedRate) / pendingTx.oracleRate) * 100;
+            priceImpactMessage = `\nRealized Price Impact: ${realizedPriceImpact.toFixed(2)}% (Estimated: ${pendingTx.estimatedPriceImpact.toFixed(2)}%, vs. Oracle).`;
+          }
+          auditMessage = `\n[Post-Execution Audit]\nRealized Exchange Rate: 1 PT = ${realizedRate.toFixed(4)} USDC${rateCompare}.${priceImpactMessage}\n(Checked via transfer events: spent ${spentAmount / 10n**18n} PT, received ${receivedAmount / 10n**6n} USDC).`;
         }
       }
-      auditMessage = `\n[Post-Execution Audit]\nRealized Exchange Rate: 1 PT = ${realizedRate.toFixed(4)} USDC${rateCompare}.${priceImpactMessage}\n(Checked via transfer events: spent ${oldPtTransfers / 10n**18n} PT, received ${usdcTransfers / 10n**6n} USDC).`;
     }
     
     statusEl.className = 'success';
@@ -267,7 +296,7 @@ async function fetchMorphoPosition(publicClient, marketId, userAddress) {
     debt = (borrowShares * totalBorrowAssets) / totalBorrowShares;
   }
 
-  return { collateral, debt };
+  return { collateral, debt, borrowShares };
 }
 
 async function fetchPendleRoute(inputToken, inputAmount, outputToken, slippage) {
@@ -336,6 +365,7 @@ async function connectAndLoadPosition() {
     const position = await fetchMorphoPosition(publicClient, oldMarketId, userAddress);
     liveCollateral = position.collateral;
     liveDebt = position.debt;
+    liveBorrowShares = position.borrowShares;
 
     const oldMarketParams = await fetchMarketParams(oldMarketId);
     const oraclePrice = await publicClient.readContract({
@@ -546,7 +576,7 @@ async function initiateMigration() {
     const bufferAmount = 2n * 10n ** 6n; // 2 USDC interest buffer
     const flashLoanAmount = isFull ? (debtAmount + bufferAmount) : debtAmount;
     const repayAmount = isFull ? 0n : debtAmount;
-    const repayShares = isFull ? 2n ** 256n - 1n : 0n;
+    const repayShares = isFull ? liveBorrowShares : 0n;
     const supplyAmount = 2n ** 256n - 1n; // Always supply entire swapped balance
     const borrowAmount = flashLoanAmount;
 
@@ -1171,6 +1201,7 @@ async function executeLeverageAdjustment() {
       data: finalCalldata,
       value: 0n,
       type: 'leverage',
+      subType: (params.mode === 'deleverage' || params.mode === 'deleverage-to-1x') ? 'deleverage' : 'leverage_up',
       oracleRate: Number(oracleRate) / 1e18,
       estimatedRate: Number(quotedRate) / 1e18,
       estimatedPriceImpact: slippagePct

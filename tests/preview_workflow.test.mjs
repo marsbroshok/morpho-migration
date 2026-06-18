@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { JSDOM, VirtualConsole } from 'jsdom';
+import { decodeFunctionData, decodeAbiParameters } from 'viem';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -124,17 +126,45 @@ appCode = appCode.replace(/createPublicClient\s*\(\s*\{[^}]*\}\s*\)/g, `(() => {
     waitForTransactionReceipt: async () => {
       return {
         logs: [
-          // Transfer of old PT (1000 PT)
+          // 1. Real Transfer of old PT: from MORPHO_BUNDLER_V3 (1000 PT)
           {
             address: '0x3365554A61CeFF74A76528f9e86C1E87946d16a5',
-            topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'],
+            topics: [
+              '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+              '0x0000000000000000000000006566194141eefa99Af43Bb5Aa71460Ca2Dc90245', // from BUNDLER
+              '0x0000000000000000000000000000000000000000000000000000000000000004'
+            ],
             data: '0x00000000000000000000000000000000000000000000003635c9adc5dea00000'
           },
-          // Transfer of new PT (995 PT)
+          // 2. Dummy Transfer of old PT (500 PT) - should be ignored (not from BUNDLER)
+          {
+            address: '0x3365554A61CeFF74A76528f9e86C1E87946d16a5',
+            topics: [
+              '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+              '0x0000000000000000000000000000000000000000000000000000000000000008', // not BUNDLER
+              '0x0000000000000000000000006566194141eefa99Af43Bb5Aa71460Ca2Dc90245'
+            ],
+            data: '0x00000000000000000000000000000000000000000000001b1ae4d6e2ef500000'
+          },
+          // 3. Real Transfer of new PT: to ETHER_GENERAL_ADAPTER_1 (994.498 PT)
           {
             address: '0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150',
-            topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'],
+            topics: [
+              '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+              '0x0000000000000000000000000000000000000000000000000000000000000004',
+              '0x0000000000000000000000004A6c312ec70E8747a587EE860a0353cd42Be0aE0'  // to ADAPTER
+            ],
             data: '0x000000000000000000000000000000000000000000000035ee8b199ee5100000'
+          },
+          // 4. Dummy Transfer of new PT (300 PT) - should be ignored (not to ADAPTER)
+          {
+            address: '0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150',
+            topics: [
+              '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+              '0x0000000000000000000000004A6c312ec70E8747a587EE860a0353cd42Be0aE0',
+              '0x0000000000000000000000000000000000000000000000000000000000000009'  // not ADAPTER
+            ],
+            data: '0x00000000000000000000000000000000000000000000001043561a8829300000'
           }
         ]
       };
@@ -187,7 +217,115 @@ try {
   assert.ok(previewMetrics.innerHTML.includes("Oracles: PT-old = $0.9500, PT-new = $0.9500"), "Should display oracle prices in preview metrics");
   assert.ok(previewMetrics.innerHTML.includes("Implied: 1 PT-old = $0.9500"), "Should display implied swap price of PT-old in preview metrics");
 
+  // Verify compiled calldata structure and repayShares parameter
+  const rawCalldata = document.getElementById('rawCalldataTextarea').value;
+  assert.ok(rawCalldata, "Raw calldata should be populated in textarea");
+
+  const decodedMulticall = decodeFunctionData({
+    abi: [
+      {
+        "inputs": [
+          {
+            "components": [
+              { "name": "to", "type": "address" },
+              { "name": "data", "type": "bytes" },
+              { "name": "value", "type": "uint256" },
+              { "name": "skipRevert", "type": "bool" },
+              { "name": "callbackHash", "type": "bytes32" }
+            ],
+            "name": "calls",
+            "type": "tuple[]"
+          }
+        ],
+        "name": "multicall",
+        "outputs": [],
+        "stateMutability": "payable",
+        "type": "function"
+      }
+    ],
+    data: rawCalldata
+  });
+
+  const outerBundle = decodedMulticall.args[0];
+  assert.strictEqual(outerBundle.length, 2, "Outer bundle should contain flashloan and sweep refund");
+
+  const flashloanCall = outerBundle[0];
+  const decodedFlashloan = decodeFunctionData({
+    abi: [
+      {
+        "inputs": [
+          { "name": "token", "type": "address" },
+          { "name": "assets", "type": "uint256" },
+          { "name": "data", "type": "bytes" }
+        ],
+        "name": "morphoFlashLoan",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+      }
+    ],
+    data: flashloanCall.data
+  });
+
+  const encodedReenterBundle = decodedFlashloan.args[2];
+  
+  const decodedReenterParams = decodeAbiParameters(
+    [
+      {
+        name: 'bundle',
+        type: 'tuple[]',
+        components: [
+          { name: 'to', type: 'address' },
+          { name: 'data', type: 'bytes' },
+          { name: 'value', type: 'uint256' },
+          { name: 'skipRevert', type: 'bool' },
+          { name: 'callbackHash', type: 'bytes32' }
+        ]
+      }
+    ],
+    encodedReenterBundle
+  );
+
+  const reenterBundle = decodedReenterParams[0];
+  assert.strictEqual(reenterBundle.length, 6, "Reenter bundle should contain 6 actions");
+
+  const repayCall = reenterBundle[0];
+  const decodedRepay = decodeFunctionData({
+    abi: [
+      {
+        "inputs": [
+          {
+            "components": [
+              { "name": "loanToken", "type": "address" },
+              { "name": "collateralToken", "type": "address" },
+              { "name": "oracle", "type": "address" },
+              { "name": "irm", "type": "address" },
+              { "name": "lltv", "type": "uint256" }
+            ],
+            "name": "marketParams",
+            "type": "tuple"
+          },
+          { "name": "assets", "type": "uint256" },
+          { "name": "shares", "type": "uint256" },
+          { "name": "maxSharePriceE27", "type": "uint256" },
+          { "name": "onBehalf", "type": "address" },
+          { "name": "data", "type": "bytes" }
+        ],
+        "name": "morphoRepay",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+      }
+    ],
+    data: repayCall.data
+  });
+
+  const repaySharesArg = decodedRepay.args[2];
+  console.log("Decoded repayShares:", repaySharesArg);
+  assert.strictEqual(repaySharesArg, 6195880000n, "repayShares should be the exact user's borrow shares (6195880000n)");
+
   // Step 3: Trigger confirm execution
+
   console.log("Confirming execution to send transaction to wallet...");
   confirmExecuteBtn.click();
   await new Promise(resolve => setTimeout(resolve, 100)); // wait for tx confirmation and audit log parsing
