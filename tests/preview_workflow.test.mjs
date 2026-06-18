@@ -182,6 +182,11 @@ try {
   // Verify that slippage badge contains calculated rate
   assert.ok(previewSlippageBadge.innerText.includes("Price Impact:"), "Slippage badge should display Price Impact text");
 
+  // Verify that previewMetrics element contains oracle prices and implied prices next to the ratios
+  const previewMetrics = document.getElementById('previewMetrics');
+  assert.ok(previewMetrics.innerHTML.includes("Oracles: PT-old = $0.9500, PT-new = $0.9500"), "Should display oracle prices in preview metrics");
+  assert.ok(previewMetrics.innerHTML.includes("Implied: 1 PT-old = $0.9500"), "Should display implied swap price of PT-old in preview metrics");
+
   // Step 3: Trigger confirm execution
   console.log("Confirming execution to send transaction to wallet...");
   confirmExecuteBtn.click();

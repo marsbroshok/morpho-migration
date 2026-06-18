@@ -761,11 +761,16 @@ async function initiateMigration() {
       document.getElementById('maturityNotice').style.display = 'none';
     }
 
+    const oldOraclePriceUsdc = Number(oldOraclePrice) / 1e24;
+    const newOraclePriceUsdc = Number(newOraclePrice) / 1e24;
+    const expectedRate = Number(quotedRate) / 1e18;
+    const impliedOldPriceUsdc = expectedRate * newOraclePriceUsdc;
+
     document.getElementById('previewMetrics').innerHTML = `
       <div style="margin-bottom: 12px;">
         <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Token Swap Exchange Rates</strong>
-        Expected Swap Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${(Number(quotedRate)/1e18).toFixed(4)} PT-new</span><br>
-        Oracle Fair Value Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${(Number(oracleRatio)/1e18).toFixed(4)} PT-new</span><br>
+        Expected Swap Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${expectedRate.toFixed(4)} PT-new</span> <span style="color: #94a3b8; font-size: 12px;">(Implied: 1 PT-old = $${impliedOldPriceUsdc.toFixed(4)})</span><br>
+        Oracle Fair Value Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${(Number(oracleRatio)/1e18).toFixed(4)} PT-new</span> <span style="color: #94a3b8; font-size: 12px;">(Oracles: PT-old = $${oldOraclePriceUsdc.toFixed(4)}, PT-new = $${newOraclePriceUsdc.toFixed(4)})</span><br>
         Price Impact (vs. Oracle): <span style="font-weight: 600; color: ${slippagePct > 1.0 ? '#f87171' : '#34d399'}">${slippagePct.toFixed(2)}%</span>
       </div>
       
@@ -984,12 +989,13 @@ async function executeLeverageAdjustment() {
     const params = calculateLeverageAdjustmentParams(levDebt, levCollateral, oraclePrice, swapPrice, targetLeverage);
 
     let finalCalldata;
+    let routeData;
     
     if (params.mode === 'deleverage' || params.mode === 'deleverage-to-1x') {
       // --- DELEVERAGING SWAP PATH: PT -> USDC ---
       statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for deleverage swap (PT -> USDC)...`;
       
-      const routeData = await fetchPendleRoute(ptAddress, params.collateralAmount, usdcAddress, Number(slippage) / 10000);
+      routeData = await fetchPendleRoute(ptAddress, params.collateralAmount, usdcAddress, Number(slippage) / 10000);
       const expectedUsdcOutput = BigInt(routeData.outputs[0].amount);
       
       statusEl.innerText = `Pendle Swap path resolved! Expected Output: ${(Number(expectedUsdcOutput)/1e6).toFixed(2)} USDC.\nGenerating atomic flashloan bundle...`;
@@ -1072,7 +1078,7 @@ async function executeLeverageAdjustment() {
       // --- LEVERAGING UP SWAP PATH: USDC -> PT ---
       statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for leverage-up swap (USDC -> PT)...`;
       
-      const routeData = await fetchPendleRoute(usdcAddress, params.debtAmount, ptAddress, Number(slippage) / 10000);
+      routeData = await fetchPendleRoute(usdcAddress, params.debtAmount, ptAddress, Number(slippage) / 10000);
       const expectedPtOutput = BigInt(routeData.outputs[0].amount);
       
       statusEl.innerText = `Pendle Swap path resolved! Expected Output: ${(Number(expectedPtOutput)/1e18).toFixed(4)} PT.\nGenerating atomic flashloan bundle...`;

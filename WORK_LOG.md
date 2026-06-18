@@ -1,5 +1,52 @@
 # Project Work Log
 
+## 2026-06-17 - Integrated Oracle and Implied Swap Prices in Pre-Transaction Preview
+
+### Summary of Investigation
+1. **The Goal:** Show actual oracle prices and implied swap prices for both old and new tokens right next to the current ratios in the Rollover pre-transaction preview to make the math of the price impact clear and intuitive.
+2. **Resolution:**
+   * Kept the implementation extremely lean, simple, and KISS.
+   * Calculated the actual oracle prices of both PT-old and PT-new in USDC (by dividing Morpho Blue oracle prices by $10^{24}$).
+   * Computed the implied swap price of PT-old by multiplying the expected swap rate with the oracle price of PT-new.
+   * Embedded these computed prices directly next to the "Expected Swap Rate" and "Oracle Fair Value Rate" ratios in the `previewMetrics` section of the Rollover tab.
+   * Wrote failing TDD assertions in JSDOM tests to verify that these price labels exist in the rendered preview output.
+   * Verified that all unit, integration, and pre-transaction workflow tests pass successfully.
+
+### Changes Applied
+* **File Updated:** `app.js`
+  * Added calculation of `oldOraclePriceUsdc`, `newOraclePriceUsdc`, and `impliedOldPriceUsdc`.
+  * Updated `previewMetrics.innerHTML` in `initiateMigration()` to render implied swap and oracle prices next to the exchange rates.
+* **File Updated:** `tests/preview_workflow.test.mjs`
+  * Added unit test assertions verifying that the rendered pre-transaction preview contains the correct mocked oracle and implied swap prices.
+
+### Verification Terminal Commands Run
+* Verified unit and integration tests:
+  ```bash
+  npm test
+  ```
+
+---
+
+## 2026-06-17 - Completed Compatibility Analysis of Morpho Blue Flash Loans and Limit Orders
+
+### Summary of Investigation
+1. **The Goal:** Analyze user feedback suggesting an asynchronous, limit-order-based exit/unwind mechanism for PT-apyUSD / USDC Morpho Blue positions and investigate the compatibility between flash loans and limit orders.
+2. **Resolution:**
+   * Conducted web search and technical research on Morpho Blue flash loans, 1inch limit orders, CoW Swap limit orders, and automation patterns like keeper networks (Gelato, Chainlink Automation).
+   * Identified key friction points: Synchronous vs. Asynchronous Timing Conflict (flash loan must repay in same block, limit order takes time to fill) and the Locked Collateral Problem (collateral resides inside Morpho Blue, preventing DEX aggregators from executing standard `transferFrom` pulls).
+   * Formulated mathematical safe collateral withdrawal bounds ($C_{\text{safe\_withdraw}}$) to protect positions from liquidation during partial manual or automated unwinds.
+   * Compared two primary implementation options: Path A (Asynchronous client-side helper tab guiding users through successive safe withdrawals, limit orders, and debt repayments) and Path B (Atomic keeper-triggered smart contract unwinding on-chain).
+   * Expanded the analysis with a detailed financial cost-benefit matrix contrasting gas cost overhead (~440,000 gas per step, ~$44.00) against non-linear AMM slippage savings (saving up to $22,000+ for larger $500,000 positions).
+   * Designed a complete, high-fidelity UI/UX specification for a new "Asynchronous Deleveraging Assistant" featuring a radial Health Gauge, progress timeline wizard, and live order status card.
+   * Proposed a highly advanced, institutional-grade automated solution leveraging Gnosis Safe Modules and CoW Swap's **ComposableCoW** framework for automated, atomic solver-level loop settlement.
+   * Compiled a comprehensive, structured technical analysis report in the local artifact directory (`limit_order_flashloan_analysis.md`).
+
+### Changes Applied
+* **File Updated:** `limit_order_flashloan_analysis.md` (local artifact directory)
+  * Prepared detailed structural analysis covering the timing conflict, locked collateral issue, safety modeling, financial trade-offs, UX design specification, ComposableCoW architecture, and implementation roadmap.
+
+---
+
 ## 2026-06-17 - Renamed UI Slippage Tolerance Labels to Slippage to Prevent Layout Wrapping
 
 ### Summary of Investigation
@@ -848,5 +895,34 @@
   - Evaluated dependency vulnerabilities in `tests` directory via `npm audit`.
 * **File Created**:
   - Created a local security audit report artifact (`security_audit_report.md`) detailing the findings, threat model, and recommendations.
+
+---
+
+## 2026-06-18 - Fixed Leverage Adjustment routeData Scope Reference Error
+
+### Summary of Investigation
+1. **The Bug:** Attempting to deleverage in the frontend threw a `ReferenceError: routeData is not defined` inside `executeLeverageAdjustment()`.
+2. **Analysis:** 
+   * In `app.js`, `routeData` was defined locally using `const` inside separate `if` and `else` blocks representing the deleverage and leverage-up routing query steps.
+   * However, after the conditional blocks, `routeData` was accessed in the outer function scope to calculate rates and outputs for preview rendering. Since it was not declared in the outer scope, it caused a runtime `ReferenceError`.
+3. **Resolution:**
+   * Moved the declaration of `routeData` to the outer scope of `executeLeverageAdjustment()` using `let routeData;`.
+   * Replaced the block-scoped `const routeData` declarations inside the `if` and `else` branches with assignments to the outer variable.
+   * Created a JSDOM-based integration test `tests/leverage_workflow.test.mjs` verifying the correct execution of the leverage adjustment pre-transaction preview without reference errors.
+   * Integrated the new test file into the `npm test` script in `tests/package.json`.
+
+### Changes Applied
+* **File Updated:** [app.js](app.js)
+  - Declared `routeData` in the outer scope of `executeLeverageAdjustment()` and assigned it within the conditional branches.
+* **File Created:** [tests/leverage_workflow.test.mjs](tests/leverage_workflow.test.mjs)
+  - Integration test mimicking user leverage position loading and simulated deleveraging.
+* **File Updated:** [tests/package.json](tests/package.json)
+  - Added the new test script file execution to the `test` script.
+
+### Verification Terminal Commands Run
+* Run all unit and integration tests:
+  ```bash
+  npm test --prefix tests
+  ```
 
 
