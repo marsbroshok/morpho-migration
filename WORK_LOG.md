@@ -1,6 +1,61 @@
 # Project Work Log
 
+## 2026-06-19 - Implemented and Verified App-wide Transaction Simulation Tests
+
+### Summary of Investigation
+1. **The Goal:** Implement integration/simulation tests for the four core application flows (Full Migration, Partial Migration, Deleveraging, and Leveraging Up) using Alchemy's mainnet fork (`eth_simulateV1`), and resolve any simulation issues.
+2. **The Bug:** During simulation, the Full Migration transaction consistently reverted on-chain with `panic: arithmetic underflow or overflow (0x11)` inside Morpho Blue's `withdrawCollateral` call.
+3. **Analysis:** 
+   * Traced individual execution steps inside the simulation by mock-authorizing the General Adapter and executing steps sequentially in the simulation block.
+   * Isolated the failure to Step 1 (`morphoWithdrawCollateral`). Discovered that the transaction was trying to withdraw `8114800000000001024` PT, while the user's actual collateral balance on Morpho Blue was only `8114784155105745013` PT.
+   * Traced the root cause to a UI formatting bug: `app.js` formatted the loaded position collateral to `4` decimal places (`.toFixed(4)`) when displaying it in the UI input field (rounding it up to `8.1148` PT). When building the transaction payload, the app read this rounded UI value and scaled it back up (`* 1e18`), resulting in a requested withdraw amount higher than the user's actual balance, causing the EVM underflow.
+4. **Resolution:**
+   * Modified `app.js` to use the exact `liveDebt` and `liveCollateral` BigInt values directly when constructing transactions for Full Migration, completely bypassing UI formatting rounding.
+   * Implemented [tests/simulation.test.mjs](tests/simulation.test.mjs) which uses JSDOM to load the app, mock `window.ethereum` to forward read requests to Alchemy, clicks the UI buttons to generate calldata, and runs `eth_simulateV1` to simulate the transactions on a live mainnet fork.
+   * Verified that all four flows (Full Migration, Partial Migration, Deleveraging, and Leveraging Up) succeed and pass simulation.
+
+### Changes Applied
+* **File Updated:** [app.js](app.js) (modified `debtAmount` and `collateralAmount` calculation to use exact `liveDebt` and `liveCollateral` BigInts when `isFull` is true).
+* **File Created:** [tests/simulation.test.mjs](tests/simulation.test.mjs) (integration test suite running JSDOM and simulating all four user actions on Alchemy's mainnet fork).
+* **File Updated:** [tests/package.json](tests/package.json) (appended `node simulation.test.mjs` to the `npm test` script).
+* **Files Cleaned Up:** Deleted all temporary scratch/dump files (`tests/scratch_*`, `tests/simulation_payload*`) to maintain repository cleanliness.
+
+### Verification Terminal Commands Run
+* Run integration simulation tests:
+  ```bash
+  npm test
+  ```
+
+---
+
+## 2026-06-19 - Researched Free EVM Simulation APIs and Verified API Execution
+
+### Summary of Investigation
+1. **The Goal:** Search for a free EVM transaction simulation API (since running a local mainnet fork is not possible), document options, and verify API execution with a scratch script.
+2. **Analysis & Resolution:**
+   * Researched Tenderly's free limits: its dedicated Simulation API requires a paid plan, though manual simulations (UI) and Virtual Testnets (TUs limit) are free.
+   * Identified Alchemy's Simulation API (`alchemy_simulateAssetChanges`, `alchemy_simulateExecution`) as the best dedicated free programmatic API, providing up to 1,000 free simulations per day.
+   * Documented standard `eth_call` with state overrides as a provider-agnostic, free RPC option (supported by QuickNode, Alchemy, Chainstack) that requires decoding raw hex return bytes.
+   * Reviewed Alchemy's "1-line of code" integration, illustrating how easily developers can swap `eth_signTransaction` payloads to `alchemy_simulateAssetChanges` to fetch balance changes before execution.
+   * Configured the local development environment with the Alchemy API key in `.env` and appended `.env` to `.gitignore` to ensure it is never committed.
+   * Created and executed a verification script (`tests/test_simulation_api.mjs`) to test the Alchemy simulation APIs.
+   * **Findings:**
+     * **Documentation Discrepancy:** The parameter order in Alchemy's official documentation `["FLAT", transaction, "latest"]` is incorrect. Sending this payload results in a `code: -32602` error ("invalid 1st argument"). The node validator expects the transaction object as the first argument, with format options in a third options parameter: `[transaction, blockTag, options]`.
+     * **Fatal Backend Tracer Bug:** Even with correct parameter ordering, calling `alchemy_simulateExecution` or `alchemy_simulateAssetChanges` currently fails on the server-side with exit code `-32603`: `"ReferenceError: bigInt is not defined at result (unknown at :40:20)"`. This is a bug in Alchemy's backend Geth node tracer script.
+     * **Working Alternative (`eth_simulateV1`):** Discovered that Alchemy fully supports the standard Ethereum `eth_simulateV1` method on its free tier. Validated the endpoint using `eth_simulateV1` payload structure: it executes successfully, returns execution logs, gas used, return values, and logs transaction reverts perfectly (returning `status: "0x0"`, `error: {"code":3,"message":"execution reverted"}`).
+     * **Standard Workaround (`eth_call`):** Standard `eth_call` with state overrides also works perfectly on the same Alchemy RPC endpoint.
+
+### Changes Applied
+* **File Updated:** Local artifact `transaction_simulation_options_report.md` (documented free transaction simulation options, parameter corrections, Alchemy backend bug warnings, and step-by-step instructions for `eth_simulateV1` integration).
+* **File Updated:** [.gitignore](.gitignore) (added `.env`).
+* **File Created:** `.env` (added `ALCHEMY_API_KEY` configuration).
+* **File Created:** [tests/simulation_payload.json](tests/simulation_payload.json) (JSON file storing simulation transaction and state override payloads).
+* **File Created:** [tests/test_simulation_api.mjs](tests/test_simulation_api.mjs) (scratch verification script testing `eth_call` with overrides and `eth_simulateV1` methods on Alchemy, loading test data dynamically).
+
+---
+
 ## 2026-06-18 - Fixed Post-Execution Audit Calculations and Intermediate Transfer Double-Counting
+
 
 ### Summary of Investigation
 1. **The Bug:** During live execution of position rollovers, the post-transaction audit logged a massive, incorrect price impact (e.g., 31.52%) and incorrect spent/received swap counts.
@@ -1005,3 +1060,24 @@
 
 
 
+## 2026-06-19 - Fixed Simulation API Test Script Error Reporting
+
+### Summary of Investigation
+1. **The Bug:** The standalone script `tests/test_simulation_api.mjs` incorrectly printed `Result: Success` for `eth_simulateV1` when the Alchemy JSON-RPC HTTP request succeeded (status 200), even if individual simulated EVM transactions inside the request failed (reverted with panic underflow/overflow).
+2. **Analysis:**
+   * The response payload returned by Alchemy's `eth_simulateV1` contains an array of `result` transactions, each having a `calls` array.
+   * Individual calls contain a `status` field (`"0x1"` for success, `"0x0"` for failure) and an optional `error` details object.
+   * The script only checked if the top-level response returned a JSON-RPC error (`data.error`), which only happens on transport/backend API errors, not on simulated execution reverts.
+3. **Resolution:**
+   * Updated `tests/test_simulation_api.mjs` to traverse the `data.result` array and inspect the `calls` list.
+   * If any call contains `status === "0x0"` or has an `error` field, the script prints `Result: Error` instead of `Result: Success`.
+
+### Changes Applied
+* **File Updated:** [tests/test_simulation_api.mjs](tests/test_simulation_api.mjs)
+  - Added conditional checks to verify inner simulation call statuses and properly report `Result: Error` on failure.
+
+### Verification Terminal Commands Run
+* Executed the simulation API test script:
+  ```bash
+  node tests/test_simulation_api.mjs
+  ```

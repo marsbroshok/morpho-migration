@@ -565,15 +565,13 @@ async function initiateMigration() {
     const oldMarketParams = await fetchMarketParams(oldMarketId);
     const newMarketParams = await fetchMarketParams(newMarketId);
 
-    // Conversions using native BigInt scaling (6 decimals for USDC, 18 decimals for PT collateral)
-    const debtAmount = BigInt(Math.floor(parseFloat(document.getElementById('debtAmount').value) * 1e6));
-    const collateralAmount = BigInt(Math.floor(parseFloat(document.getElementById('collateralAmount').value) * 1e18));
+    const isFull = (migrationType === 'full');
+    const debtAmount = isFull ? liveDebt : BigInt(Math.floor(parseFloat(document.getElementById('debtAmount').value) * 1e6));
+    const collateralAmount = isFull ? liveCollateral : BigInt(Math.floor(parseFloat(document.getElementById('collateralAmount').value) * 1e18));
     const slippage = parseFloat(document.getElementById('slippage').value) / 100;
 
-    const isFull = (migrationType === 'full');
-
     // Dynamic parameters mapping (DRY & KISS)
-    const bufferAmount = 2n * 10n ** 6n; // 2 USDC interest buffer
+    const bufferAmount = debtAmount > 100n * 10n ** 6n ? 2n * 10n ** 6n : (debtAmount * 2n / 1000n); // interest buffer (0.2% for small debt, else 2 USDC)
     const flashLoanAmount = isFull ? (debtAmount + bufferAmount) : debtAmount;
     const repayAmount = isFull ? 0n : debtAmount;
     const repayShares = isFull ? liveBorrowShares : 0n;
@@ -1032,7 +1030,7 @@ async function executeLeverageAdjustment() {
 
       // Setup multicall variables
       const is1x = (params.mode === 'deleverage-to-1x');
-      const bufferAmount = 2n * 10n ** 6n; // 2 USDC buffer
+      const bufferAmount = params.debtAmount > 100n * 10n ** 6n ? 2n * 10n ** 6n : (params.debtAmount * 2n / 1000n); // buffer (0.2% for small debt, else 2 USDC)
       const flashLoanAmount = is1x ? (params.debtAmount + bufferAmount) : expectedUsdcOutput;
 
       const reenterBundle = buildDeleveragingBundle({

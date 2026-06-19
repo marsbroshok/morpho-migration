@@ -1,0 +1,291 @@
+import assert from 'assert';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { JSDOM, VirtualConsole } from 'jsdom';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+console.log('Running JSDOM live transaction simulation integration tests...');
+
+// 1. Fetch Alchemy API Key
+let apiKey = process.env.ALCHEMY_API_KEY;
+if (!apiKey) {
+  try {
+    let envPath = path.resolve('.env');
+    if (!fs.existsSync(envPath)) {
+      envPath = path.resolve(__dirname, '../.env');
+    }
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    const match = envContent.match(/ALCHEMY_API_KEY\s*=\s*(.*)/);
+    if (match) {
+      apiKey = match[1].trim();
+    }
+  } catch (err) {
+    console.error('Could not read .env file:', err.message);
+  }
+}
+
+if (!apiKey) {
+  console.error('Error: ALCHEMY_API_KEY is not defined in process.env or .env file.');
+  process.exit(1);
+}
+
+const ALCHEMY_RPC_URL = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`;
+
+// 2. Load HTML layout
+const htmlPath = path.resolve(__dirname, '../index.html');
+const html = fs.readFileSync(htmlPath, 'utf8');
+
+// 3. Initialize JSDOM
+const virtualConsole = new VirtualConsole();
+virtualConsole.on("log", (...args) => console.log(...args));
+virtualConsole.on("info", (...args) => console.info(...args));
+virtualConsole.on("warn", (...args) => console.warn(...args));
+virtualConsole.on("error", (...args) => console.error(...args));
+
+const dom = new JSDOM(html, {
+  url: 'http://localhost',
+  virtualConsole
+});
+
+global.window = dom.window;
+global.document = dom.window.document;
+global.HTMLElement = dom.window.HTMLElement;
+global.window.fetch = global.fetch; // map fetch to Node fetch
+
+// 4. Mock window.ethereum to act as a custom forwarding provider connected to Alchemy RPC
+const TEST_USER_ADDRESS = '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a';
+
+global.window.ethereum = {
+  request: async (requestObj) => {
+    if (requestObj.method === 'eth_requestAccounts' || requestObj.method === 'eth_accounts') {
+      return [TEST_USER_ADDRESS];
+    }
+    if (requestObj.method === 'eth_sendTransaction') {
+      throw new Error("eth_sendTransaction is disabled in simulation tests.");
+    }
+    // Forward to Alchemy RPC
+    try {
+      const response = await fetch(ALCHEMY_RPC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: requestObj.method,
+          params: requestObj.params || []
+        })
+      });
+      const resData = await response.json();
+      if (resData.error) {
+        throw new Error(resData.error.message || JSON.stringify(resData.error));
+      }
+      return resData.result;
+    } catch (err) {
+      console.error(`Forwarding RPC error for ${requestObj.method}:`, err.message);
+      throw err;
+    }
+  }
+};
+
+// Helper function to call eth_simulateV1 on Alchemy RPC
+async function simulateTransaction(txPayload) {
+  const payload = {
+    id: 1,
+    jsonrpc: "2.0",
+    method: "eth_simulateV1",
+    params: [
+      {
+        blockStateCalls: [
+          {
+            calls: [
+              {
+                from: TEST_USER_ADDRESS,
+                to: txPayload.to,
+                value: txPayload.value ? `0x${txPayload.value.toString(16)}` : '0x0',
+                data: txPayload.data
+              }
+            ]
+          }
+        ]
+      },
+      "latest"
+    ]
+  };
+
+  const response = await fetch(ALCHEMY_RPC_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  if (data.error) {
+    throw new Error(`Simulation API error: ${JSON.stringify(data.error)}`);
+  }
+  const result = data.result[0];
+  if (result.status === '0x0' || !result.status) {
+    console.error("Simulation failed! Raw result:", JSON.stringify(result, null, 2));
+  }
+  return result;
+}
+
+// 5. Preprocess app.js and write shadow file
+const appPath = path.resolve(__dirname, '../app.js');
+let appCode = fs.readFileSync(appPath, 'utf8');
+
+// Replace CDN imports with standard Node package imports
+appCode = appCode.replace(/from\s+['"]https:\/\/esm\.sh\/viem['"]/g, "from 'viem'");
+appCode = appCode.replace(/from\s+['"]https:\/\/esm\.sh\/viem\/chains['"]/g, "from 'viem/chains'");
+appCode = appCode.replace(/from\s+['"]\.\/math\.js['"]/g, "from '../math.js'");
+appCode = appCode.replace(/from\s+['"]\.\/labels\.js['"]/g, "from '../labels.js'");
+appCode = appCode.replace(/from\s+['"]\.\/builders\.js['"]/g, "from '../builders.js'");
+
+const shadowPath = path.resolve(__dirname, './simulation.shadow.mjs');
+fs.writeFileSync(shadowPath, appCode, 'utf8');
+
+try {
+  // Import app code to bind events
+  const appModule = await import('./simulation.shadow.mjs');
+  await new Promise(resolve => setTimeout(resolve, 100)); // wait for initial render
+
+  const loadPositionBtn = document.getElementById('loadPositionBtn');
+  const migrateBtn = document.getElementById('migrateBtn');
+  const debtAmountInput = document.getElementById('debtAmount');
+  const collateralAmountInput = document.getElementById('collateralAmount');
+  
+  const levLoadBtn = document.getElementById('levLoadBtn');
+  const levExecuteBtn = document.getElementById('levExecuteBtn');
+  const levSlider = document.getElementById('levSlider');
+  const statusEl = document.getElementById('status');
+
+  // --- Step 1: Load Live Position ---
+  console.log("Loading live position from mainnet for user:", TEST_USER_ADDRESS);
+  loadPositionBtn.click();
+  
+  // Wait for position to load (this will perform real RPC queries via our mock ethereum provider)
+  let retries = 20;
+  while (retries > 0 && (!debtAmountInput.value || parseFloat(debtAmountInput.value) === 6195.88)) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    retries--;
+  }
+
+  const liveDebt = parseFloat(debtAmountInput.value);
+  const liveCollateral = parseFloat(collateralAmountInput.value);
+  console.log(`Loaded position successfully: Debt = ${liveDebt} USDC, Collateral = ${liveCollateral} PT`);
+  
+  assert.ok(liveDebt > 0, "Live debt should be loaded from mainnet (> 0)");
+  assert.ok(liveCollateral > 0, "Live collateral should be loaded from mainnet (> 0)");
+
+  // Keep reference of loaded live position details for leverage tab testing
+  const savedDebt = liveDebt;
+  const savedCollateral = liveCollateral;
+
+  // --- Test 1: Full Migration Simulation ---
+  console.log("\n--- Simulating Full Migration Flow ---");
+  // Set full migration
+  document.getElementById('toggleFull').click();
+  // Set to full values
+  debtAmountInput.value = liveDebt.toString();
+  collateralAmountInput.value = liveCollateral.toString();
+  
+  migrateBtn.click();
+  
+  // Wait for calldata to populate
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
+  let calldata = document.getElementById('rawCalldataTextarea').value;
+  if (!calldata) {
+    console.error("DEBUG: statusEl class =", statusEl.className);
+    console.error("DEBUG: statusEl text =", statusEl.innerText);
+  }
+  assert.ok(calldata, "Calldata should be populated in textarea");
+  
+  let txPayload = { to: '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', data: calldata, value: 0n };
+  
+  console.log("Calldata generated for Full Migration. Simulating on mainnet fork...");
+  let simResult = await simulateTransaction(txPayload);
+  console.log("Full Migration simulation status:", simResult.status || simResult.calls?.[0]?.status, "Gas Used:", simResult.gasUsed);
+  assert.ok(simResult.status === '0x1' || simResult.calls?.every(c => c.status === '0x1'), "Full Migration simulation failed");
+
+  // --- Test 2: Partial Migration Simulation (50% of position) ---
+  console.log("\n--- Simulating Partial Migration Flow (50% of position) ---");
+  document.getElementById('togglePartial').click();
+  
+  const partialDebt = (liveDebt * 0.5).toFixed(2);
+  const partialCollateral = (liveCollateral * 0.5).toFixed(4);
+  console.log(`Setting partial values: Debt = ${partialDebt} USDC, Collateral = ${partialCollateral} PT`);
+  
+  debtAmountInput.value = partialDebt;
+  debtAmountInput.dispatchEvent(new window.Event('input'));
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  migrateBtn.click();
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
+  calldata = document.getElementById('rawCalldataTextarea').value;
+  assert.ok(calldata, "Calldata should be populated in textarea for partial migration");
+  txPayload = { to: '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', data: calldata, value: 0n };
+
+  console.log("Calldata generated for Partial Migration. Simulating on mainnet fork...");
+  simResult = await simulateTransaction(txPayload);
+  console.log("Partial Migration simulation status:", simResult.status || simResult.calls?.[0]?.status, "Gas Used:", simResult.gasUsed);
+  assert.ok(simResult.status === '0x1' || simResult.calls?.every(c => c.status === '0x1'), "Partial Migration simulation failed");
+
+  // --- Switch to Tab 2 (Leverage) ---
+  console.log("\nSwitching to Adjust Leverage Tab...");
+  document.getElementById('tabHeaderLeverage').click();
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  // Load Leverage position
+  console.log("Loading live leverage position...");
+  levLoadBtn.click();
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  // --- Test 3: Deleveraging Simulation (Deleveraging to 2.0x) ---
+  console.log("\n--- Simulating Deleveraging Flow ---");
+  // Set slider to 2.0x (lower than current leverage, which is ~3.0x)
+  levSlider.value = "2.00";
+  levSlider.dispatchEvent(new window.Event('input'));
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  console.log("Simulating deleveraging action...");
+  levExecuteBtn.click();
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  calldata = document.getElementById('rawCalldataTextarea').value;
+  assert.ok(calldata, "Calldata should be populated in textarea for deleverage");
+  txPayload = { to: '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', data: calldata, value: 0n };
+
+  console.log("Calldata generated for Deleveraging. Simulating on mainnet fork...");
+  simResult = await simulateTransaction(txPayload);
+  console.log("Deleveraging simulation status:", simResult.status || simResult.calls?.[0]?.status, "Gas Used:", simResult.gasUsed);
+  assert.ok(simResult.status === '0x1' || simResult.calls?.every(c => c.status === '0x1'), "Deleveraging simulation failed");
+
+  // --- Test 4: Leveraging Up Simulation (Leveraging to 4.5x) ---
+  console.log("\n--- Simulating Leveraging Up Flow ---");
+  // Set slider to 4.5x (higher than current leverage)
+  levSlider.value = "4.50";
+  levSlider.dispatchEvent(new window.Event('input'));
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  console.log("Simulating leveraging up action...");
+  levExecuteBtn.click();
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  calldata = document.getElementById('rawCalldataTextarea').value;
+  assert.ok(calldata, "Calldata should be populated in textarea for leverage_up");
+  txPayload = { to: '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', data: calldata, value: 0n };
+
+  console.log("Calldata generated for Leveraging Up. Simulating on mainnet fork...");
+  simResult = await simulateTransaction(txPayload);
+  console.log("Leveraging Up simulation status:", simResult.status || simResult.calls?.[0]?.status, "Gas Used:", simResult.gasUsed);
+  assert.ok(simResult.status === '0x1' || simResult.calls?.every(c => c.status === '0x1'), "Leveraging Up simulation failed");
+
+  console.log("\nAll live transaction simulation integration tests passed successfully!");
+} finally {
+  if (fs.existsSync(shadowPath)) {
+    fs.unlinkSync(shadowPath);
+  }
+}
