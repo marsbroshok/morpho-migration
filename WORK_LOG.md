@@ -1,5 +1,36 @@
 # Project Work Log
 
+## 2026-06-19 - Resolved Deleveraging Rounding Reverts and Upgraded Leverage Simulation Tests
+
+### Summary of Investigation
+1. **The Bug:** During simulation of the partial deleveraging flow on the Alchemy mainnet fork, the transaction reverted with `execution reverted: transferFrom reverted`.
+2. **Analysis:**
+   * Wrote a scratch debugger script to run subset prefixes of the bundle (N=1 to N=4) and found that even Case 1 (only `morphoRepay` inside the flashloan callback) reverted.
+   * Isolated the cause: when the flashloan callback executes, it repays the borrowed USDC. However, due to minor rounding down or slippage on-chain, the swap output returned by Pendle Router was slightly less than the expected quote (e.g. 426 USDC wei difference).
+   * Since the flashloan and repay amounts were set to exactly `expectedUsdcOutput`, the minor loss left the Adapter contract short of USDC, causing the flashloan repayment pull to fail at the end of the callback.
+3. **Resolution:**
+   * Modified `app.js` to subtract a 1.00 USDC buffer from the flashloan and repay amounts when performing partial deleveraging. This guarantees that the swap output will always exceed the flashloan amount.
+   * Enabled sweeping of any leftover USDC back to the user's wallet via the Adapter's `erc20Transfer` function for all deleveraging paths (ensuring no USDC remains stuck).
+   * Verified that the flashloaned transaction succeeds under JSDOM and Alchemy simulation.
+4. **Upgrading Leverage Simulation Tests:**
+   * Identified that leveraging up on the old market failed because the underlying PT-old token had matured (June 18, 2026), and Pendle AMM disables buying matured PTs (returning a 400 error).
+   * Upgraded `tests/leverage_simulation.test.mjs` to dynamically perform the deleveraging simulation on the old market and the leveraging-up simulation on the new market (`0xb37c30f3...` / `PT-apyUSD-5NOV2026`) using a live position from user `0xa9BAbD59748a5077AdD757DA038F5F7083bCE9bD`.
+   * Programmatically queried and validated user authorizations (`isAuthorized`) on-chain before simulating, only prepending setup authorization transactions if they are not already set.
+   * **Result:** Both leverage-up and deleverage flows passed simulation successfully.
+
+### Changes Applied
+* **File Updated:** [app.js](app.js) (introduced a 1.00 USDC buffer on flashloan and repay amounts during partial deleveraging, and enabled sweep calls for all deleveraging paths).
+* **File Updated:** [tests/leverage_simulation.test.mjs](tests/leverage_simulation.test.mjs) (upgraded leverage simulation tests to use active markets/positions for leveraging-up and dynamically check authorizations on-chain).
+* **Files Cleaned Up:** Deleted temporary scratch debug scripts (`tests/scratch_debug_*`, `tests/scratch_slot_verify.mjs`, `tests/scratch_test_pendle_*`).
+
+### Verification Terminal Commands Run
+* Run leverage simulation tests:
+  ```bash
+  node tests/leverage_simulation.test.mjs
+  ```
+
+---
+
 ## 2026-06-19 - Implemented and Verified App-wide Transaction Simulation Tests
 
 ### Summary of Investigation

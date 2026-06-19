@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node leverage.test.mjs && node leverage_adjust.test.mjs && node builders.test.mjs && node integration.test.mjs && node app.test.mjs && node preview_workflow.test.mjs && node leverage_workflow.test.mjs && node simulation.test.mjs"
+    "test": "node leverage.test.mjs && node leverage_adjust.test.mjs && node builders.test.mjs && node integration.test.mjs && node app.test.mjs && node preview_workflow.test.mjs && node leverage_workflow.test.mjs && node simulation.test.mjs && node leverage_simulation.test.mjs"
   },
   "keywords": [],
   "author": "",

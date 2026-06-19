@@ -1030,14 +1030,14 @@ async function executeLeverageAdjustment() {
 
       // Setup multicall variables
       const is1x = (params.mode === 'deleverage-to-1x');
-      const bufferAmount = params.debtAmount > 100n * 10n ** 6n ? 2n * 10n ** 6n : (params.debtAmount * 2n / 1000n); // buffer (0.2% for small debt, else 2 USDC)
-      const flashLoanAmount = is1x ? (params.debtAmount + bufferAmount) : expectedUsdcOutput;
+      const bufferAmount = 1n * 10n ** 6n; // 1 USDC buffer to absorb rounding errors
+      const flashLoanAmount = is1x ? (params.debtAmount + bufferAmount) : (expectedUsdcOutput - bufferAmount);
 
       const reenterBundle = buildDeleveragingBundle({
         encodeFunctionData,
         marketParams,
         collateralAmount: params.collateralAmount,
-        debtAmount: expectedUsdcOutput,
+        debtAmount: is1x ? expectedUsdcOutput : flashLoanAmount,
         is1x,
         ptAddress,
         usdcAddress,
@@ -1082,19 +1082,17 @@ async function executeLeverageAdjustment() {
       ];
 
       // Sweep any remaining USDC buffer back to the user's wallet
-      if (is1x) {
-        outerBundle.push({
-          to: ETHER_GENERAL_ADAPTER_1,
-          data: encodeFunctionData({
-            abi: ADAPTER_ABI,
-            functionName: 'erc20Transfer',
-            args: [usdcAddress, userAddress, 2n ** 256n - 1n]
-          }),
-          value: 0n,
-          skipRevert: false,
-          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-        });
-      }
+      outerBundle.push({
+        to: ETHER_GENERAL_ADAPTER_1,
+        data: encodeFunctionData({
+          abi: ADAPTER_ABI,
+          functionName: 'erc20Transfer',
+          args: [usdcAddress, userAddress, 2n ** 256n - 1n]
+        }),
+        value: 0n,
+        skipRevert: false,
+        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+      });
 
       finalCalldata = encodeFunctionData({
         abi: BUNDLER_ABI,
