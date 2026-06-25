@@ -1,0 +1,28 @@
+{
+  "eth_call": {
+    "transaction": {
+      "from": "0xdC382CDF2a25790F535a518EC26958c227e9DCF2",
+      "to": "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245",
+      "value": "0x0",
+      "data": "0xa9059cbb00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c800000000000000000000000000000000000000c9f2c9cd04674edea400000000"
+    },
+    "stateOverrides": {
+      "0xdC382CDF2a25790F535a518EC26958c227e9DCF2": {
+        "balance": "0x8ac7230489e80000"
+      }
+    }
+  },
+  "eth_simulateV1": {
+    "blockStateCalls": [
+      {
+        "calls": [
+          {
+            "from": "0xdC382CDF2a25790F535a518EC26958c227e9DCF2",
+            "to": "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245",
+            "value": "0x0"
+          }
+        ]
+      }
+    ]
+  }
+}

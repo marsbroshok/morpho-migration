@@ -1,0 +1,298 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { RolloverCommand } from './rollover-command.js';
+import { LeverageCommand } from './leverage-command.js';
+import { BlockchainClient } from './blockchain-client.js';
+import { WalletConnector } from './wallet-connector.js';
+import { SimulationEngine } from './simulation-engine.js';
+import { TransactionAuditor } from './transaction-auditor.js';
+import { PendleRouterClient } from './pendle-router-client.js';
+import { AddressLabelResolver } from './address-label-resolver.js';
+import { CliView } from './cli-view.js';
+
+/**
+ * Main orchestrator class for CLI execution.
+ */
+export class CliRunner {
+  constructor() {
+    this.commands = ['rollover', 'adjust-leverage', 'leverage'];
+  }
+
+  /**
+   * Run the CLI tool.
+   * @param {string[]} argv 
+   */
+  async run(argv) {
+    try {
+      this.loadEnv();
+      const options = this.parseArgs(argv.slice(2));
+      
+      if (options.help) {
+        CliView.printHelp(options.helpCommand);
+        return;
+      }
+      
+      // Determine wallet connection details
+      let walletClient = null;
+      const rpcUrl = this.resolveRpcUrl(options);
+      const alchemyKey = process.env.ALCHEMY_API_KEY || null;
+      
+      if (options.walletconnect) {
+        console.log('Initializing WalletConnect connection...');
+        // WalletConnect projectId from environment or a default public one
+        const wcProjectId = process.env.WC_PROJECT_ID || '3fcc6b1f238b7d9c9a2c1f0b00000000'; // placeholder
+        const connector = new WalletConnector(wcProjectId);
+        await connector.initialize();
+        await connector.connect();
+        walletClient = connector.getWalletClient();
+        console.log('WalletConnect connection established.');
+      }
+
+      // Initialize clients
+      const blockchainClient = new BlockchainClient(rpcUrl, walletClient || options.privateKey);
+      const routerClient = new PendleRouterClient();
+      const auditor = new TransactionAuditor(blockchainClient.publicClient);
+      
+      const simulationEngine = new SimulationEngine(blockchainClient, alchemyKey);
+
+      // Initialize Label Resolver and View
+      const labelResolver = new AddressLabelResolver(blockchainClient.publicClient);
+      const view = new CliView(labelResolver);
+
+      const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
+      let commandResult = {
+        simulationResult: null,
+        txHash: null,
+        auditDetails: null
+      };
+      let txType;
+      let marketParams;
+
+      if (options.command === 'rollover') {
+        const cmd = new RolloverCommand(blockchainClient, routerClient, simulationEngine, auditor);
+        txType = 'rollover';
+
+        // Phase 1: Assessment
+        const assessment = await cmd.assessPosition(options);
+        marketParams = assessment.newMarket;
+        await view.printRolloverAssessment(assessment);
+
+        // Phase 2: Swap Routing Quote
+        const swap = await cmd.fetchSwapRoute(assessment, options);
+        view.printSwapRouting(swap);
+
+        // Phase 3: Calldata Generation
+        const calldataResult = await cmd.compileCalldata(assessment, swap, options);
+        view.printProjectedMetricsAndCalldata(calldataResult);
+
+        commandResult = { ...calldataResult };
+
+        // Phase 4: Execute/Simulate
+        if (options.simulation) {
+          commandResult.simulationResult = await cmd.runSimulation(calldataResult, options);
+        } else {
+          commandResult.txHash = await blockchainClient.executeTransaction({
+            to: MORPHO_BUNDLER_V3,
+            data: calldataResult.finalCalldata,
+            value: 0n
+          });
+          commandResult.auditDetails = {
+            spentToken: assessment.oldPtAddress,
+            receivedToken: assessment.newPtAddress,
+            oracleRate: swap.oracleRate,
+            estimatedRate: swap.expectedRate,
+            estimatedPriceImpact: swap.priceImpact
+          };
+        }
+
+      } else if (options.command === 'adjust-leverage' || options.command === 'leverage') {
+        const cmd = new LeverageCommand(blockchainClient, routerClient, simulationEngine, auditor);
+        txType = 'leverage';
+
+        // Phase 1: Assessment
+        const assessment = await cmd.assessPosition(options);
+        marketParams = assessment.market;
+        await view.printLeverageAssessment(assessment);
+
+        // Phase 2: Swap Routing Quote
+        const swap = await cmd.fetchSwapRoute(assessment, options);
+        view.printLeverageSwapRouting(swap, assessment.mode === 'leverage-up');
+
+        // Phase 3: Calldata Generation
+        const calldataResult = await cmd.compileCalldata(assessment, swap, options);
+        view.printLeverageCalldataSteps(calldataResult);
+
+        commandResult = { ...calldataResult };
+
+        // Phase 4: Execute/Simulate
+        if (options.simulation) {
+          commandResult.simulationResult = await cmd.runSimulation(calldataResult, options);
+        } else {
+          commandResult.txHash = await blockchainClient.executeTransaction({
+            to: MORPHO_BUNDLER_V3,
+            data: calldataResult.finalCalldata,
+            value: 0n
+          });
+          const isLeverageUp = (assessment.params.mode === 'leverage-up');
+          commandResult.auditDetails = {
+            spentToken: isLeverageUp ? assessment.usdcAddress : assessment.ptAddress,
+            receivedToken: isLeverageUp ? assessment.ptAddress : assessment.usdcAddress,
+            oracleRate: swap.oracleRate,
+            estimatedRate: swap.expectedRate,
+            estimatedPriceImpact: swap.priceImpact,
+            isLeverageUp
+          };
+        }
+      }
+
+      // Render Simulation Result if simulated
+      if (commandResult.simulationResult) {
+        await view.printSimulationSummary(commandResult.simulationResult, marketParams);
+      }
+
+      // Render Real Transaction Details and Audit
+      if (commandResult.txHash) {
+        view.printTransactionSubmitted(commandResult.txHash);
+        const auditResult = await auditor.auditRealizedPrice(commandResult.txHash, txType, commandResult.auditDetails);
+        view.printPostExecutionAudit(txType, auditResult);
+      }
+    } catch (err) {
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
+  /**
+   * Parses raw command line arguments.
+   * @param {string[]} args 
+   * @returns {object} options
+   */
+  parseArgs(args) {
+    if (args.includes('--help') || args.includes('-h')) {
+      const helpCommand = args.find(arg => this.commands.includes(arg));
+      return {
+        help: true,
+        helpCommand: helpCommand || null
+      };
+    }
+
+    if (args.length === 0) {
+      throw new Error('No command specified. Available commands: rollover, adjust-leverage. Use --help for usage.');
+    }
+
+    const command = args[0];
+    if (!this.commands.includes(command)) {
+      throw new Error(`Unknown command "${command}". Available commands: rollover, adjust-leverage. Use --help for usage.`);
+    }
+
+    const options = {
+      command,
+      simulation: false, // Default is execute immediately
+      walletconnect: false,
+      slippage: 1.0,
+      type: 'full'
+    };
+
+    // Manual arguments parser loop
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === '--old-market-id') {
+        options.oldMarketId = args[++i];
+      } else if (arg === '--new-market-id') {
+        options.newMarketId = args[++i];
+      } else if (arg === '--market-id') {
+        options.marketId = args[++i];
+      } else if (arg === '--user' || arg === '-u') {
+        options.user = args[++i];
+      } else if (arg === '--rpc' || arg === '-r') {
+        options.rpc = args[++i];
+      } else if (arg === '--private-key' || arg === '-k') {
+        options.privateKey = args[++i];
+      } else if (arg === '--walletconnect' || arg === '-w') {
+        options.walletconnect = true;
+      } else if (arg === '--simulation' || arg === '-s') {
+        options.simulation = true;
+      } else if (arg === '--no-simulation') {
+        options.simulation = false;
+      } else if (arg === '--type') {
+        options.type = args[++i];
+      } else if (arg === '--debt') {
+        options.debt = parseFloat(args[++i]);
+      } else if (arg === '--collateral') {
+        options.collateral = parseFloat(args[++i]);
+      } else if (arg === '--slippage') {
+        options.slippage = parseFloat(args[++i]);
+      } else if (arg === '--target-leverage' || arg === '-l') {
+        options.targetLeverage = parseFloat(args[++i]);
+      } else if (arg === '--usdc') {
+        options.usdc = args[++i];
+      } else if (arg === '--old-pt') {
+        options.oldPt = args[++i];
+      } else if (arg === '--new-pt') {
+        options.newPt = args[++i];
+      } else if (arg === '--pt') {
+        options.pt = args[++i];
+      } else {
+        throw new Error(`Unknown option "${arg}"`);
+      }
+    }
+
+    // Linked flags validation: --private-key requires --rpc.
+    if (options.privateKey && !options.rpc) {
+      throw new Error('--private-key requires --rpc');
+    }
+
+    // If neither execution mode is selected, default to simulation = true
+    if (!options.privateKey && !options.walletconnect) {
+      options.simulation = true;
+    }
+
+    return options;
+  }
+
+  /**
+   * Resolve RPC URL from options or environment, falling back to Alchemy if key is present.
+   */
+  resolveRpcUrl(options) {
+    let rpcUrl = options.rpc || process.env.RPC_URL || null;
+    const alchemyKey = process.env.ALCHEMY_API_KEY || null;
+
+    if (!rpcUrl && alchemyKey) {
+      rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${alchemyKey}`;
+    }
+    return rpcUrl;
+  }
+
+  /**
+   * Load environment variables from .env file at repository root.
+   */
+  loadEnv() {
+    try {
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = path.dirname(__filename);
+      const envPath = path.resolve(__dirname, '../.env');
+      if (fs.existsSync(envPath)) {
+        const envContent = fs.readFileSync(envPath, 'utf8');
+        const lines = envContent.split('\n');
+        for (const line of lines) {
+          const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+          if (match) {
+            const key = match[1];
+            let val = match[2] || '';
+            if (val.startsWith('"') && val.endsWith('"')) {
+              val = val.slice(1, -1);
+            } else if (val.startsWith("'") && val.endsWith("'")) {
+              val = val.slice(1, -1);
+            }
+            if (!process.env[key]) {
+              process.env[key] = val.trim();
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore env read failures
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "morpho-migration-cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "morpho-cli": "./cli.js"
+  },
+  "scripts": {
+    "test": "npm test --prefix tests && node tests/cli.test.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.52.2",
+    "@walletconnect/sign-client": "^2.13.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

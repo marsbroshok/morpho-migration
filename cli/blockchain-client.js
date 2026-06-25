@@ -1,0 +1,195 @@
+import { createPublicClient, createWalletClient, http, getAddress } from 'viem';
+import { mainnet } from 'viem/chains';
+import { privateKeyToAccount } from 'viem/accounts';
+
+const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
+
+const MORPHO_BLUE_ABI = [
+  {
+    "inputs": [
+      { "name": "id", "type": "bytes32" },
+      { "name": "user", "type": "address" }
+    ],
+    "name": "position",
+    "outputs": [
+      { "name": "supplyShares", "type": "uint256" },
+      { "name": "borrowShares", "type": "uint128" },
+      { "name": "collateral", "type": "uint128" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "name": "id", "type": "bytes32" }
+    ],
+    "name": "market",
+    "outputs": [
+      { "name": "totalSupplyAssets", "type": "uint128" },
+      { "name": "totalSupplyShares", "type": "uint128" },
+      { "name": "totalBorrowAssets", "type": "uint128" },
+      { "name": "totalBorrowShares", "type": "uint128" },
+      { "name": "lastUpdate", "type": "uint128" },
+      { "name": "fee", "type": "uint128" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "name": "authorizer", "type": "address" },
+      { "name": "delegatee", "type": "address" }
+    ],
+    "name": "isAuthorized",
+    "outputs": [
+      { "name": "", "type": "bool" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+];
+
+export class BlockchainClient {
+  /**
+   * @param {string|null} rpcUrl 
+   * @param {string|object|null} walletSigner 
+   */
+  constructor(rpcUrl, walletSigner) {
+    const transportUrl = rpcUrl || 'https://cloudflare-eth.com';
+    this.publicClient = createPublicClient({
+      chain: mainnet,
+      transport: http(transportUrl)
+    });
+
+    if (typeof walletSigner === 'string' && walletSigner.startsWith('0x')) {
+      // Local Private Key signer
+      const account = privateKeyToAccount(walletSigner);
+      this.walletClient = createWalletClient({
+        account,
+        chain: mainnet,
+        transport: http(transportUrl)
+      });
+      this.userAddress = account.address;
+    } else if (walletSigner && typeof walletSigner === 'object') {
+      // WalletConnect custom walletClient
+      this.walletClient = walletSigner;
+      // Retrieve address from the walletClient when initialized
+      this.userAddress = null;
+    } else {
+      this.walletClient = null;
+      this.userAddress = null;
+    }
+  }
+
+  async fetchMorphoPosition(marketId, userAddress) {
+    const [posData, marketData] = await Promise.all([
+      this.publicClient.readContract({
+        address: MORPHO_BLUE,
+        abi: MORPHO_BLUE_ABI,
+        functionName: 'position',
+        args: [marketId, userAddress]
+      }),
+      this.publicClient.readContract({
+        address: MORPHO_BLUE,
+        abi: MORPHO_BLUE_ABI,
+        functionName: 'market',
+        args: [marketId]
+      })
+    ]);
+
+    const [, borrowShares, collateral] = posData;
+    const [,, totalBorrowAssets, totalBorrowShares] = marketData;
+
+    let debt = 0n;
+    if (borrowShares > 0n && totalBorrowShares > 0n) {
+      debt = (borrowShares * totalBorrowAssets) / totalBorrowShares;
+    }
+
+    return { collateral, debt, borrowShares };
+  }
+
+  async fetchMarketParams(marketId) {
+    const query = `
+      query GetMarket($id: String!) {
+        markets(where: { uniqueKey_in: [$id] }) {
+          items {
+            loanAsset { address symbol }
+            collateralAsset { address symbol }
+            oracleAddress
+            irmAddress
+            lltv
+          }
+        }
+      }
+    `;
+    const response = await fetch('https://blue-api.morpho.org/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables: { id: marketId } })
+    });
+    if (!response.ok) {
+      throw new Error(`Morpho Blue GraphQL API request failed: ${response.statusText}`);
+    }
+    const result = await response.json();
+    if (result.errors && result.errors.length > 0) {
+      throw new Error(`Morpho Blue GraphQL API error: ${result.errors[0].message}`);
+    }
+    const items = result.data.markets.items;
+    if (items.length === 0) {
+      throw new Error(`Market ID ${marketId} not found on Morpho Blue.`);
+    }
+    const market = items[0];
+    return {
+      loanToken: getAddress(market.loanAsset.address),
+      collateralToken: getAddress(market.collateralAsset.address),
+      loanSymbol: market.loanAsset.symbol,
+      collateralSymbol: market.collateralAsset.symbol,
+      oracle: getAddress(market.oracleAddress),
+      irm: getAddress(market.irmAddress),
+      lltv: BigInt(market.lltv)
+    };
+  }
+
+  async checkPtMaturity(ptAddress) {
+    try {
+      const expiry = await this.publicClient.readContract({
+        address: ptAddress,
+        abi: [{"inputs":[],"name":"expiry","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
+        functionName: 'expiry'
+      });
+      const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+      return {
+        expiryDate: new Date(Number(expiry) * 1000).toLocaleDateString(),
+        isExpired: expiry <= currentTimestamp
+      };
+    } catch (err) {
+      return { expiryDate: "Unknown", isExpired: false };
+    }
+  }
+
+  async isAuthorized(userAddress, spenderAddress) {
+    return await this.publicClient.readContract({
+      address: MORPHO_BLUE,
+      abi: MORPHO_BLUE_ABI,
+      functionName: 'isAuthorized',
+      args: [userAddress, spenderAddress]
+    });
+  }
+
+  async executeTransaction({ to, data, value }) {
+    if (!this.walletClient) {
+      throw new Error("Wallet execution required. Please provide a private key or connect via WalletConnect.");
+    }
+    if (!this.userAddress) {
+      const addresses = await this.walletClient.getAddresses();
+      this.userAddress = getAddress(addresses[0]);
+    }
+    
+    return await this.walletClient.sendTransaction({
+      account: this.userAddress,
+      to,
+      data,
+      value: value || 0n
+    });
+  }
+}
