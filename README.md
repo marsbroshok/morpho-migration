@@ -12,6 +12,12 @@ To allow your wallet to communicate with the page, request accounts, and simulat
 
 ---
 
+## Configuration Requirements
+
+Unlike the CLI tool, the Web UI runs entirely client-side inside your browser context and interacts directly with standard injected extension wallets (such as Rabby Wallet or MetaMask) via `window.ethereum`. Therefore, it does **not** require any API keys or `.env` configuration files to run.
+
+---
+
 ## How to Run the App on macOS Terminal
 
 You can serve `index.html` using any of the following standard command-line methods. 
