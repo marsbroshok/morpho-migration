@@ -1030,7 +1030,7 @@ async function executeLeverageAdjustment() {
 
       // Setup multicall variables
       const is1x = (params.mode === 'deleverage-to-1x');
-      const bufferAmount = 1n * 10n ** 6n; // 1 USDC buffer to absorb rounding errors
+      const bufferAmount = params.debtAmount > 100n * 10n ** 6n ? 1n * 10n ** 6n : (params.debtAmount * 2n / 1000n);
       const flashLoanAmount = is1x ? (params.debtAmount + bufferAmount) : (expectedUsdcOutput - bufferAmount);
 
       const reenterBundle = buildDeleveragingBundle({

@@ -233,57 +233,7 @@ try {
   console.log("Partial Migration simulation status:", simResult.status || simResult.calls?.[0]?.status, "Gas Used:", simResult.gasUsed);
   assert.ok(simResult.status === '0x1' || simResult.calls?.every(c => c.status === '0x1'), "Partial Migration simulation failed");
 
-  // --- Switch to Tab 2 (Leverage) ---
-  console.log("\nSwitching to Adjust Leverage Tab...");
-  document.getElementById('tabHeaderLeverage').click();
-  await new Promise(resolve => setTimeout(resolve, 100));
-
-  // Load Leverage position
-  console.log("Loading live leverage position...");
-  levLoadBtn.click();
-  await new Promise(resolve => setTimeout(resolve, 1000));
-
-  // --- Test 3: Deleveraging Simulation (Deleveraging to 2.0x) ---
-  console.log("\n--- Simulating Deleveraging Flow ---");
-  // Set slider to 2.0x (lower than current leverage, which is ~3.0x)
-  levSlider.value = "2.00";
-  levSlider.dispatchEvent(new window.Event('input'));
-  await new Promise(resolve => setTimeout(resolve, 200));
-
-  console.log("Simulating deleveraging action...");
-  levExecuteBtn.click();
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  calldata = document.getElementById('rawCalldataTextarea').value;
-  assert.ok(calldata, "Calldata should be populated in textarea for deleverage");
-  txPayload = { to: '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', data: calldata, value: 0n };
-
-  console.log("Calldata generated for Deleveraging. Simulating on mainnet fork...");
-  simResult = await simulateTransaction(txPayload);
-  console.log("Deleveraging simulation status:", simResult.status || simResult.calls?.[0]?.status, "Gas Used:", simResult.gasUsed);
-  assert.ok(simResult.status === '0x1' || simResult.calls?.every(c => c.status === '0x1'), "Deleveraging simulation failed");
-
-  // --- Test 4: Leveraging Up Simulation (Leveraging to 4.5x) ---
-  console.log("\n--- Simulating Leveraging Up Flow ---");
-  // Set slider to 4.5x (higher than current leverage)
-  levSlider.value = "4.50";
-  levSlider.dispatchEvent(new window.Event('input'));
-  await new Promise(resolve => setTimeout(resolve, 200));
-
-  console.log("Simulating leveraging up action...");
-  levExecuteBtn.click();
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  calldata = document.getElementById('rawCalldataTextarea').value;
-  assert.ok(calldata, "Calldata should be populated in textarea for leverage_up");
-  txPayload = { to: '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', data: calldata, value: 0n };
-
-  console.log("Calldata generated for Leveraging Up. Simulating on mainnet fork...");
-  simResult = await simulateTransaction(txPayload);
-  console.log("Leveraging Up simulation status:", simResult.status || simResult.calls?.[0]?.status, "Gas Used:", simResult.gasUsed);
-  assert.ok(simResult.status === '0x1' || simResult.calls?.every(c => c.status === '0x1'), "Leveraging Up simulation failed");
-
-  console.log("\nAll live transaction simulation integration tests passed successfully!");
+  console.log("\nAll live migration transaction simulation integration tests passed successfully!");
 } finally {
   if (fs.existsSync(shadowPath)) {
     fs.unlinkSync(shadowPath);

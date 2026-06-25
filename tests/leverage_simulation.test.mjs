@@ -58,7 +58,7 @@ global.HTMLElement = dom.window.HTMLElement;
 global.window.fetch = global.fetch; // map fetch to Node fetch
 
 // Constants & mutable test state
-let TEST_USER_ADDRESS = '0xdC382CDF2a25790F535a518EC26958c227e9DCF2'; // Old market user (for deleveraging)
+let TEST_USER_ADDRESS = '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a'; // Old market user (for deleveraging)
 const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
 const BUNDLER_ADDRESS = '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245';
 const ADAPTER_ADDRESS = '0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0';
@@ -340,9 +340,9 @@ try {
   console.log("Loaded new leverage position info:", levPositionInfo.replace(/<[^>]*>/g, ' ').trim());
   assert.ok(levPositionInfo.includes("Active Position Found"), "New leverage position should be loaded");
 
-  // --- Step 4: Simulate Leveraging Up Flow (Target Leverage 4.50x) ---
-  console.log("\n--- Simulating Leveraging Up Flow (Target: 4.50x) ---");
-  levSlider.value = "4.50";
+  // --- Step 4: Simulate Leveraging Up Flow (Target Leverage 5.50x) ---
+  console.log("\n--- Simulating Leveraging Up Flow (Target: 5.50x) ---");
+  levSlider.value = "5.50";
   levSlider.dispatchEvent(new window.Event('input'));
   await new Promise(resolve => setTimeout(resolve, 500));
 
