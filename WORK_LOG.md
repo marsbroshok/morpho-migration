@@ -1,5 +1,211 @@
 # Project Work Log
 
+## 2026-06-25 - Implemented Comprehensive CLI Help Command (`--help`)
+
+### Summary of Investigation
+1. **The Goal:** Add a detailed help command (`--help` / `-h`) for the CLI tool and all available operations, showing real flags and parameters and avoiding hallucinations.
+2. **Strategy & Implementation:**
+   - Modified `parseArgs` in `cli/cli-runner.js` to parse `--help` or `-h` flags at any position, mapping them to `{ help: true, helpCommand }` configurations.
+   - Updated command validation logic so that empty command inputs or unknown commands suggest running with `--help` in their error messages.
+   - Short-circuited the run orchestrator loop (`CliRunner.run`) to immediately print the help menus and return early, preventing unnecessary RPC network requests or wallet pairing steps when requesting help.
+   - Implemented a static `printHelp(command)` method inside `cli/cli-view.js` to render highly formatted, color-coded usage instructions, options lists, flag definitions, and copy-pasteable examples for rollover, leverage, and global CLI states.
+3. **Verification:**
+   - Added unit tests in `tests/cli.test.mjs` to check argument parsing for help flags and verify help suggestion error messages.
+   - Added `testCliHelpExecution()` unit test in `tests/cli.test.mjs` verifying that the printed help text contains the correct options, commands, and headers.
+   - Manually validated output logs and layout rendering of `node cli.js --help`, `node cli.js rollover -h`, and `node cli.js leverage --help`.
+
+### Changes Applied
+* **File Modified:** `cli/cli-runner.js` (implemented help flag parsing and early short-circuit execution).
+* **File Modified:** `cli/cli-view.js` (created static help formatter rendering detailed CLI options and examples).
+* **File Modified:** `tests/cli.test.mjs` (added unit tests for arguments parsing and help console outputs verification).
+
+### Verification Terminal Commands Run
+* Run CLI tests directly:
+  ```bash
+  node tests/cli.test.mjs
+  ```
+* Show general help:
+  ```bash
+  node cli.js --help
+  ```
+* Show rollover help:
+  ```bash
+  node cli.js rollover -h
+  ```
+* Show leverage help:
+  ```bash
+  node cli.js leverage --help
+  ```
+
+---
+
+## 2026-06-25 - Documented WalletConnect Project ID and Environment Variables
+
+### Summary of Investigation
+1. **The Goal:** Clearly document the WalletConnect project ID requirements for CLI transaction executions, provide an environment variable template file (`.env.example`), and clarify configuration constraints for the Web UI.
+2. **Strategy & Implementation:**
+   - Updated `CLI-README.md` to add the Environment Configuration instructions under "Installation & Setup", explaining `ALCHEMY_API_KEY` and `WC_PROJECT_ID`.
+   - Updated the `--walletconnect` flag documentation in `CLI-README.md` to clarify the project ID prerequisite.
+   - Updated `README.md` with a "Configuration Requirements" section, clarifying that the Web UI runs client-side using injected wallets like Rabby or MetaMask and does not need any API keys or environment setup.
+   - Created a `.env.example` file in the repository root as a clear setup template.
+3. **Verification:**
+   - Manually verified formatting and contents of `README.md`, `CLI-README.md`, and `.env.example`.
+
+### Changes Applied
+* **File Modified:** `CLI-README.md` (documented CLI environment variables).
+* **File Modified:** `README.md` (documented Web UI configuration independence).
+* **File Created:** `.env.example` (provided template configuration file).
+* **File Modified:** `WORK_LOG.md` (documented recent updates).
+
+---
+
+## 2026-06-20 - Tested WalletConnect QR Code Generation and Connection Flow
+
+### Summary of Investigation
+1. **The Goal:** Verify programmatically that `WalletConnector` generates a QR code with the correct connection URI when `--walletconnect` is specified, without blocking for user confirmation or hitting the live WalletConnect network.
+2. **Strategy & Implementation:**
+   - Modified `cli/wallet-connector.js` to support optional dependency injection for `@walletconnect/sign-client` (`SignClient`) and `qrcode-terminal` (`qrcode`).
+   - Fixed the module import in `cli/wallet-connector.js` to use named `SignClient` instead of default export, resolving the `this.SignClient.init is not a function` error under real execution.
+   - Added a new unit test suite `testWalletConnectorQrCodeGeneration` in `tests/cli.test.mjs` using mock SignClient and qrcode dependencies.
+   - Asserted that `WalletConnector` initialized with the correct configuration, triggered QR code generation with the expected URI, and returned a functional Viem wallet client matching standard session accounts.
+   - Hooked the test up inside `runAllTests()` in `tests/cli.test.mjs`.
+3. **Verification:**
+   - Verified that all unit tests, including the new WalletConnector test, compile and pass successfully.
+
+### Changes Applied
+* **File Modified:** `cli/wallet-connector.js` (supported optional dependencies and corrected `SignClient` named import).
+* **File Modified:** `tests/cli.test.mjs` (added `testWalletConnectorQrCodeGeneration` test case).
+* **File Modified:** `WORK_LOG.md` (documented implementation, fix details, and test run).
+
+### Verification Terminal Commands Run
+* Run CLI tests directly:
+  ```bash
+  node tests/cli.test.mjs
+  ```
+
+---
+
+## 2026-06-20 - Audited and Listed All Unique Crypto Addresses in the Codebase
+
+### Summary of Investigation
+1. **The Goal:** Search and document all unique cryptographic (Ethereum) addresses defined or referenced in the codebase's Javascript, module-JS, HTML, JSON, and environment configuration files.
+2. **Methodology:** 
+   - Created a custom scratch script `find_addresses.js` to recursively scan all codebase source files (`.js`, `.mjs`, `.html`, `.json`, `.env`), excluding standard directories like `.git` and `node_modules`.
+   - Utilized a precise regular expression (`\b0x[a-fA-F0-9]{40}\b`) to extract exactly 40-character (20-byte) hex addresses. This successfully filtered out 64-character (32-byte) hex strings (like market IDs, event topics, or transaction hashes) that were matching substring patterns in initial naive searches.
+3. **Findings:**
+   - Identified 14 unique Ethereum addresses, comprising Morpho Blue Core, Morpho Bundler V3, Ether General Adapter V1, USDC Token, specific Pendle market PT addresses, simulated test user addresses, mock address parameters, and Address Zero/One.
+
+### Changes Applied
+* **File Created:** `scratch/find_addresses.js` (temporary scanner utility).
+* **Artifact Created:** `crypto_addresses.md` in the local artifact directory (contains a formatted table of all addresses, their labels, roles, and source file locations).
+
+### Verification Terminal Commands Run
+* Execute the scanner utility script:
+  ```bash
+  node scratch/find_addresses.js
+  ```
+
+---
+
+## 2026-06-20 - Upgraded CLI Output to Developer Dashboard Layout with Presentation-Logic Separation and Dynamic Label Resolution
+
+### Summary of Investigation
+1. **The Goal:** Enhance the CLI user experience by resolving human-friendly names for markets and tokens, formatting currency values, and presenting information clearly. The output must target tech-savvy operators with full address visibility, structured tree layouts, and decoded multicall step listings.
+2. **Separation of Concerns:** 
+   - Core engines (`SimulationEngine`, `RolloverCommand`, `LeverageCommand`, and `TransactionAuditor`) now contain only logic, queries, and call constructions. They return structured JSON objects to the runner.
+   - All console output formatting, colors, section headers, tree drawings, and trace mapping are delegated to a dedicated View layer (`CliView` and `CliFormatter`).
+3. **Dynamic Label Resolver:**
+   - Implemented dynamic token symbol queries by calling standard ERC20 `.symbol()` functions directly from the blockchain via `publicClient`, avoiding hardcoded address lists and ensuring the CLI is fully future-proof.
+4. **Verification:**
+   - Added unit tests to `tests/cli.test.mjs` to verify formatting accuracy and static/dynamic address label resolution.
+   - All tests passed successfully.
+
+### Changes Applied
+* **File Created:** `cli/formatter.js` (ANSI color rendering and number styling library).
+* **File Created:** `cli/address-label-resolver.js` (dynamic token symbol lookup and cache).
+* **File Created:** `cli/cli-view.js` (dashboard formatter and EVM simulation trace tree layout renderer).
+* **File Modified:** `cli/simulation-engine.js` (refactored to return structured JSON results instead of printing traces).
+* **File Modified:** `cli/transaction-auditor.js` (refactored to return raw audit calculations).
+* **File Modified:** `cli/rollover-command.js` (refactored to return structured state object).
+* **File Modified:** `cli/leverage-command.js` (refactored to return structured state object).
+* **File Modified:** `cli/cli-runner.js` (updated to orchestrate command executions and invoke the presentation views).
+* **File Modified:** `tests/cli.test.mjs` (added unit tests for formatting and dynamic resolvers).
+
+### Verification Terminal Commands Run
+* Run CLI tests directly:
+  ```bash
+  node tests/cli.test.mjs
+  ```
+
+---
+
+## 2026-06-20 - Implemented Object-Oriented CLI Tool with WalletConnect and Transaction Simulations
+
+### Summary of Investigation
+1. **The Goal:** Create a clean, object-oriented CLI tool to replicate all rollover and leverage adjustment features from the web app with the same level of customizations.
+2. **Implementation & Folder Structure:**
+   - Designed the CLI tool to reside in a dedicated `cli/` subdirectory to avoid cluttering the repository root.
+   - Configured `cli.js` in the root as a lightweight executable entrypoint.
+   - Implemented `CliRunner` to parse arguments, validate command parameters, and enforce linked flag constraints (e.g., `--private-key` requires `--rpc`).
+   - Implemented `BlockchainClient` using `viem` to handle all on-chain queries and transaction dispatches.
+   - Implemented `WalletConnector` using `@walletconnect/sign-client` and `qrcode-terminal` to display pairing QR codes/URIs in the terminal, enabling secure execution via Rabby Wallet without exposing private keys.
+   - Implemented `SimulationEngine` to simulate transactions on a mainnet fork using `eth_simulateV1` (Alchemy) and recursively log the complete execution trace, gas usage, and events.
+   - Implemented `RolloverCommand` and `LeverageCommand` command handlers, reusing existing business logic (math calculations and bundle builders).
+   - Implemented `TransactionAuditor` to parse receipt event logs and verify realized prices post-execution.
+3. **Verification:**
+   - Implemented `tests/cli.test.mjs` containing mock unit tests and live mainnet-fork simulation tests.
+   - Integrated CLI tests into the global `npm test` script.
+   - Verified that all unit tests and fork simulations run green and pass.
+
+### Changes Applied
+* **File Created:** [cli.js](cli.js) (root executable entrypoint).
+* **File Created:** [package.json](package.json) (root package configuration and scripts).
+* **File Created:** [CLI-README.md](CLI-README.md) (CLI tool getting started documentation).
+* **Folder Created:** `cli/` containing:
+  - `cli-runner.js` (argument parsing and command orchestrator)
+  - `blockchain-client.js` (Viem blockchain reader/writer wrapper)
+  - `wallet-connector.js` (WalletConnect pairing manager)
+  - `simulation-engine.js` (fork-based trace simulation compiler)
+  - `pendle-router-client.js` (Pendle SDK routing client)
+  - `rollover-command.js` (rollover workflow coordinator)
+  - `leverage-command.js` (leverage adjustment workflow coordinator)
+  - `transaction-auditor.js` (receipt events validator)
+* **File Created:** [tests/cli.test.mjs](tests/cli.test.mjs) (automated CLI test suite).
+* **File Updated:** [WORK_LOG.md](WORK_LOG.md) (logged implementation progress).
+
+### Verification Terminal Commands Run
+* Run complete test suite (includes existing tests and new CLI tests):
+  ```bash
+  npm test
+  ```
+* Run CLI tests directly:
+  ```bash
+  node tests/cli.test.mjs
+  ```
+
+---
+
+## 2026-06-19 - Performed Cross-Market Rollover Generalization Analysis
+
+### Summary of Investigation
+1. **The Goal:** Conduct an expert analysis on whether the application's rollover logic can support arbitrary Morpho Blue market rollovers sharing the same borrowing token (e.g., USDC), and identify potential limitations.
+2. **Analysis:**
+   * **On-Chain Protocol:** Verified that the multicall sequence using Morpho Bundler V3 and the Ether General Adapter 1 is fully generic. The sequence (flash loan, repay, collateral withdrawal, arbitrary router swap execution, collateral supply, borrow, and flash loan repayment) works for any pair of Morpho Blue markets sharing a common borrowing token. The collateral does not strictly need to be a Pendle PT token.
+   * **Frontend Constraints:** Identified three main app-level limitations blocking generalization:
+     - **Routing:** Hardcoded to the Pendle Convert API, which fails for non-Pendle assets.
+     - **Hardcoded Decimals:** The app hardcodes 6-decimal scaling for borrowing (USDC) and 18-decimal scaling for collateral (PTs) throughout calculations, post-execution audit log displays, and inputs.
+     - **Oracle Price Scaling:** Hardcoded scaling factor of `1e24` based on USDC/18-decimal collateral, which breaks for other asset classes.
+     - **UI Labels:** Form groups and badges hardcode "USDC" and "PT" strings.
+3. **Resolution:**
+   * Created a comprehensive analysis report [rollover_analysis_report.md](local artifact directory) outlining the protocol mechanics, frontend constraints, and proposed architectural improvements to enable arbitrary market rollovers.
+   * Based on user feedback, deferred the Swap Provider Abstraction / DEX Aggregator integration feature and documented it as a formal specification under the `future_features/` directory.
+
+### Changes Applied
+* **File Created:** [rollover_analysis_report.md](local artifact directory) (expert analysis report).
+* **File Created:** [future_features/dex_aggregator_integration.md](future_features/dex_aggregator_integration.md) (specification for future swap abstraction and DEX aggregator integration).
+
+---
+
 ## 2026-06-19 - Resolved Deleveraging Rounding Reverts and Upgraded Leverage Simulation Tests
 
 ### Summary of Investigation
@@ -1112,3 +1318,63 @@
   ```bash
   node tests/test_simulation_api.mjs
   ```
+
+## 2026-06-20 - Upgraded CLI Testing Coverage and End-to-End Shell Execution Tests
+
+### Summary of Investigation & Fixes
+1. **The Bug:** Running the README rollover simulation command direct from the CLI failed on the mainnet fork because public RPC gateways (like Cloudflare) revert on complex contract state reads, and `.env` environment variables were not loaded automatically by the CLI.
+2. **Analysis:**
+   - The CLI runner did not search for or parse a `.env` file in the workspace root.
+   - The validation rules strictly prohibited specifying a custom RPC URL (`--rpc`) without also passing a private key, blocking dry-run simulations on private endpoints.
+   - The simulation trace printed `To: Unknown` for the root simulated call because Alchemy's `eth_simulateV1` response calls list does not return target addresses at the root level.
+3. **Resolution:**
+   - Added a dynamic `.env` loader inside `cli/cli-runner.js` to automatically parse and set environment variables.
+   - Extracted RPC resolution into `resolveRpcUrl()` inside `cli/cli-runner.js` to auto-construct Alchemy RPC endpoints when `ALCHEMY_API_KEY` is present.
+   - Relaxed argument parsing constraints, allowing `--rpc` without `--private-key` for simulations.
+   - Mapped the target address (`toAddress`) onto the simulation results call object inside `cli/simulation-engine.js` so it resolves correctly in trace outputs.
+   - Upgraded the CLI test suite in `tests/cli.test.mjs` to unit test option parsing, environment resolution, mock call trace mapping, and added end-to-end shell command checks (`execSync`) for full rollovers, partial rollovers, and leverage adjustments.
+
+### Changes Applied
+* **File Updated:** [cli/cli-runner.js](cli/cli-runner.js)
+  - Added `.env` loader (`loadEnv()`) and extracted RPC URL resolver (`resolveRpcUrl(options)`).
+* **File Updated:** [cli/simulation-engine.js](cli/simulation-engine.js)
+  - Populated `toAddress` on the simulation main call result object.
+* **File Updated:** [tests/cli.test.mjs](tests/cli.test.mjs)
+  - Renamed and expanded argument parsing tests to `testCliRunnerArgParsingOptions()`.
+  - Added `testCliRunnerEnvAndRpcFallback()` to test environment fallback logic.
+  - Added `testCliShellExecutionSimulation()` executing spawned subprocesses `node cli.js ...` and validating their stdout formats.
+  - Updated live integration tests to verify partial rollovers and leverage adjustments on active positions (leveraging up on the active target market user position).
+
+### Verification Terminal Commands Run
+* Run CLI tests:
+  ```bash
+  node tests/cli.test.mjs
+  ```
+
+## 2026-06-20 - Implemented Phased Pipeline Execution and Incremental Terminal Rendering
+
+### Summary of Investigation & Fixes
+1. **The Bug**: When running rollover simulations for user addresses with dust balances (such as `0xdC382CDF2a25790F535a518EC26958c227e9DCF2`), the CLI tool failed with a cryptic Pendle swap API error (`The input valuation is too low. The minimum valuation is 0.01 USD`) and displayed no dashboard context to the user.
+2. **Analysis**:
+   - The command execution in `RolloverCommand` and `LeverageCommand` ran as a single monolithic block, meaning that if a network API or simulation reverted, the process exited before the view could render any fetched position assessment details.
+3. **Resolution**:
+   - Refactored `RolloverCommand` and `LeverageCommand` to support a **phased execution pipeline** (Phase 1: Position Assessment, Phase 2: Swap Quote Query, Phase 3: Calldata Compile, Phase 4: EVM Simulation).
+   - Refactored `CliView` to split monolithic dashboard rendering into modular, single-purpose functions (`printRolloverAssessment`, `printSwapRouting`, `printProjectedMetricsAndCalldata`, and leverage command equivalents).
+   - Updated `CliRunner` to orchestrate command phases sequentially, rendering configurations and position assessments immediately in real time, so if a downstream network call fails, the user still gets full position visibility before exiting.
+
+### Changes Applied
+* **File Updated:** [cli/cli-view.js](cli/cli-view.js)
+  - Split rollover and leverage adjustment dashboards into modular rendering methods.
+* **File Updated:** [cli/rollover-command.js](cli/rollover-command.js)
+  - Split `execute()` into `assessPosition()`, `fetchSwapRoute()`, `compileCalldata()`, and `runSimulation()`.
+* **File Updated:** [cli/leverage-command.js](cli/leverage-command.js)
+  - Split `execute()` into `assessPosition()`, `fetchSwapRoute()`, `compileCalldata()`, and `runSimulation()`, and corrected property types.
+* **File Updated:** [cli/cli-runner.js](cli/cli-runner.js)
+  - Orchestrated execution phases sequentially and rendered view layers incrementally.
+
+### Verification Terminal Commands Run
+* Run CLI tests:
+  ```bash
+  node tests/cli.test.mjs
+  ```
+
