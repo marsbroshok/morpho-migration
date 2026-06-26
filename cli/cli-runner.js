@@ -1,22 +1,25 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getAddress } from 'viem';
 import { RolloverCommand } from './rollover-command.js';
 import { LeverageCommand } from './leverage-command.js';
+import { SimulateRawCommand } from './simulate-raw-command.js';
 import { BlockchainClient } from './blockchain-client.js';
 import { WalletConnector } from './wallet-connector.js';
 import { SimulationEngine } from './simulation-engine.js';
 import { TransactionAuditor } from './transaction-auditor.js';
-import { PendleRouterClient } from './pendle-router-client.js';
+import { SwapRouterClient } from './swap-router-client.js';
 import { AddressLabelResolver } from './address-label-resolver.js';
 import { CliView } from './cli-view.js';
+
 
 /**
  * Main orchestrator class for CLI execution.
  */
 export class CliRunner {
   constructor() {
-    this.commands = ['rollover', 'adjust-leverage', 'leverage'];
+    this.commands = ['rollover', 'adjust-leverage', 'leverage', 'simulate-raw'];
   }
 
   /**
@@ -51,7 +54,23 @@ export class CliRunner {
 
       // Initialize clients
       const blockchainClient = new BlockchainClient(rpcUrl, walletClient || options.privateKey);
-      const routerClient = new PendleRouterClient();
+
+      // Resolve signer address if signer is available
+      if (blockchainClient.walletClient && !blockchainClient.userAddress) {
+        const addresses = await blockchainClient.walletClient.getAddresses();
+        if (addresses && addresses.length > 0) {
+          blockchainClient.userAddress = getAddress(addresses[0]);
+        }
+      }
+
+      if (blockchainClient.userAddress && options.user) {
+        const signerAddr = blockchainClient.userAddress.toLowerCase();
+        const userAddr = getAddress(options.user).toLowerCase();
+        if (signerAddr !== userAddr) {
+          throw new Error(`Signer address (${blockchainClient.userAddress}) does not match specified position user address (${options.user}). Transactions must be signed by the position owner due to address context requirements in the Morpho Blue Bundler multicall.`);
+        }
+      }
+      const routerClient = new SwapRouterClient();
       const auditor = new TransactionAuditor(blockchainClient.publicClient);
       
       const simulationEngine = new SimulationEngine(blockchainClient, alchemyKey);
@@ -61,6 +80,7 @@ export class CliRunner {
       const view = new CliView(labelResolver);
 
       const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
+      const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
       let commandResult = {
         simulationResult: null,
         txHash: null,
@@ -80,7 +100,7 @@ export class CliRunner {
 
         // Phase 2: Swap Routing Quote
         const swap = await cmd.fetchSwapRoute(assessment, options);
-        view.printSwapRouting(swap);
+        view.printSwapRouting(swap, assessment.oldMarket, assessment.newMarket, assessment.sourceMarketParams, assessment.destMarketParams);
 
         // Phase 3: Calldata Generation
         const calldataResult = await cmd.compileCalldata(assessment, swap, options);
@@ -92,14 +112,36 @@ export class CliRunner {
         if (options.simulation) {
           commandResult.simulationResult = await cmd.runSimulation(calldataResult, options);
         } else {
+          // Check shortfall and approve if needed
+          const shortfall = calldataResult.loanWalletShortfall || 0n;
+          if (shortfall > 0n) {
+            const token = assessment.sourceMarketParams.loanToken;
+            const owner = blockchainClient.userAddress || (await blockchainClient.walletClient.getAddresses())[0];
+            const spender = ETHER_GENERAL_ADAPTER_1;
+            
+            const allowance = await blockchainClient.checkAllowance(token, owner, spender);
+            if (allowance < shortfall) {
+              const decimals = assessment.sourceMarketParams.loanDecimals;
+              const shortfallDisplay = Number(shortfall) / (10 ** decimals);
+              const allowanceDisplay = Number(allowance) / (10 ** decimals);
+              const symbol = assessment.oldMarket.loanSymbol;
+              
+              console.log(`\n⚠️  Allowance check: Spender General Adapter has insufficient allowance (${allowanceDisplay} ${symbol} approved vs ${shortfallDisplay} ${symbol} needed).`);
+              console.log(`Sending approval transaction for ${shortfallDisplay} ${symbol}...`);
+              const approveTxHash = await blockchainClient.approveToken(token, spender, shortfall);
+              console.log(`Approval transaction submitted: ${approveTxHash}`);
+              console.log(`Waiting for confirmation...`);
+            }
+          }
+
           commandResult.txHash = await blockchainClient.executeTransaction({
             to: MORPHO_BUNDLER_V3,
             data: calldataResult.finalCalldata,
             value: 0n
           });
           commandResult.auditDetails = {
-            spentToken: assessment.oldPtAddress,
-            receivedToken: assessment.newPtAddress,
+            spentToken: assessment.sourceCollateralAddress,
+            receivedToken: assessment.destCollateralAddress,
             oracleRate: swap.oracleRate,
             estimatedRate: swap.expectedRate,
             estimatedPriceImpact: swap.priceImpact
@@ -117,7 +159,7 @@ export class CliRunner {
 
         // Phase 2: Swap Routing Quote
         const swap = await cmd.fetchSwapRoute(assessment, options);
-        view.printLeverageSwapRouting(swap, assessment.mode === 'leverage-up');
+        view.printLeverageSwapRouting(swap, assessment.mode === 'leverage-up', assessment.market, assessment.marketParams);
 
         // Phase 3: Calldata Generation
         const calldataResult = await cmd.compileCalldata(assessment, swap, options);
@@ -136,14 +178,22 @@ export class CliRunner {
           });
           const isLeverageUp = (assessment.params.mode === 'leverage-up');
           commandResult.auditDetails = {
-            spentToken: isLeverageUp ? assessment.usdcAddress : assessment.ptAddress,
-            receivedToken: isLeverageUp ? assessment.ptAddress : assessment.usdcAddress,
+            spentToken: isLeverageUp ? assessment.loanAddress : assessment.collateralAddress,
+            receivedToken: isLeverageUp ? assessment.collateralAddress : assessment.loanAddress,
             oracleRate: swap.oracleRate,
             estimatedRate: swap.expectedRate,
             estimatedPriceImpact: swap.priceImpact,
             isLeverageUp
           };
         }
+      } else if (options.command === 'simulate-raw') {
+        const cmd = new SimulateRawCommand(blockchainClient, simulationEngine);
+        txType = 'simulate-raw';
+
+        const txData = cmd.loadTransactionData(options.file);
+        view.printRawSimulationAssessment(txData);
+
+        commandResult.simulationResult = await cmd.runSimulation(txData);
       }
 
       // Render Simulation Result if simulated
@@ -183,7 +233,7 @@ export class CliRunner {
 
     const command = args[0];
     if (!this.commands.includes(command)) {
-      throw new Error(`Unknown command "${command}". Available commands: rollover, adjust-leverage. Use --help for usage.`);
+      throw new Error(`Unknown command "${command}". Available commands: rollover, adjust-leverage, simulate-raw. Use --help for usage.`);
     }
 
     const options = {
@@ -223,19 +273,57 @@ export class CliRunner {
         options.collateral = parseFloat(args[++i]);
       } else if (arg === '--slippage') {
         options.slippage = parseFloat(args[++i]);
+      } else if (arg === '--cap-borrow') {
+        options.capBorrow = true;
       } else if (arg === '--target-leverage' || arg === '-l') {
         options.targetLeverage = parseFloat(args[++i]);
       } else if (arg === '--usdc') {
         options.usdc = args[++i];
+      } else if (arg === '--new-loan') {
+        options.newLoan = args[++i];
       } else if (arg === '--old-pt') {
         options.oldPt = args[++i];
       } else if (arg === '--new-pt') {
         options.newPt = args[++i];
       } else if (arg === '--pt') {
         options.pt = args[++i];
+      } else if (arg === '--old-collateral') {
+        options.oldCollateral = args[++i];
+      } else if (arg === '--new-collateral') {
+        options.newCollateral = args[++i];
+      } else if (arg === '--collateral') {
+        options.collateral = args[++i];
+      } else if (arg === '--old-loan') {
+        options.oldLoan = args[++i];
+      } else if (arg === '--loan') {
+        options.loan = args[++i];
+      } else if (arg === '--file' || arg === '-f') {
+        options.file = args[++i];
       } else {
         throw new Error(`Unknown option "${arg}"`);
       }
+    }
+
+    // Resolve generic aliases
+    options.oldCollateral = options.oldCollateral || options.oldPt;
+    options.newCollateral = options.newCollateral || options.newPt;
+    options.collateral = options.collateral || options.pt;
+    options.oldLoan = options.oldLoan || options.oldLoan || options.usdc;
+    options.loan = options.loan || options.usdc;
+
+    // Backwards compatibility mappings for older code expecting .oldPt, etc.
+    options.oldPt = options.oldCollateral;
+    options.newPt = options.newCollateral;
+    options.pt = options.collateral;
+    options.usdc = options.oldLoan || options.loan || options.usdc;
+
+
+    // Command specific validation
+    if (options.command === 'simulate-raw') {
+      if (!options.file) {
+        throw new Error('--file <path> is required for simulate-raw command');
+      }
+      options.simulation = true;
     }
 
     // Linked flags validation: --private-key requires --rpc.

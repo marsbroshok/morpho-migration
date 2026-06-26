@@ -1,6 +1,6 @@
 # Morpho Position Migrator & Leverage Adjuster
 
-A client-side web utility to manage and migrate collateralized debt positions on **Morpho Blue** (Ethereum Mainnet). It allows users to roll over maturity-locked Pendle Principal Tokens (PT) collateral, adjust leverage levels (leverage up/down), and simulate transactions.
+A client-side web utility to manage and migrate collateralized debt positions on **Morpho Blue** (Ethereum Mainnet). It allows users to roll over maturing collateral assets, adjust leverage levels (leverage up/down), and simulate transactions.
 
 ---
 
@@ -69,15 +69,15 @@ ruby -run -e httpd . -p 8000
 1. Start your local server using one of the methods above.
 2. Open your web browser (with Rabby or MetaMask active) and go to [http://localhost:8000](http://localhost:8000).
 3. Select the appropriate tab for your operation:
-   * **Rollover Collateral:** To roll over collateral from an old maturing Pendle market to a new Pendle market.
+    * **Rollover Collateral:** To roll over collateral from an old maturing market to a new market.
    * **Adjust Leverage:** To leverage up or delever/unleverage your position on the same market.
 4. Click the **"Connect Wallet & Fetch Live Position"** button. This will trigger a wallet approval request.
 5. Once connected, your active position metrics (LTV, Collateral, and Debt) will load automatically.
 6. Set your target parameters:
-   * **For Rollover:** Review the target PT collateral address and select Full or Partial migration.
+    * **For Rollover:** Review the target collateral address and select Full or Partial migration.
    * **For Leverage Adjustment:** Use the slider to set your target LTV/Leverage multiplier.
 7. Click **"Simulate & Migrate Position"** (or **"Simulate & Adjust Leverage"**).
-8. The app will fetch live routes from Pendle and compile the transaction payload.
+8. The app will fetch live routes from the swap router and compile the transaction payload.
 9. Review the simulation in your wallet popup (e.g., Rabby's transaction simulation preview) to verify safety before executing on-chain.
 
 ---
@@ -91,7 +91,7 @@ The application coordinates atomic position migrations and leverage adjustments 
 * **Morpho Blue Core (`0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb`)**: The main lending contract where lending/borrowing states are tracked.
 * **Morpho Bundler V3 (`0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245`)**: The multicall utility contract enabling sequential operations (flashloan, repay, withdraw, supply, borrow, transfers) in a single atomic transaction.
 * **Ether General Adapter 1 (`0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0`)**: A helper adapter contract integrated with the Bundler to handle deposits, borrowings, ERC20 transfers, and interface with Morpho.
-* **Pendle AMM & SDK API (`https://api-v2.pendle.finance`)**: Used to query optimal swap routes and fetch raw transaction calldata to execute exchange operations for Pendle Principal Tokens (PT).
+* **Swap Router API (e.g. Pendle Convert API) (`https://api-v2.pendle.finance`)**: Used to query optimal swap routes and fetch raw transaction calldata to execute exchange operations between collateral/loan assets.
 * **Morpho Blue GraphQL API (`https://blue-api.morpho.org/graphql`)**: Provides real-time metadata query capabilities for loan assets, collateral assets, oracles, IRMs, and LLTV properties.
 * **Viem**: ESM-compatible client library used to interact with Ethereum, read contract states, and compile custom multicall calldata.
 * **Web3 Wallets (e.g., Rabby, MetaMask)**: Interfaces with the application via the standard `window.ethereum` JSON-RPC provider to simulate, approve, and sign transaction payloads.

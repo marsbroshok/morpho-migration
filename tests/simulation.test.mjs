@@ -3,6 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { JSDOM, VirtualConsole } from 'jsdom';
+import { getAddress, encodeFunctionData } from 'viem';
+import { BlockchainClient } from '../cli/blockchain-client.js';
+import { findUniswapV3Pool, ERC20_ABI } from '../builders.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -56,7 +59,7 @@ global.HTMLElement = dom.window.HTMLElement;
 global.window.fetch = global.fetch; // map fetch to Node fetch
 
 // 4. Mock window.ethereum to act as a custom forwarding provider connected to Alchemy RPC
-const TEST_USER_ADDRESS = '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a';
+const TEST_USER_ADDRESS = '0xF0A6e66B4396a70eE0620064da847821BeE70731';
 
 global.window.ethereum = {
   request: async (requestObj) => {
@@ -91,7 +94,18 @@ global.window.ethereum = {
 };
 
 // Helper function to call eth_simulateV1 on Alchemy RPC
-async function simulateTransaction(txPayload) {
+async function simulateTransaction(txPayload, prependCalls = []) {
+  const calls = [];
+  if (prependCalls && prependCalls.length > 0) {
+    calls.push(...prependCalls);
+  }
+  calls.push({
+    from: TEST_USER_ADDRESS,
+    to: txPayload.to,
+    value: txPayload.value ? `0x${txPayload.value.toString(16)}` : '0x0',
+    data: txPayload.data
+  });
+
   const payload = {
     id: 1,
     jsonrpc: "2.0",
@@ -100,14 +114,7 @@ async function simulateTransaction(txPayload) {
       {
         blockStateCalls: [
           {
-            calls: [
-              {
-                from: TEST_USER_ADDRESS,
-                to: txPayload.to,
-                value: txPayload.value ? `0x${txPayload.value.toString(16)}` : '0x0',
-                data: txPayload.data
-              }
-            ]
+            calls
           }
         ]
       },
@@ -129,6 +136,93 @@ async function simulateTransaction(txPayload) {
     console.error("Simulation failed! Raw result:", JSON.stringify(result, null, 2));
   }
   return result;
+}
+
+async function getPrependRepayCalls() {
+  const blockchainClient = new BlockchainClient(ALCHEMY_RPC_URL, null);
+  const marketIdNew = '0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c';
+  
+  const targetPosition = await blockchainClient.fetchMorphoPosition(marketIdNew, TEST_USER_ADDRESS);
+  const prependCalls = [];
+  
+  if (targetPosition.debt > 0n) {
+    console.log(`[Test Prep] User has target market debt of ${targetPosition.debt.toString()} wei. Generating pre-repayment calls to prevent LTV reverts.`);
+    const newMarketParams = await blockchainClient.fetchMarketParams(marketIdNew);
+    const destLoanToken = newMarketParams.loanToken;
+    
+    const targetRepayWhale = await findUniswapV3Pool(blockchainClient.publicClient, destLoanToken, getAddress);
+    if (targetRepayWhale) {
+      prependCalls.push({
+        from: targetRepayWhale,
+        to: destLoanToken,
+        value: '0x0',
+        data: encodeFunctionData({
+          abi: [{
+            "inputs": [
+              { "name": "recipient", "type": "address" },
+              { "name": "amount", "type": "uint256" }
+            ],
+            "name": "transfer",
+            "outputs": [{ "name": "", "type": "bool" }],
+            "stateMutability": "nonpayable",
+            "type": "function"
+          }],
+          functionName: 'transfer',
+          args: [TEST_USER_ADDRESS, targetPosition.debt]
+        })
+      });
+
+      prependCalls.push({
+        from: TEST_USER_ADDRESS,
+        to: destLoanToken,
+        value: '0x0',
+        data: encodeFunctionData({
+          abi: ERC20_ABI,
+          functionName: 'approve',
+          args: ['0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb', targetPosition.debt]
+        })
+      });
+
+      prependCalls.push({
+        from: TEST_USER_ADDRESS,
+        to: '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb',
+        value: '0x0',
+        data: encodeFunctionData({
+          abi: [
+            {
+              "inputs": [
+                {
+                  "components": [
+                    { "name": "loanToken", "type": "address" },
+                    { "name": "collateralToken", "type": "address" },
+                    { "name": "oracle", "type": "address" },
+                    { "name": "irm", "type": "address" },
+                    { "name": "lltv", "type": "uint256" }
+                  ],
+                  "name": "marketParams",
+                  "type": "tuple"
+                },
+                { "name": "assets", "type": "uint256" },
+                { "name": "shares", "type": "uint256" },
+                { "name": "onBehalf", "type": "address" },
+                { "name": "data", "type": "bytes" }
+              ],
+              "name": "repay",
+              "outputs": [
+                { "name": "assetsRepaid", "type": "uint256" },
+                { "name": "sharesRepaid", "type": "uint256" }
+              ],
+              "stateMutability": "nonpayable",
+              "type": "function"
+            }
+          ],
+          functionName: 'repay',
+          args: [newMarketParams, targetPosition.debt, 0n, TEST_USER_ADDRESS, '0x']
+        })
+      });
+    }
+  }
+  return prependCalls;
 }
 
 // 5. Preprocess app.js and write shadow file
@@ -193,7 +287,7 @@ try {
   migrateBtn.click();
   
   // Wait for calldata to populate
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise(resolve => setTimeout(resolve, 5000));
   
   let calldata = document.getElementById('rawCalldataTextarea').value;
   if (!calldata) {
@@ -205,7 +299,8 @@ try {
   let txPayload = { to: '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', data: calldata, value: 0n };
   
   console.log("Calldata generated for Full Migration. Simulating on mainnet fork...");
-  let simResult = await simulateTransaction(txPayload);
+  const prependCalls = await getPrependRepayCalls();
+  let simResult = await simulateTransaction(txPayload, prependCalls);
   console.log("Full Migration simulation status:", simResult.status || simResult.calls?.[0]?.status, "Gas Used:", simResult.gasUsed);
   assert.ok(simResult.status === '0x1' || simResult.calls?.every(c => c.status === '0x1'), "Full Migration simulation failed");
 
@@ -222,14 +317,14 @@ try {
   await new Promise(resolve => setTimeout(resolve, 200));
 
   migrateBtn.click();
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise(resolve => setTimeout(resolve, 5000));
   
   calldata = document.getElementById('rawCalldataTextarea').value;
   assert.ok(calldata, "Calldata should be populated in textarea for partial migration");
   txPayload = { to: '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', data: calldata, value: 0n };
 
   console.log("Calldata generated for Partial Migration. Simulating on mainnet fork...");
-  simResult = await simulateTransaction(txPayload);
+  simResult = await simulateTransaction(txPayload, prependCalls);
   console.log("Partial Migration simulation status:", simResult.status || simResult.calls?.[0]?.status, "Gas Used:", simResult.gasUsed);
   assert.ok(simResult.status === '0x1' || simResult.calls?.every(c => c.status === '0x1'), "Partial Migration simulation failed");
 

@@ -24,7 +24,7 @@
       }
     });
   </script>
-  <title>Morpho Blue PT Position Migrator</title>
+  <title>Morpho Blue Position Migrator</title>
   <style>
     #globalErrorBanner {
       display: none;
@@ -222,6 +222,148 @@
     .tab-content.active {
       display: block;
     }
+
+    /* CLI Command fold-out box styling */
+    .cli-card {
+      margin-top: 30px;
+      background: linear-gradient(145deg, #1e293b, #111827);
+      border: 1px solid #334155;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .cli-card:hover {
+      border-color: #475569;
+      box-shadow: 0 15px 30px -5px rgba(0, 0, 0, 0.5);
+    }
+
+    .cli-header {
+      padding: 18px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      background: rgba(30, 41, 59, 0.5);
+      user-select: none;
+      transition: background 0.2s ease;
+    }
+
+    .cli-header:hover {
+      background: rgba(30, 41, 59, 0.8);
+    }
+
+    .cli-header h3 {
+      margin: 0;
+      color: #f8fafc;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.025em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .cli-carrot {
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      color: #3b82f6;
+    }
+
+    .cli-card.expanded .cli-carrot {
+      transform: rotate(180deg);
+    }
+
+    .cli-toggle-text {
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      transition: color 0.2s ease;
+    }
+
+    .cli-header:hover .cli-toggle-text {
+      color: #94a3b8;
+    }
+
+    .cli-content {
+      max-height: 0;
+      opacity: 0;
+      overflow: hidden;
+      transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, padding 0.35s ease;
+      padding: 0 24px;
+    }
+
+    .cli-card.expanded .cli-content {
+      max-height: 500px;
+      opacity: 1;
+      padding: 20px 24px 24px 24px;
+      border-top: 1px solid #334155;
+    }
+
+    .cli-desc {
+      color: #94a3b8;
+      font-size: 13px;
+      margin-top: 0;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    .cli-code-container {
+      position: relative;
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 16px;
+      padding-right: 85px;
+      margin: 0;
+    }
+
+    .cli-code-container pre {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #38bdf8;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .cli-copy-btn {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: auto;
+      margin: 0;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+    }
+
+    .cli-copy-btn:hover {
+      background: #1d4ed8;
+      transform: translateY(-1px);
+    }
+
+    .cli-copy-btn:active {
+      transform: translateY(0);
+    }
+
+    .cli-copy-btn.copied {
+      background: #059669;
+    }
   </style>
 
   <!-- Import Viem via ESM-compatible CDN -->
@@ -235,7 +377,7 @@
   <div id="globalErrorBanner"></div>
 
   <div class="card">
-    <h2>Morpho Blue PT Position Migrator</h2>
+    <h2>Morpho Blue Position Migrator</h2>
     <p style="color: #94a3b8; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">
       This page runs entirely locally and communicates directly with your browser's injected provider (such as Rabby
       Wallet). It leverages Morpho Bundler V3 to execute atomic operations, preventing capital lock-ups.
@@ -245,36 +387,42 @@
     <div class="tabs-container">
       <div id="tabHeaderRollover" class="tab-item active">Rollover Collateral</div>
       <div id="tabHeaderLeverage" class="tab-item">Adjust Leverage</div>
+      <div id="tabHeaderSimulateRaw" class="tab-item">Simulate Raw Tx</div>
     </div>
 
     <!-- TAB 1: ROLLOVER COLLATERAL CONTENT -->
     <div id="tabContentRollover" class="tab-content active">
       <!-- CONFIGURATION PARAMETERS -->
       <div class="form-group">
-        <label>USDC Asset Contract Address</label>
-        <input type="text" id="usdcAddress" value="0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48">
-      </div>
-
-      <div class="form-group">
-        <label>Source Morpho Market ID <span id="oldMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
+        <label>Source Morpho Market ID <span id="oldMarketLabel" style="color: #94a3b8; font-size: 13px;">(Collateral/Loan)</span></label>
         <!-- UPDATED: Set default value to user provided Old Morpho ID -->
         <input type="text" id="oldMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124">
       </div>
 
       <div class="form-group">
-        <label>Source PT Token Address <span class="badge" id="oldPtBadge">PT-apyUSD-18JUN2026</span></label>
-        <input type="text" id="oldPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
+        <label>Source Loan Asset Contract Address <span class="badge" id="sourceLoanBadge">Loan</span></label>
+        <input type="text" id="sourceLoanAddress" value="0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48">
       </div>
 
       <div class="form-group">
-        <label>Destination Morpho Market ID <span id="newMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-5NOV2026/USDC)</span></label>
+        <label>Source Collateral Token Address <span class="badge" id="oldCollateralBadge">Collateral</span></label>
+        <input type="text" id="oldCollateralAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
+      </div>
+
+      <div class="form-group">
+        <label>Destination Morpho Market ID <span id="newMarketLabel" style="color: #94a3b8; font-size: 13px;">(Collateral/Loan)</span></label>
         <!-- UPDATED: Set default value to user provided New Morpho ID -->
         <input type="text" id="newMarketId" value="0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c">
       </div>
 
       <div class="form-group">
-        <label>Destination PT Token Address <span class="badge" id="newPtBadge">PT-apyUSD-5NOV2026</span></label>
-        <input type="text" id="newPtAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150">
+        <label>Destination Loan Asset Contract Address <span class="badge" id="destLoanBadge">USDC</span></label>
+        <input type="text" id="newLoanAddress" value="0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48">
+      </div>
+
+      <div class="form-group">
+        <label>Destination Collateral Token Address <span class="badge" id="newCollateralBadge">Collateral</span></label>
+        <input type="text" id="newCollateralAddress" value="0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150">
       </div>
 
       <button id="loadPositionBtn" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
@@ -291,12 +439,12 @@
 
       <div class="form-group" style="display: flex; gap: 15px;">
         <div style="flex: 1;">
-          <label>USDC Debt to Repay</label>
+          <label>Source Debt to Repay</label>
           <!-- UPDATED: Added oninput handler for auto-calculating collateral proportionally -->
           <input type="number" id="debtAmount" value="6195.88" step="any">
         </div>
         <div style="flex: 1;">
-          <label>PT Collateral to Migrate</label>
+          <label>Collateral to Migrate</label>
           <input type="number" id="collateralAmount" value="8000.32" step="any">
         </div>
         <div style="flex: 0.5;">
@@ -305,24 +453,29 @@
         </div>
       </div>
 
+      <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-bottom: 20px;">
+        <input type="checkbox" id="capBorrow" style="width: auto;">
+        <label for="capBorrow" style="margin-bottom: 0; user-select: none;">Cap target borrow to safety threshold (LLTV - 0.5%) if needed</label>
+      </div>
+
       <button id="migrateBtn">Simulate & Migrate Position</button>
     </div><!-- end tabContentRollover -->
 
     <!-- TAB 2: ADJUST LEVERAGE CONTENT -->
     <div id="tabContentLeverage" class="tab-content">
       <div class="form-group">
-        <label>USDC Asset Contract Address</label>
-        <input type="text" id="levUsdcAddress" value="0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48">
+        <label>Loan Asset Contract Address</label>
+        <input type="text" id="levLoanAddress" value="0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48">
       </div>
 
       <div class="form-group">
-        <label>Morpho Market ID <span id="levMarketLabel" style="color: #94a3b8; font-size: 13px;">(PT-apyUSD-18JUN2026/USDC)</span></label>
+        <label>Morpho Market ID <span id="levMarketLabel" style="color: #94a3b8; font-size: 13px;">(Collateral/Loan)</span></label>
         <input type="text" id="levMarketId" value="0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124">
       </div>
 
       <div class="form-group">
-        <label>PT Token Address <span class="badge" id="levPtBadge">PT-apyUSD-18JUN2026</span></label>
-        <input type="text" id="levPtAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
+        <label>Collateral Token Address <span class="badge" id="levCollateralBadge">Collateral</span></label>
+        <input type="text" id="levCollateralAddress" value="0x3365554a61CeFF74A76528f9e86C1E87946d16a5">
       </div>
 
       <button id="levLoadBtn" style="background-color: #0f172a; border: 1px solid #3b82f6; color: #3b82f6; margin-bottom: 20px;">Connect Wallet & Fetch Live Position</button>
@@ -337,7 +490,7 @@
             <span id="levTargetLeverageDisplay" style="color: #3b82f6; font-weight: 600;">3.00x</span>
           </label>
           <input type="range" id="levSlider" min="1.0" max="6.0" step="0.05" value="3.0" style="width: 100%; margin-top: 8px;">
-          <div style="display: flex; justify-content: space-between; font-size: 11px; color: #64748b; margin-top: 4px;">
+          <div style="display: flex; justify-content: justify; font-size: 11px; color: #64748b; margin-top: 4px;">
             <span>1.00x (Debt-free)</span>
             <span>3.50x</span>
             <span>6.00x (Safe Max)</span>
@@ -357,8 +510,55 @@
       </div>
     </div><!-- end tabContentLeverage -->
 
+    <!-- TAB 3: SIMULATE RAW CONTENT -->
+    <div id="tabContentSimulateRaw" class="tab-content">
+      <!-- Simulation Settings inside Tab 3 -->
+      <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+        <h3 style="margin-top: 0; color: #f8fafc; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;">Simulation & RPC Settings</h3>
+        <div class="form-group">
+          <label>Alchemy API Key</label>
+          <input type="password" id="settingsAlchemyKey" placeholder="Enter Alchemy API Key (obscured/masked)">
+        </div>
+        <div class="form-group">
+          <label>Custom RPC URL (Optional)</label>
+          <input type="text" id="settingsRpcUrl" placeholder="https://eth-mainnet.g.alchemy.com/v2/your-key">
+        </div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="settingsAutoSimulate" checked style="width: auto;">
+          <label for="settingsAutoSimulate" style="margin-bottom: 0; user-select: none;">Automatically simulate workflows prior to submission</label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Upload Transaction JSON File</label>
+        <input type="file" id="rawTxFileInput" accept=".json" style="padding: 6px;">
+      </div>
+
+      <div class="form-group">
+        <label>Or Paste Raw Transaction JSON</label>
+        <textarea id="rawTxDataTextarea" placeholder='{ "from": "0x...", "to": "0x...", "data": "0x...", "value": "0" }' style="width: 100%; height: 120px; background-color: #0f172a; color: #f8fafc; border: 1px solid #475569; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 13px; box-sizing: border-box; resize: vertical;"></textarea>
+      </div>
+
+      <!-- Pre-Execution Dashboard -->
+      <div id="rawTxPreAssessment" style="display: none; background-color: #1e293b; border: 1px dashed #475569; border-radius: 8px; padding: 15px; margin-bottom: 20px; font-size: 13px; line-height: 1.5;">
+        <!-- Filled dynamically -->
+      </div>
+
+      <button id="simulateRawBtn">Simulate Raw Transaction</button>
+    </div><!-- end tabContentSimulateRaw -->
+
     <!-- SHARED FOOTER OUTPUTS (status log & payload previews) -->
     <div id="status"></div>
+
+    <!-- SIMULATION RESULTS DISPLAY -->
+    <div id="simulationResultContainer" style="display: none; margin-top: 24px; padding: 20px; background: #1e293b; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);">
+      <!-- Real-time simulation status, gas, trace will render here -->
+    </div>
+
+    <!-- SIMULATION WARNINGS DISPLAY -->
+    <div id="simulationWarningsContainer" style="display: none; margin-top: 24px; padding: 15px; background-color: #7f1d1d; color: #fca5a5; border: 1px solid #b91c1c; border-radius: 8px; font-family: monospace; font-size: 13px; white-space: pre-wrap;">
+      <!-- warnings list will render here -->
+    </div>
 
     <!-- PRE-TRANSACTION PREVIEW CONTAINER -->
     <div id="previewContainer" style="display: none; margin-top: 24px; padding: 20px; background: #1e293b; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);">
@@ -369,7 +569,7 @@
       
       <!-- Maturity Notice Alert -->
       <div id="maturityNotice" style="display: none; background-color: #1e3a8a; border: 1px solid #1d4ed8; color: #93c5fd; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 13px;">
-        <strong>ℹ️ Maturity Notice:</strong> Old PT collateral has matured. The system will execute a zero-slippage redemption route.
+        <strong>ℹ️ Maturity Notice:</strong> Old collateral has matured. The system will execute a zero-slippage redemption route.
       </div>
 
       <div id="previewMetrics" style="font-size: 14px; line-height: 1.6; color: #cbd5e1; margin-bottom: 20px;">
@@ -407,6 +607,35 @@
         <textarea id="rawCalldataTextarea" readonly style="width: 100%; height: 100px; background: #0f172a; color: #4ade80; border: 1px solid #334155; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 11px; resize: vertical; box-sizing: border-box;"></textarea>
       </div>
     </div>
+
+    <!-- COLLAPSIBLE CLI COMMAND GENERATOR BOX -->
+    <div class="cli-card" id="cliCard">
+      <div class="cli-header" id="cliHeader">
+        <h3>
+          <svg class="cli-carrot" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+          <span>CLI Command Equivalent</span>
+        </h3>
+        <span class="cli-toggle-text" id="cliToggleText">Click to expand</span>
+      </div>
+      <div class="cli-content">
+        <p class="cli-desc">
+          Run this command in your terminal to execute the exact same operation configured above. Use `--walletconnect` (`-w`) to execute via paired wallet, or configure local private keys.
+        </p>
+        <div class="cli-code-container">
+          <pre><code id="cliCommandCode">node cli.js ...</code></pre>
+          <button class="cli-copy-btn" id="copyCliBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span>Copy</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
 </body>

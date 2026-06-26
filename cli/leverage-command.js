@@ -31,7 +31,7 @@ const BUNDLER_ABI = [
 export class LeverageCommand {
   /**
    * @param {BlockchainClient} blockchainClient 
-   * @param {PendleRouterClient} routerClient 
+   * @param {SwapRouterClient} routerClient 
    * @param {SimulationEngine} simulationEngine 
    * @param {TransactionAuditor} auditor 
    */
@@ -48,7 +48,7 @@ export class LeverageCommand {
   async assessPosition(options) {
     const userAddress = getAddress(options.user);
     const marketId = options.marketId;
-    const usdcAddress = getAddress(options.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const loanAddress = getAddress(options.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
     const slippage = options.slippage;
     const targetLeverage = options.targetLeverage;
 
@@ -58,7 +58,7 @@ export class LeverageCommand {
 
     // Fetch Market Params
     const marketParams = await this.blockchainClient.fetchMarketParams(marketId);
-    const ptAddress = getAddress(options.pt || marketParams.collateralToken);
+    const collateralAddress = getAddress(options.pt || marketParams.collateralToken);
 
     // Fetch User position
     const position = await this.blockchainClient.fetchMorphoPosition(marketId, userAddress);
@@ -79,18 +79,18 @@ export class LeverageCommand {
     const swapPrice = oraclePrice;
     const params = calculateLeverageAdjustmentParams(liveDebt, liveCollateral, oraclePrice, swapPrice, targetLeverage);
 
-    const collateralSymbol = options.collateralSymbol || "PT";
-    const loanSymbol = options.loanSymbol || "USDC";
-    const maturity = await this.blockchainClient.checkPtMaturity(ptAddress);
+    const collateralSymbol = options.collateralSymbol || marketParams.collateralSymbol || "PT";
+    const loanSymbol = options.loanSymbol || marketParams.loanSymbol || "USDC";
+    const maturity = await this.blockchainClient.checkCollateralMaturity(collateralAddress);
 
     return {
       userAddress,
       marketId,
-      usdcAddress,
+      loanAddress,
       slippage,
       targetLeverage,
       marketParams,
-      ptAddress,
+      collateralAddress,
       position: {
         collateral: liveCollateral,
         debt: liveDebt
@@ -118,34 +118,45 @@ export class LeverageCommand {
     let routeData;
     const isLeverageUp = (assessment.params.mode === 'leverage-up');
 
+    const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
     if (assessment.params.mode === 'deleverage' || assessment.params.mode === 'deleverage-to-1x') {
-      routeData = await this.routerClient.fetchPendleRoute(
-        assessment.ptAddress,
+      routeData = await this.routerClient.fetchSwapRoute(
+        assessment.collateralAddress,
         assessment.params.collateralAmount,
-        assessment.usdcAddress,
-        slippageFrac
+        assessment.loanAddress,
+        slippageFrac,
+        MORPHO_BUNDLER_V3,
+        MORPHO_BUNDLER_V3
       );
     } else {
-      routeData = await this.routerClient.fetchPendleRoute(
-        assessment.usdcAddress,
+      routeData = await this.routerClient.fetchSwapRoute(
+        assessment.loanAddress,
         assessment.params.debtAmount,
-        assessment.ptAddress,
-        slippageFrac
+        assessment.collateralAddress,
+        slippageFrac,
+        ETHER_GENERAL_ADAPTER_1,
+        MORPHO_BUNDLER_V3
       );
     }
 
-    const oracleRate = assessment.oraclePrice / 10n ** 6n;
+    const collateralDecimals = BigInt(assessment.marketParams.collateralDecimals);
+    const loanDecimals = BigInt(assessment.marketParams.loanDecimals);
+
+    const quotedRateExponent = 18n + collateralDecimals - loanDecimals;
+    const oracleRateDenominator = 10n ** (18n + loanDecimals - collateralDecimals);
+
+    const oracleRate = assessment.oraclePrice / oracleRateDenominator;
     let quotedRate = 0n;
 
     if (assessment.params.mode === 'deleverage' || assessment.params.mode === 'deleverage-to-1x') {
       const expectedUsdcOutput = BigInt(routeData.outputs[0].amount);
       if (assessment.params.collateralAmount > 0n) {
-        quotedRate = (expectedUsdcOutput * 10n ** 30n) / assessment.params.collateralAmount;
+        quotedRate = (expectedUsdcOutput * 10n ** quotedRateExponent) / assessment.params.collateralAmount;
       }
     } else {
       const expectedPtOutput = BigInt(routeData.outputs[0].amount);
       if (expectedPtOutput > 0n) {
-        quotedRate = (assessment.params.debtAmount * 10n ** 30n) / expectedPtOutput;
+        quotedRate = (assessment.params.debtAmount * 10n ** quotedRateExponent) / expectedPtOutput;
       }
     }
 
@@ -172,7 +183,8 @@ export class LeverageCommand {
     if (assessment.params.mode === 'deleverage' || assessment.params.mode === 'deleverage-to-1x') {
       const expectedUsdcOutput = BigInt(swap.routeData.outputs[0].amount);
       const is1x = (assessment.params.mode === 'deleverage-to-1x');
-      const bufferAmount = assessment.params.debtAmount > 100n * 10n ** 6n ? 1n * 10n ** 6n : (assessment.params.debtAmount * 2n / 1000n);
+      const loanDecimals = BigInt(assessment.marketParams.loanDecimals);
+      const bufferAmount = assessment.params.debtAmount > 100n * 10n ** loanDecimals ? 1n * 10n ** loanDecimals : (assessment.params.debtAmount * 2n / 1000n);
       const flashLoanAmount = is1x ? (assessment.params.debtAmount + bufferAmount) : (expectedUsdcOutput - bufferAmount);
 
       const reenterBundle = buildDeleveragingBundle({
@@ -181,12 +193,13 @@ export class LeverageCommand {
         collateralAmount: assessment.params.collateralAmount,
         debtAmount: is1x ? expectedUsdcOutput : flashLoanAmount,
         is1x,
-        ptAddress: assessment.ptAddress,
-        usdcAddress: assessment.usdcAddress,
+        collateralAddress: assessment.collateralAddress,
+        loanAddress: assessment.loanAddress,
         routeData: swap.routeData,
         userAddress: assessment.userAddress,
         ETHER_GENERAL_ADAPTER_1,
-        MORPHO_BUNDLER_V3
+        MORPHO_BUNDLER_V3,
+        flashLoanAmount
       });
 
       const encodedReenterBundle = encodeAbiParameters(
@@ -214,7 +227,7 @@ export class LeverageCommand {
           data: encodeFunctionData({
             abi: ADAPTER_ABI,
             functionName: 'morphoFlashLoan',
-            args: [assessment.usdcAddress, flashLoanAmount, encodedReenterBundle]
+            args: [assessment.loanAddress, flashLoanAmount, encodedReenterBundle]
           }),
           value: 0n,
           skipRevert: false,
@@ -225,7 +238,7 @@ export class LeverageCommand {
           data: encodeFunctionData({
             abi: ADAPTER_ABI,
             functionName: 'erc20Transfer',
-            args: [assessment.usdcAddress, assessment.userAddress, 2n ** 256n - 1n]
+            args: [assessment.loanAddress, assessment.userAddress, 2n ** 256n - 1n]
           }),
           value: 0n,
           skipRevert: false,
@@ -247,8 +260,8 @@ export class LeverageCommand {
         marketParams: assessment.marketParams,
         collateralAmount: expectedPtOutput,
         debtAmount: assessment.params.debtAmount,
-        ptAddress: assessment.ptAddress,
-        usdcAddress: assessment.usdcAddress,
+        collateralAddress: assessment.collateralAddress,
+        loanAddress: assessment.loanAddress,
         routeData: swap.routeData,
         userAddress: assessment.userAddress,
         ETHER_GENERAL_ADAPTER_1,
@@ -280,7 +293,7 @@ export class LeverageCommand {
           data: encodeFunctionData({
             abi: ADAPTER_ABI,
             functionName: 'morphoFlashLoan',
-            args: [assessment.usdcAddress, assessment.params.debtAmount, encodedReenterBundle]
+            args: [assessment.loanAddress, assessment.params.debtAmount, encodedReenterBundle]
           }),
           value: 0n,
           skipRevert: false,
@@ -295,26 +308,52 @@ export class LeverageCommand {
       });
     }
 
+    const loanDec = 10 ** assessment.marketParams.loanDecimals;
+    const collDec = 10 ** assessment.marketParams.collateralDecimals;
+
     const steps = isLeverageUp ? [
-      `Flashloan: Borrow ${Number(assessment.params.debtAmount)/1e6} USDC from Adapter`,
-      `Swap: Swap USDC for ${Number(swap.routeData.outputs[0].amount)/1e18} PT`,
-      `Supply: Supply PT to Morpho Blue Core`,
-      `Borrow: Borrow ${Number(assessment.params.debtAmount)/1e6} USDC from Morpho Blue Core to adapter`,
+      `Flashloan: Borrow ${Number(assessment.params.debtAmount)/loanDec} ${assessment.market.loanSymbol} from Adapter`,
+      `Swap: Swap ${assessment.market.loanSymbol} for ${Number(swap.routeData.outputs[0].amount)/collDec} ${assessment.market.collateralSymbol}`,
+      `Supply: Supply ${assessment.market.collateralSymbol} to Morpho Blue Core`,
+      `Borrow: Borrow ${Number(assessment.params.debtAmount)/loanDec} ${assessment.market.loanSymbol} from Morpho Blue Core to adapter`,
       `Repay Flashloan: Repay flashloan back to provider`
     ] : [
       `Flashloan: Borrow Flashloan from Adapter`,
-      `Withdraw: Withdraw ${Number(assessment.params.collateralAmount)/1e18} PT from Morpho Blue Core`,
-      `Approve Swap: Approve Pendle Convert Router for ${Number(assessment.params.collateralAmount)/1e18} PT`,
-      `Swap: Swap PT for ${Number(swap.routeData.outputs[0].amount)/1e6} USDC`,
-      `Repay Debt: Repay USDC debt on Morpho Blue Core`,
+      `Withdraw: Withdraw ${Number(assessment.params.collateralAmount)/collDec} ${assessment.market.collateralSymbol} from Morpho Blue Core`,
+      `Approve Swap: Approve Swap Router for ${Number(assessment.params.collateralAmount)/collDec} ${assessment.market.collateralSymbol}`,
+      `Swap: Swap ${assessment.market.collateralSymbol} for ${Number(swap.routeData.outputs[0].amount)/loanDec} ${assessment.market.loanSymbol}`,
+      `Repay Debt: Repay ${assessment.market.loanSymbol} debt on Morpho Blue Core`,
       `Repay Flashloan: Repay flashloan back to provider`
     ];
+
+    const collateralDecimals = BigInt(assessment.marketParams.collateralDecimals);
+    const loanDecimals = BigInt(assessment.marketParams.loanDecimals);
+    const scaleExp = collateralDecimals + 18n - loanDecimals;
+
+    let fairMarketValue = 0n;
+    let fairValueLoss = 0n;
+    let walletShortfall = 0n;
+
+    if (assessment.params.mode === 'deleverage' || assessment.params.mode === 'deleverage-to-1x') {
+      const expectedUsdcOutput = BigInt(swap.routeData.outputs[0].amount);
+      fairMarketValue = (assessment.params.collateralAmount * swap.rawOracleRate) / 10n ** scaleExp;
+      fairValueLoss = fairMarketValue - expectedUsdcOutput;
+      walletShortfall = assessment.params.debtAmount - expectedUsdcOutput;
+    } else {
+      const expectedPtOutput = BigInt(swap.routeData.outputs[0].amount);
+      fairMarketValue = (expectedPtOutput * swap.rawOracleRate) / 10n ** scaleExp;
+      fairValueLoss = assessment.params.debtAmount - fairMarketValue;
+      walletShortfall = 0n;
+    }
 
     return {
       ...assessment,
       swap,
       steps,
-      finalCalldata
+      finalCalldata,
+      fairMarketValue,
+      fairValueLoss,
+      walletShortfall
     };
   }
 
@@ -352,8 +391,12 @@ export class LeverageCommand {
         value: 0n
       });
       auditDetails = {
-        spentToken: isLeverageUp ? assessment.usdcAddress : assessment.ptAddress,
-        receivedToken: isLeverageUp ? assessment.ptAddress : assessment.usdcAddress,
+        spentToken: isLeverageUp ? assessment.loanAddress : assessment.collateralAddress,
+        receivedToken: isLeverageUp ? assessment.collateralAddress : assessment.loanAddress,
+        spentDecimals: isLeverageUp ? assessment.marketParams.loanDecimals : assessment.marketParams.collateralDecimals,
+        receivedDecimals: isLeverageUp ? assessment.marketParams.collateralDecimals : assessment.marketParams.loanDecimals,
+        spentSymbol: isLeverageUp ? assessment.market.loanSymbol : assessment.market.collateralSymbol,
+        receivedSymbol: isLeverageUp ? assessment.market.collateralSymbol : assessment.market.loanSymbol,
         oracleRate: swap.oracleRate,
         estimatedRate: swap.expectedRate,
         estimatedPriceImpact: swap.priceImpact,

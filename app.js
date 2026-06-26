@@ -1,8 +1,8 @@
-import { createWalletClient, createPublicClient, http, custom, getAddress, encodeFunctionData, encodeAbiParameters, keccak256 } from 'https://esm.sh/viem';
+import { createWalletClient, createPublicClient, http, custom, getAddress, encodeFunctionData, encodeAbiParameters, keccak256, decodeFunctionData, decodeAbiParameters } from 'https://esm.sh/viem';
 import { mainnet } from 'https://esm.sh/viem/chains';
 import { calculateCollateralValue, calculateLtv, calculateLeverage, calculateLeverageAdjustmentParams } from './math.js';
 import { formatMarketLabel } from './labels.js';
-import { buildDeleveragingBundle, buildLeveragingUpBundle, ERC20_ABI, ADAPTER_ABI } from './builders.js';
+import { buildDeleveragingBundle, buildLeveragingUpBundle, buildRolloverBundle, ERC20_ABI, ADAPTER_ABI, findCurvePoolAndIndices, findUniswapV3Pool } from './builders.js';
 
 // --- CONSTANTS & ABIs ---
 const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
@@ -36,8 +36,8 @@ async function fetchMarketParams(marketId) {
     query GetMarket($id: String!) {
       markets(where: { uniqueKey_in: [$id] }) {
         items {
-          loanAsset { address symbol }
-          collateralAsset { address symbol }
+          loanAsset { address symbol decimals }
+          collateralAsset { address symbol decimals }
           oracleAddress
           irmAddress
           lltv
@@ -70,6 +70,8 @@ async function fetchMarketParams(marketId) {
     collateralToken: getAddress(market.collateralAsset.address),
     loanSymbol: market.loanAsset.symbol,
     collateralSymbol: market.collateralAsset.symbol,
+    loanDecimals: Number(market.loanAsset.decimals),
+    collateralDecimals: Number(market.collateralAsset.decimals),
     oracle: getAddress(market.oracleAddress),
     irm: getAddress(market.irmAddress),
     lltv: BigInt(market.lltv)
@@ -117,11 +119,15 @@ let liveBorrowShares = 0n;
 let migrationType = 'full';
 let publicClient = null;
 let pendingTx = null;
+let activeTab = 'rollover';
+let sourceMarketParams = null;
+let destMarketParams = null;
+let currentLevMarketParams = null;
 
-async function checkPtMaturity(client, ptAddress) {
+async function checkCollateralMaturity(client, collateralAddress) {
   try {
     const expiry = await client.readContract({
-      address: ptAddress,
+      address: collateralAddress,
       abi: [{"inputs":[],"name":"expiry","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
       functionName: 'expiry'
     });
@@ -131,7 +137,7 @@ async function checkPtMaturity(client, ptAddress) {
       isExpired: expiry <= currentTimestamp
     };
   } catch (err) {
-    console.warn("Failed to fetch PT expiry info:", err);
+    console.warn("Failed to fetch collateral expiry info:", err);
     return { expiryDate: "Unknown", isExpired: false };
   }
 }
@@ -183,9 +189,9 @@ async function auditRealizedPrice(txHash) {
     const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
     
     // We can extract input/output tokens dynamically from input fields if available
-    const oldPt = document.getElementById('oldPtAddress')?.value || document.getElementById('levPtAddress')?.value;
-    const newPt = document.getElementById('newPtAddress')?.value || oldPt; // fallback
-    const usdc = document.getElementById('usdcAddress')?.value || document.getElementById('levUsdcAddress')?.value;
+    const oldPt = document.getElementById('oldCollateralAddress')?.value || document.getElementById('levCollateralAddress')?.value;
+    const newPt = document.getElementById('newCollateralAddress')?.value || oldPt; // fallback
+    const usdc = document.getElementById('sourceLoanAddress')?.value || document.getElementById('levLoanAddress')?.value;
 
     let spentToken = null;
     let receivedToken = null;
@@ -299,30 +305,36 @@ async function fetchMorphoPosition(publicClient, marketId, userAddress) {
   return { collateral, debt, borrowShares };
 }
 
-async function fetchPendleRoute(inputToken, inputAmount, outputToken, slippage) {
+async function fetchSwapRoute(inputToken, inputAmount, outputToken, slippage, receiver, sender = null) {
   const chainId = 1;
-  const pendleApiUrl = `https://api-v2.pendle.finance/core/v3/sdk/${chainId}/convert`;
-  const response = await fetch(pendleApiUrl, {
+  const swapRouterApiUrl = `https://api-v2.pendle.finance/core/v3/sdk/${chainId}/convert`;
+  const requestBody = {
+    receiver: receiver,
+    slippage: slippage,
+    inputs: [
+      {
+        token: inputToken,
+        amount: inputAmount.toString()
+      }
+    ],
+    outputs: [
+      outputToken
+    ],
+    enableAggregator: true
+  };
+
+  if (sender) {
+    requestBody.sender = sender;
+  }
+
+  const response = await fetch(swapRouterApiUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      receiver: ETHER_GENERAL_ADAPTER_1,
-      slippage: slippage,
-      inputs: [
-        {
-          token: inputToken,
-          amount: inputAmount.toString()
-        }
-      ],
-      outputs: [
-        outputToken
-      ],
-      enableAggregator: true
-    })
+    body: JSON.stringify(requestBody)
   });
   if (!response.ok) {
     const errData = await response.json();
-    throw new Error(errData.message || "Failed to fetch routing data from Pendle.");
+    throw new Error(errData.message || "Failed to fetch routing data from Swap Router.");
   }
   const data = await response.json();
   return data.routes[0];
@@ -356,6 +368,7 @@ async function connectAndLoadPosition() {
     const [address] = await walletClient.requestAddresses();
     userAddress = getAddress(address);
     statusEl.innerText = `Connected Wallet: ${userAddress}\nLoading position data from Morpho Blue...`;
+    updateCliCommand();
 
     const oldMarketId = document.getElementById('oldMarketId').value.trim();
     if (!oldMarketId || oldMarketId.length !== 66) {
@@ -378,15 +391,15 @@ async function connectAndLoadPosition() {
     const ltv = calculateLtv(liveDebt, collateralValue);
     const leverage = calculateLeverage(collateralValue, liveDebt);
 
-    const formattedCollateral = (Number(liveCollateral) / 1e18).toFixed(4);
-    const formattedDebt = (Number(liveDebt) / 1e6).toFixed(2);
+    const formattedCollateral = (Number(liveCollateral) / (10 ** oldMarketParams.collateralDecimals)).toFixed(4);
+    const formattedDebt = (Number(liveDebt) / (10 ** oldMarketParams.loanDecimals)).toFixed(2);
 
     // Display position info
     const infoEl = document.getElementById('positionInfo');
     infoEl.innerHTML = `
       <strong>Active Position Found:</strong><br>
-      Collateral: <span style="color: #38bdf8;">${formattedCollateral} PT</span><br>
-      Current Debt: <span style="color: #f43f5e;">${formattedDebt} USDC</span><br>
+      Collateral: <span style="color: #38bdf8;">${formattedCollateral} ${oldMarketParams.collateralSymbol}</span><br>
+      Current Debt: <span style="color: #f43f5e;">${formattedDebt} ${oldMarketParams.loanSymbol}</span><br>
       LTV & Leverage: <span style="color: #34d399;">${ltv.toFixed(2)}% (${leverage} Leverage)</span>
     `;
     infoEl.style.display = 'block';
@@ -411,12 +424,15 @@ function selectMigrationType(type) {
   const toggleFull = document.getElementById('toggleFull');
   const togglePartial = document.getElementById('togglePartial');
 
+  const decimals = sourceMarketParams ? sourceMarketParams.loanDecimals : 6;
+  const collDecimals = sourceMarketParams ? sourceMarketParams.collateralDecimals : 18;
+
   if (type === 'full') {
     toggleFull.className = 'toggle-btn active';
     togglePartial.className = 'toggle-btn';
     
-    debtInput.value = (Number(liveDebt) / 1e6).toFixed(2);
-    collateralInput.value = (Number(liveCollateral) / 1e18).toFixed(4);
+    debtInput.value = (Number(liveDebt) / (10 ** decimals)).toFixed(2);
+    collateralInput.value = (Number(liveCollateral) / (10 ** collDecimals)).toFixed(4);
     
     debtInput.disabled = true;
     collateralInput.disabled = true;
@@ -426,40 +442,45 @@ function selectMigrationType(type) {
     
     debtInput.disabled = false;
     // Pre-fill with half of the position for convenience
-    debtInput.value = (Number(liveDebt / 2n) / 1e6).toFixed(2);
+    debtInput.value = (Number(liveDebt / 2n) / (10 ** decimals)).toFixed(2);
     calculateProportionalCollateral();
     
     // Collateral is auto-calculated proportionally to keep it healthy
     collateralInput.disabled = true;
   }
+  updateCliCommand();
 }
 
 function calculateProportionalCollateral() {
   const debtInputVal = parseFloat(document.getElementById('debtAmount').value);
-  if (isNaN(debtInputVal) || debtInputVal <= 0 || liveDebt === 0n) {
+  if (isNaN(debtInputVal) || debtInputVal <= 0 || liveDebt === 0n || !sourceMarketParams) {
     document.getElementById('collateralAmount').value = "0.0000";
     return;
   }
   
-  const debtInputBig = BigInt(Math.floor(debtInputVal * 1e6));
+  const decimals = sourceMarketParams.loanDecimals;
+  const collDecimals = sourceMarketParams.collateralDecimals;
+  
+  const debtInputBig = BigInt(Math.floor(debtInputVal * (10 ** decimals)));
   if (debtInputBig > liveDebt) {
     // Cap it at live position maximum
-    document.getElementById('debtAmount').value = (Number(liveDebt) / 1e6).toFixed(2);
-    document.getElementById('collateralAmount').value = (Number(liveCollateral) / 1e18).toFixed(4);
+    document.getElementById('debtAmount').value = (Number(liveDebt) / (10 ** decimals)).toFixed(2);
+    document.getElementById('collateralAmount').value = (Number(liveCollateral) / (10 ** collDecimals)).toFixed(4);
     return;
   }
 
   // Proportional collateral: C_withdrawn = Collateral_total * X / Debt_total
   const collateralWithdrawnBig = (liveCollateral * debtInputBig) / liveDebt;
-  document.getElementById('collateralAmount').value = (Number(collateralWithdrawnBig) / 1e18).toFixed(4);
+  document.getElementById('collateralAmount').value = (Number(collateralWithdrawnBig) / (10 ** collDecimals)).toFixed(4);
 }
 
 // Attach listener for debt input changes under partial mode
 function onDebtInputChange() {
   calculateProportionalCollateral();
+  updateCliCommand();
 }
 
-async function onPtAddressInput(inputId, badgeId) {
+async function onTokenAddressInput(inputId, badgeId) {
   const addressVal = document.getElementById(inputId).value.trim();
   const badgeEl = document.getElementById(badgeId);
   if (addressVal.length === 42 && addressVal.startsWith('0x')) {
@@ -503,33 +524,71 @@ async function onPtAddressInput(inputId, badgeId) {
       badgeEl.innerText = symbol;
       badgeEl.style.display = 'inline-block';
     } catch (err) {
-      console.error("onPtAddressInput error for address", addressVal, err);
+      console.error("onTokenAddressInput error for address", addressVal, err);
       badgeEl.innerText = "Unknown Token";
+    } finally {
+      updateCliCommand();
     }
   } else {
-    badgeEl.innerText = "";
+    badgeEl.textContent = "";
     badgeEl.style.display = 'none';
+    updateCliCommand();
   }
 }
 
-async function onMarketIdInput(inputId, labelId, ptInputId, ptBadgeId) {
+async function onMarketIdInput(inputId, labelId, ptInputId, ptBadgeId, loanInputId, loanBadgeId) {
   const marketIdVal = document.getElementById(inputId).value.trim();
   const labelEl = document.getElementById(labelId);
   if (marketIdVal.length === 66 && marketIdVal.startsWith('0x')) {
     try {
       const params = await fetchMarketParams(marketIdVal);
-      labelEl.innerText = ` ${formatMarketLabel(params.collateralSymbol, params.loanSymbol)}`;
+      if (inputId === 'oldMarketId') {
+        sourceMarketParams = params;
+        const debtInput = document.getElementById('debtAmount');
+        if (debtInput && debtInput.previousElementSibling) {
+          debtInput.previousElementSibling.textContent = `Source Debt to Repay (${params.loanSymbol})`;
+        }
+        const collInput = document.getElementById('collateralAmount');
+        if (collInput && collInput.previousElementSibling) {
+          collInput.previousElementSibling.textContent = `Collateral to Migrate (${params.collateralSymbol})`;
+        }
+      }
+      if (inputId === 'newMarketId') destMarketParams = params;
+      if (inputId === 'levMarketId') currentLevMarketParams = params;
+
+      labelEl.textContent = ` ${formatMarketLabel(params.collateralSymbol, params.loanSymbol)}`;
       
       if (ptInputId && ptBadgeId) {
         const ptInput = document.getElementById(ptInputId);
         ptInput.value = params.collateralToken;
-        onPtAddressInput(ptInputId, ptBadgeId);
+        await onTokenAddressInput(ptInputId, ptBadgeId);
+      }
+      if (loanInputId && loanBadgeId) {
+        const loanInput = document.getElementById(loanInputId);
+        loanInput.value = params.loanToken;
+        await onTokenAddressInput(loanInputId, loanBadgeId);
       }
     } catch (err) {
-      labelEl.innerText = " (Invalid Market)";
+      labelEl.textContent = " (Invalid Market)";
+    } finally {
+      updateCliCommand();
     }
   } else {
-    labelEl.innerText = "";
+    labelEl.textContent = "";
+    if (inputId === 'oldMarketId') {
+      sourceMarketParams = null;
+      const debtInput = document.getElementById('debtAmount');
+      if (debtInput && debtInput.previousElementSibling) {
+        debtInput.previousElementSibling.textContent = "Source Debt to Repay";
+      }
+      const collInput = document.getElementById('collateralAmount');
+      if (collInput && collInput.previousElementSibling) {
+        collInput.previousElementSibling.textContent = "Collateral to Migrate";
+      }
+    }
+    if (inputId === 'newMarketId') destMarketParams = null;
+    if (inputId === 'levMarketId') currentLevMarketParams = null;
+    updateCliCommand();
   }
 }
 
@@ -556,38 +615,39 @@ async function initiateMigration() {
     statusEl.innerText = `Connected Wallet: ${userAddress}\nRetrieving market parameters from Morpho Blue API...`;
 
     // --- 1. Gather User Inputs & Fetch Market Parameters ---
-    const usdcAddress = getAddress(document.getElementById('usdcAddress').value);
-    const oldPtAddress = getAddress(document.getElementById('oldPtAddress').value);
-    const newPtAddress = getAddress(document.getElementById('newPtAddress').value);
-    const oldMarketId = document.getElementById('oldMarketId').value;
-    const newMarketId = document.getElementById('newMarketId').value;
+    const sourceLoanAddress = getAddress(document.getElementById('sourceLoanAddress').value);
+    const destLoanAddress = getAddress(document.getElementById('newLoanAddress').value);
+    const sourceCollateralAddress = getAddress(document.getElementById('oldCollateralAddress').value);
+    const destCollateralAddress = getAddress(document.getElementById('newCollateralAddress').value);
+    const sourceMarketId = document.getElementById('oldMarketId').value;
+    const destMarketId = document.getElementById('newMarketId').value;
 
-    const oldMarketParams = await fetchMarketParams(oldMarketId);
-    const newMarketParams = await fetchMarketParams(newMarketId);
+    const sourceMarketParams = await fetchMarketParams(sourceMarketId);
+    const destMarketParams = await fetchMarketParams(destMarketId);
 
     const isFull = (migrationType === 'full');
-    const debtAmount = isFull ? liveDebt : BigInt(Math.floor(parseFloat(document.getElementById('debtAmount').value) * 1e6));
-    const collateralAmount = isFull ? liveCollateral : BigInt(Math.floor(parseFloat(document.getElementById('collateralAmount').value) * 1e18));
+    const debtAmount = isFull ? liveDebt : BigInt(Math.floor(parseFloat(document.getElementById('debtAmount').value) * (10 ** sourceMarketParams.loanDecimals)));
+    const collateralAmount = isFull ? liveCollateral : BigInt(Math.floor(parseFloat(document.getElementById('collateralAmount').value) * (10 ** sourceMarketParams.collateralDecimals)));
     const slippage = parseFloat(document.getElementById('slippage').value) / 100;
 
-    // Dynamic parameters mapping (DRY & KISS)
-    const bufferAmount = debtAmount > 100n * 10n ** 6n ? 2n * 10n ** 6n : (debtAmount * 2n / 1000n); // interest buffer (0.2% for small debt, else 2 USDC)
-    const flashLoanAmount = isFull ? (debtAmount + bufferAmount) : debtAmount;
-    const repayAmount = isFull ? 0n : debtAmount;
-    const repayShares = isFull ? liveBorrowShares : 0n;
-    const supplyAmount = 2n ** 256n - 1n; // Always supply entire swapped balance
-    const borrowAmount = flashLoanAmount;
+    const isSameCollateral = (sourceCollateralAddress === destCollateralAddress);
+    const isSameLoan = (sourceLoanAddress.toLowerCase() === destLoanAddress.toLowerCase());
 
-    statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data from Pendle Convert API...`;
+    statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data from Swap Router Convert API...`;
 
-    let routeData;
-    try {
-      routeData = await fetchPendleRoute(oldPtAddress, collateralAmount, newPtAddress, slippage);
-    } catch (err) {
-      showError(`Pendle Router Error: ${err.message}. Check token addresses or slippage bounds.`);
-      return;
+    let routeData = null;
+    let expectedNewCollateral = collateralAmount;
+
+    if (!isSameCollateral) {
+      try {
+        routeData = await fetchSwapRoute(sourceCollateralAddress, collateralAmount, destCollateralAddress, slippage, ETHER_GENERAL_ADAPTER_1, MORPHO_BUNDLER_V3);
+        expectedNewCollateral = BigInt(routeData.outputs[0].amount);
+      } catch (err) {
+        showError(`Swap Router Error: ${err.message}. Check token addresses or slippage bounds.`);
+        return;
+      }
     }
-    const expectedOutput = (Number(routeData.outputs[0].amount) / 1e18).toFixed(4);
+    const expectedOutput = (Number(expectedNewCollateral) / (10 ** destMarketParams.collateralDecimals)).toFixed(4);
 
     if (!publicClient) {
       publicClient = createPublicClient({
@@ -599,166 +659,134 @@ async function initiateMigration() {
     // Fetch oracle prices for old and new markets to compute fair exchange rate
     const [oldOraclePrice, newOraclePrice, maturity] = await Promise.all([
       publicClient.readContract({
-        address: oldMarketParams.oracle,
+        address: sourceMarketParams.oracle,
         abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
         functionName: 'price'
       }),
       publicClient.readContract({
-        address: newMarketParams.oracle,
+        address: destMarketParams.oracle,
         abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
         functionName: 'price'
       }),
-      checkPtMaturity(publicClient, oldPtAddress)
+      checkCollateralMaturity(publicClient, sourceCollateralAddress)
     ]);
 
-    const expectedNewCollateral = BigInt(routeData.outputs[0].amount);
-    const newCollateralValue = calculateCollateralValue(expectedNewCollateral, newOraclePrice);
-    const newLtv = calculateLtv(borrowAmount, newCollateralValue);
-    const newLeverage = calculateLeverage(newCollateralValue, borrowAmount);
+    const oldScale = 36n + BigInt(sourceMarketParams.loanDecimals) - BigInt(sourceMarketParams.collateralDecimals);
+    const newScale = 36n + BigInt(destMarketParams.loanDecimals) - BigInt(destMarketParams.collateralDecimals);
 
-    // Calculate rates and slippage
-    const oracleRatio = (oldOraclePrice * 10n ** 18n) / newOraclePrice;
-    const quotedRate = (expectedNewCollateral * 10n ** 18n) / collateralAmount;
-    
-    // Slippage percentage: positive represents loss relative to oracle, negative represents gain
+    const oldOracleUSD = (oldOraclePrice * 10n ** 18n) / 10n ** oldScale;
+    const newOracleUSD = (newOraclePrice * 10n ** 18n) / 10n ** newScale;
+
+    const oracleRatio = isSameCollateral ? 10n ** 18n : (oldOracleUSD * 10n ** 18n) / newOracleUSD;
+    const quotedRate = isSameCollateral ? 10n ** 18n : (expectedNewCollateral * 10n ** 18n) / collateralAmount;
     const slippagePct = oracleRatio > 0n ? Number((oracleRatio - quotedRate) * 10000n / oracleRatio) / 100 : 0.0;
+
+    // Handle cross-loan-asset routing
+    let loanRouteData = null;
+    let loanExpectedInput = 0n;
+    let loanExpectedOutput = 0n;
+    let loanOracleRate = 0n;
+    let loanSlippagePct = 0.0;
+    let loanQuotedRate = 0n;
+
+    if (!isSameLoan) {
+      const exp = 18n + BigInt(newScale) - BigInt(oldScale);
+      loanOracleRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
+
+      const decDiff = BigInt(destMarketParams.loanDecimals) - BigInt(sourceMarketParams.loanDecimals);
+      const estimatedInput = (debtAmount * 10n ** 18n * 10n ** decDiff) / loanOracleRate;
+      
+      const slippageBuffer = BigInt(Math.max(50, Math.ceil(slippage * 10000)));
+      loanExpectedInput = (estimatedInput * (10000n + slippageBuffer)) / 10000n;
+
+      const targetLltv = destMarketParams.lltv;
+      const safeLtv = targetLltv - 5000000000000000n;
+      const newCollateralValue = calculateCollateralValue(expectedNewCollateral, newOraclePrice);
+      const maxSafeBorrowAmount = (newCollateralValue * safeLtv) / 10n ** 18n;
+
+      if (loanExpectedInput > maxSafeBorrowAmount) {
+        const capBorrow = document.getElementById('capBorrow').checked;
+        if (capBorrow) {
+          loanExpectedInput = maxSafeBorrowAmount;
+        } else {
+          const projectedLtv = calculateLtv(loanExpectedInput, newCollateralValue);
+          showError(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain. Check "Cap target borrow" to automatically cap target leverage.`);
+          return;
+        }
+      }
+
+      // Try direct Curve pool
+      const curvePool = await findCurvePoolAndIndices(
+        publicClient,
+        destLoanAddress,
+        sourceLoanAddress,
+        loanExpectedInput,
+        getAddress
+      );
+
+      if (curvePool) {
+        loanRouteData = {
+          isCurveDirect: true,
+          poolAddress: curvePool.poolAddress,
+          i: curvePool.i,
+          j: curvePool.j,
+          indexType: curvePool.indexType
+        };
+        loanExpectedOutput = curvePool.expectedOutput;
+      } else {
+        try {
+          loanRouteData = await fetchSwapRoute(
+            destLoanAddress,
+            loanExpectedInput,
+            sourceLoanAddress,
+            slippage,
+            MORPHO_BUNDLER_V3,
+            MORPHO_BUNDLER_V3
+          );
+          loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
+        } catch (err) {
+          showError(`Swap Router Loan Route Error: ${err.message}. Failed to fetch conversion route for loan asset.`);
+          return;
+        }
+      }
+
+      loanQuotedRate = loanExpectedInput > 0n ? (loanExpectedOutput * 10n ** (18n + decDiff)) / loanExpectedInput : 0n;
+      loanSlippagePct = loanOracleRate > 0n ? Number((loanOracleRate - loanQuotedRate) * 10000n / loanOracleRate) / 100 : 0.0;
+    }
 
     statusEl.innerText = "Compiling atomic flashloan bundle...";
 
-    // --- 3. Construct Morpho Bundler V3 Callback Bundle ---
-    const reenterBundle = [];
-
-    // Call A: Repay the old market debt (full by shares, or partial by assets)
-    reenterBundle.push({
-      to: ETHER_GENERAL_ADAPTER_1,
-      data: encodeFunctionData({
-        abi: ADAPTER_ABI,
-        functionName: 'morphoRepay',
-        args: [oldMarketParams, repayAmount, repayShares, 2n ** 256n - 1n, userAddress, '0x']
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+    // Construct rollover bundle via builders.js helper
+    const bundleResult = buildRolloverBundle({
+      encodeFunctionData,
+      encodeAbiParameters,
+      keccak256,
+      sourceMarketParams,
+      destMarketParams,
+      collateralAmount,
+      debtAmount,
+      isFull,
+      sourceCollateralAddress,
+      destCollateralAddress,
+      routeData,
+      userAddress,
+      ETHER_GENERAL_ADAPTER_1,
+      MORPHO_BUNDLER_V3,
+      isSameCollateral,
+      isSameLoan,
+      loanRouteData,
+      loanExpectedInput,
+      loanExpectedOutput,
+      slippage: slippage * 100,
+      borrowShares: liveBorrowShares
     });
 
-    // Call B: Withdraw the old PT collateral to the Bundler Contract
-    reenterBundle.push({
-      to: ETHER_GENERAL_ADAPTER_1,
-      data: encodeFunctionData({
-        abi: ADAPTER_ABI,
-        functionName: 'morphoWithdrawCollateral',
-        args: [oldMarketParams, collateralAmount, MORPHO_BUNDLER_V3]
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
+    const borrowAmount = bundleResult.borrowAmount;
+    const finalCalldata = bundleResult.finalCalldata;
 
-    // Call C: Approve the Pendle Swap Router to spend the old PT from the Bundler
-    reenterBundle.push({
-      to: oldPtAddress,
-      data: encodeFunctionData({
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [routeData.tx.to, collateralAmount]
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // Call D: Execute the Pendle Swap via Router direct call
-    reenterBundle.push({
-      to: routeData.tx.to,
-      data: routeData.tx.data,
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // Call F: Supply the newly acquired PT token as collateral to the new Morpho market (pulls adapter balance directly)
-    reenterBundle.push({
-      to: ETHER_GENERAL_ADAPTER_1,
-      data: encodeFunctionData({
-        abi: ADAPTER_ABI,
-        functionName: 'morphoSupplyCollateral',
-        args: [newMarketParams, supplyAmount, userAddress, '0x']
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // Call G: Borrow USDC back out of the new market to satisfy the flashloan repayment (sends to adapter)
-    reenterBundle.push({
-      to: ETHER_GENERAL_ADAPTER_1,
-      data: encodeFunctionData({
-        abi: ADAPTER_ABI,
-        functionName: 'morphoBorrow',
-        args: [newMarketParams, borrowAmount, 0n, 0n, ETHER_GENERAL_ADAPTER_1]
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // --- 4. Encode Callback Bundle & Compute callbackHash ---
-    const encodedReenterBundle = encodeAbiParameters(
-      [
-        {
-          name: 'bundle',
-          type: 'tuple[]',
-          components: [
-            { name: 'to', type: 'address' },
-            { name: 'data', type: 'bytes' },
-            { name: 'value', type: 'uint256' },
-            { name: 'skipRevert', type: 'bool' },
-            { name: 'callbackHash', type: 'bytes32' }
-          ]
-        }
-      ],
-      [reenterBundle]
-    );
-
-    const callbackHash = keccak256(encodedReenterBundle);
-
-    // --- 5. Construct Outer Multicall Payload ---
-    const outerBundle = [
-      // Action 1: Execute the flashloan and nested callback actions
-      {
-        to: ETHER_GENERAL_ADAPTER_1,
-        data: encodeFunctionData({
-          abi: ADAPTER_ABI,
-          functionName: 'morphoFlashLoan',
-          args: [usdcAddress, flashLoanAmount, encodedReenterBundle]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: callbackHash
-      }
-    ];
-
-    // Action 2: Refund any leftover USDC buffer to the user's wallet (only in Full mode where buffer is used)
-    if (isFull) {
-      outerBundle.push({
-        to: ETHER_GENERAL_ADAPTER_1,
-        data: encodeFunctionData({
-          abi: ADAPTER_ABI,
-          functionName: 'erc20Transfer',
-          args: [usdcAddress, userAddress, 2n ** 256n - 1n]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
-    }
-
-    // Master multicall encoding
-    const finalCalldata = encodeFunctionData({
-      abi: BUNDLER_ABI,
-      functionName: 'multicall',
-      args: [outerBundle]
-    });
+    const newCollateralValue = calculateCollateralValue(expectedNewCollateral, newOraclePrice);
+    const newLtv = calculateLtv(borrowAmount, newCollateralValue);
+    const newLeverage = calculateLeverage(newCollateralValue, borrowAmount);
 
     // Update state for confirm execute button
     pendingTx = {
@@ -789,23 +817,35 @@ async function initiateMigration() {
       document.getElementById('maturityNotice').style.display = 'none';
     }
 
-    const oldOraclePriceUsdc = Number(oldOraclePrice) / 1e24;
-    const newOraclePriceUsdc = Number(newOraclePrice) / 1e24;
+    const oldOraclePriceUsdc = Number(oldOracleUSD) / 1e18;
+    const newOraclePriceUsdc = Number(newOracleUSD) / 1e18;
     const expectedRate = Number(quotedRate) / 1e18;
     const impliedOldPriceUsdc = expectedRate * newOraclePriceUsdc;
+
+    let loanNotice = "";
+    if (!isSameLoan) {
+      loanNotice = `
+        <div style="margin-top: 12px; border-top: 1px dashed #334155; padding-top: 12px;">
+          <strong style="color: #60a5fa; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Cross-Loan Asset Swap</strong>
+          Expected Swap Rate: <span style="font-family: monospace; color: #f8fafc;">1 ${destMarketParams.loanSymbol} = ${(Number(loanQuotedRate)/1e18).toFixed(4)} ${sourceMarketParams.loanSymbol}</span><br>
+          Price Impact (vs. Oracle): <span style="font-weight: 600; color: ${loanSlippagePct > 1.0 ? '#f87171' : '#34d399'}">${loanSlippagePct.toFixed(2)}%</span>
+        </div>
+      `;
+    }
 
     document.getElementById('previewMetrics').innerHTML = `
       <div style="margin-bottom: 12px;">
         <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Token Swap Exchange Rates</strong>
-        Expected Swap Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${expectedRate.toFixed(4)} PT-new</span> <span style="color: #94a3b8; font-size: 12px;">(Implied: 1 PT-old = $${impliedOldPriceUsdc.toFixed(4)})</span><br>
-        Oracle Fair Value Rate: <span style="font-family: monospace; color: #f8fafc;">1 PT-old = ${(Number(oracleRatio)/1e18).toFixed(4)} PT-new</span> <span style="color: #94a3b8; font-size: 12px;">(Oracles: PT-old = $${oldOraclePriceUsdc.toFixed(4)}, PT-new = $${newOraclePriceUsdc.toFixed(4)})</span><br>
+        Expected Swap Rate: <span style="font-family: monospace; color: #f8fafc;">1 ${sourceMarketParams.collateralSymbol} = ${expectedRate.toFixed(4)} ${destMarketParams.collateralSymbol}</span> <span style="color: #94a3b8; font-size: 12px;">(Implied: 1 PT-old = $${impliedOldPriceUsdc.toFixed(4)})</span><br>
+        Oracle Fair Value Rate: <span style="font-family: monospace; color: #f8fafc;">1 ${sourceMarketParams.collateralSymbol} = ${(Number(oracleRatio)/1e18).toFixed(4)} ${destMarketParams.collateralSymbol}</span> <span style="color: #94a3b8; font-size: 12px;">(Oracles: PT-old = $${oldOraclePriceUsdc.toFixed(4)}, PT-new = $${newOraclePriceUsdc.toFixed(4)})</span><br>
         Price Impact (vs. Oracle): <span style="font-weight: 600; color: ${slippagePct > 1.0 ? '#f87171' : '#34d399'}">${slippagePct.toFixed(2)}%</span>
+        ${loanNotice}
       </div>
       
       <div style="margin-bottom: 12px;">
         <strong style="color: #94a3b8; font-size: 12px; display: block; text-transform: uppercase; letter-spacing: 0.05em;">Simulated Target Position</strong>
-        Migrated Collateral: <span style="font-family: monospace; color: #38bdf8;">${expectedOutput} PT-new</span><br>
-        New Borrow Debt: <span style="font-family: monospace; color: #f43f5e;">${(Number(borrowAmount)/1e6).toFixed(2)} USDC</span><br>
+        Migrated Collateral: <span style="font-family: monospace; color: #38bdf8;">${expectedOutput} ${destMarketParams.collateralSymbol}</span><br>
+        New Borrow Debt: <span style="font-family: monospace; color: #f43f5e;">${(Number(borrowAmount)/(10 ** destMarketParams.loanDecimals)).toFixed(2)} ${destMarketParams.loanSymbol}</span><br>
         New LTV & Leverage: <span style="color: #34d399;">${newLtv.toFixed(2)}% (${newLeverage})</span>
       </div>
     `;
@@ -819,6 +859,24 @@ async function initiateMigration() {
     document.getElementById('previewContainer').style.display = 'block';
     statusEl.style.display = 'none';
 
+    if (document.getElementById('settingsAutoSimulate').checked) {
+      const statusEl = document.getElementById('status');
+      statusEl.style.display = 'block';
+      statusEl.className = 'info';
+      statusEl.innerText = "Running dry-run simulation on mainnet fork...";
+      try {
+        const sim = await runSimulation(userAddress, MORPHO_BUNDLER_V3, finalCalldata, 0n);
+        const simContainer = document.getElementById('simulationResultContainer');
+        const simWarnings = document.getElementById('simulationWarningsContainer');
+        await renderSimulationResult(sim, simContainer, simWarnings, userAddress, finalCalldata, sourceMarketParams);
+      } catch (simErr) {
+        console.error("Auto-simulation failed:", simErr);
+        const simContainer = document.getElementById('simulationResultContainer');
+        simContainer.style.display = 'block';
+        simContainer.innerHTML = `<span style="color: #ef4444;">⚠️ Auto-simulation failed: ${simErr.message}</span>`;
+      }
+    }
+
   } catch (error) {
     showError(error.message || error);
   }
@@ -829,13 +887,18 @@ let levDebt = 0n;
 let levCollateral = 0n;
 
 function switchTab(tabName) {
+  activeTab = tabName;
   document.getElementById('tabContentRollover').classList.remove('active');
   document.getElementById('tabContentLeverage').classList.remove('active');
+  document.getElementById('tabContentSimulateRaw').classList.remove('active');
   document.getElementById('tabHeaderRollover').classList.remove('active');
   document.getElementById('tabHeaderLeverage').classList.remove('active');
+  document.getElementById('tabHeaderSimulateRaw').classList.remove('active');
 
   document.getElementById('status').style.display = 'none';
   document.getElementById('payloadContainer').style.display = 'none';
+  document.getElementById('simulationResultContainer').style.display = 'none';
+  document.getElementById('simulationWarningsContainer').style.display = 'none';
 
   if (tabName === 'rollover') {
     document.getElementById('tabContentRollover').classList.add('active');
@@ -843,7 +906,11 @@ function switchTab(tabName) {
   } else if (tabName === 'leverage') {
     document.getElementById('tabContentLeverage').classList.add('active');
     document.getElementById('tabHeaderLeverage').classList.add('active');
+  } else if (tabName === 'simulate_raw') {
+    document.getElementById('tabContentSimulateRaw').classList.add('active');
+    document.getElementById('tabHeaderSimulateRaw').classList.add('active');
   }
+  updateCliCommand();
 }
 
 async function levConnectAndLoadPosition() {
@@ -876,6 +943,7 @@ async function levConnectAndLoadPosition() {
     const [address] = await walletClient.requestAddresses();
     userAddress = getAddress(address);
     statusEl.innerText = `Connected Wallet: ${userAddress}\nLoading position data from Morpho Blue...`;
+    updateCliCommand();
 
     const marketId = document.getElementById('levMarketId').value.trim();
     if (!marketId || marketId.length !== 66) {
@@ -934,40 +1002,40 @@ function onLevSliderChange() {
   const metricsEl = document.getElementById('levTargetMetrics');
   if (levCollateral === 0n) {
     metricsEl.innerHTML = "<em>No active position loaded. Please connect wallet first.</em>";
-    return;
-  }
-
-  // Compute estimated changes based on current leverage level
-  const targetLtv = 1.0 - (1.0 / targetLeverage);
-  const targetLtvPct = (targetLtv * 100).toFixed(2);
-
-  // Fetch simulated action
-  let actionText = "";
-  if (targetLeverage === 1.0) {
-    actionText = `<span style="color: #f43f5e; font-weight: bold;">Action: Unleveraging.</span> Will withdraw & sell PT collateral to completely clear your <span style="color: #f43f5e;">${(Number(levDebt)/1e6).toFixed(2)} USDC</span> borrow debt. Position LTV will go to 0%.`;
   } else {
-    const targetLtvBig = BigInt(Math.floor(targetLtv * 1e18));
-    
-    // Approximate LTV checks dynamically
-    const currentLtvBig = levCollateral > 0n ? (levDebt * 10n**18n) / ((levCollateral * 95n * 10n**22n) / 10n**36n) : 0n; // Assume approx price of 0.95
-    
-    if (targetLtvBig < currentLtvBig) {
-      actionText = `<span style="color: #38bdf8; font-weight: bold;">Action: Deleveraging.</span> Will withdraw and sell a portion of PT collateral for USDC to pay down borrow debt. Target LTV: <span style="color: #34d399;">${targetLtvPct}%</span>.`;
-    } else if (Math.abs(Number(targetLtvBig - currentLtvBig)) < 1e15) {
-      actionText = `Target leverage matches current position leverage. No action required.`;
-    } else {
-      actionText = `<span style="color: #34d399; font-weight: bold;">Action: Leveraging up.</span> Will borrow additional USDC via flashloan to buy and supply more PT collateral. Target LTV: <span style="color: #34d399;">${targetLtvPct}%</span>.`;
-    }
-  }
+    // Compute estimated changes based on current leverage level
+    const targetLtv = 1.0 - (1.0 / targetLeverage);
+    const targetLtvPct = (targetLtv * 100).toFixed(2);
 
-  metricsEl.innerHTML = `
-    <strong>Simulated Target Metrics:</strong><br>
-    Target Leverage: ${targetLeverage.toFixed(2)}x (LTV: ${targetLtvPct}%)<br>
-    Liquidation Buffer: ${(86.0 - targetLtvPct).toFixed(2)}% margin to liquidation (86% LLTV)<br>
-    <div style="margin-top: 8px; border-top: 1px dashed #475569; padding-top: 8px;">
-      ${actionText}
-    </div>
-  `;
+    // Fetch simulated action
+    let actionText = "";
+    if (targetLeverage === 1.0) {
+      actionText = `<span style="color: #f43f5e; font-weight: bold;">Action: Unleveraging.</span> Will withdraw & sell PT collateral to completely clear your <span style="color: #f43f5e;">${(Number(levDebt)/1e6).toFixed(2)} USDC</span> borrow debt. Position LTV will go to 0%.`;
+    } else {
+      const targetLtvBig = BigInt(Math.floor(targetLtv * 1e18));
+      
+      // Approximate LTV checks dynamically
+      const currentLtvBig = levCollateral > 0n ? (levDebt * 10n**18n) / ((levCollateral * 95n * 10n**22n) / 10n**36n) : 0n; // Assume approx price of 0.95
+      
+      if (targetLtvBig < currentLtvBig) {
+        actionText = `<span style="color: #38bdf8; font-weight: bold;">Action: Deleveraging.</span> Will withdraw and sell a portion of PT collateral for USDC to pay down borrow debt. Target LTV: <span style="color: #34d399;">${targetLtvPct}%</span>.`;
+      } else if (Math.abs(Number(targetLtvBig - currentLtvBig)) < 1e15) {
+        actionText = `Target leverage matches current position leverage. No action required.`;
+      } else {
+        actionText = `<span style="color: #34d399; font-weight: bold;">Action: Leveraging up.</span> Will borrow additional USDC via flashloan to buy and supply more PT collateral. Target LTV: <span style="color: #34d399;">${targetLtvPct}%</span>.`;
+      }
+    }
+
+    metricsEl.innerHTML = `
+      <strong>Simulated Target Metrics:</strong><br>
+      Target Leverage: ${targetLeverage.toFixed(2)}x (LTV: ${targetLtvPct}%)<br>
+      Liquidation Buffer: ${(86.0 - targetLtvPct).toFixed(2)}% margin to liquidation (86% LLTV)<br>
+      <div style="margin-top: 8px; border-top: 1px dashed #475569; padding-top: 8px;">
+        ${actionText}
+      </div>
+    `;
+  }
+  updateCliCommand();
 }
 
 async function executeLeverageAdjustment() {
@@ -1000,8 +1068,8 @@ async function executeLeverageAdjustment() {
     statusEl.innerText = `Connected Wallet: ${userAddress}\nRetrieving market parameters from Morpho Blue API...`;
 
     const marketId = document.getElementById('levMarketId').value.trim();
-    const ptAddress = getAddress(document.getElementById('levPtAddress').value.trim());
-    const usdcAddress = getAddress(document.getElementById('levUsdcAddress').value.trim());
+    const ptAddress = getAddress(document.getElementById('levCollateralAddress').value.trim());
+    const usdcAddress = getAddress(document.getElementById('levLoanAddress').value.trim());
     const slippage = BigInt(Math.floor(parseFloat(document.getElementById('levSlippage').value) * 100)); // 1% = 100
     const targetLeverage = parseFloat(document.getElementById('levSlider').value);
 
@@ -1021,12 +1089,12 @@ async function executeLeverageAdjustment() {
     
     if (params.mode === 'deleverage' || params.mode === 'deleverage-to-1x') {
       // --- DELEVERAGING SWAP PATH: PT -> USDC ---
-      statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for deleverage swap (PT -> USDC)...`;
+      statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for deleverage swap...`;
       
-      routeData = await fetchPendleRoute(ptAddress, params.collateralAmount, usdcAddress, Number(slippage) / 10000);
+      routeData = await fetchSwapRoute(ptAddress, params.collateralAmount, usdcAddress, Number(slippage) / 10000, MORPHO_BUNDLER_V3, MORPHO_BUNDLER_V3);
       const expectedUsdcOutput = BigInt(routeData.outputs[0].amount);
       
-      statusEl.innerText = `Pendle Swap path resolved! Expected Output: ${(Number(expectedUsdcOutput)/1e6).toFixed(2)} USDC.\nGenerating atomic flashloan bundle...`;
+      statusEl.innerText = `Swap path resolved! Expected Output: ${(Number(expectedUsdcOutput)/1e6).toFixed(2)} loan tokens.\nGenerating atomic flashloan bundle...`;
 
       // Setup multicall variables
       const is1x = (params.mode === 'deleverage-to-1x');
@@ -1039,12 +1107,13 @@ async function executeLeverageAdjustment() {
         collateralAmount: params.collateralAmount,
         debtAmount: is1x ? expectedUsdcOutput : flashLoanAmount,
         is1x,
-        ptAddress,
-        usdcAddress,
+        collateralAddress: ptAddress,
+        loanAddress: usdcAddress,
         routeData,
         userAddress,
         ETHER_GENERAL_ADAPTER_1,
-        MORPHO_BUNDLER_V3
+        MORPHO_BUNDLER_V3,
+        flashLoanAmount
       });
 
       const encodedReenterBundle = encodeAbiParameters(
@@ -1102,20 +1171,20 @@ async function executeLeverageAdjustment() {
 
     } else {
       // --- LEVERAGING UP SWAP PATH: USDC -> PT ---
-      statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for leverage-up swap (USDC -> PT)...`;
+      statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for leverage-up swap...`;
       
-      routeData = await fetchPendleRoute(usdcAddress, params.debtAmount, ptAddress, Number(slippage) / 10000);
+      routeData = await fetchSwapRoute(usdcAddress, params.debtAmount, ptAddress, Number(slippage) / 10000, ETHER_GENERAL_ADAPTER_1, MORPHO_BUNDLER_V3);
       const expectedPtOutput = BigInt(routeData.outputs[0].amount);
       
-      statusEl.innerText = `Pendle Swap path resolved! Expected Output: ${(Number(expectedPtOutput)/1e18).toFixed(4)} PT.\nGenerating atomic flashloan bundle...`;
+      statusEl.innerText = `Swap path resolved! Expected Output: ${(Number(expectedPtOutput)/1e18).toFixed(4)} collateral.\nGenerating atomic flashloan bundle...`;
 
       const reenterBundle = buildLeveragingUpBundle({
         encodeFunctionData,
         marketParams,
         collateralAmount: expectedPtOutput,
         debtAmount: params.debtAmount,
-        ptAddress,
-        usdcAddress,
+        collateralAddress: ptAddress,
+        loanAddress: usdcAddress,
         routeData,
         userAddress,
         ETHER_GENERAL_ADAPTER_1,
@@ -1204,7 +1273,7 @@ async function executeLeverageAdjustment() {
     };
 
     // Fetch old PT maturity for info
-    const maturity = await checkPtMaturity(publicClient, ptAddress);
+    const maturity = await checkCollateralMaturity(publicClient, ptAddress);
 
     // Render Preview UI
     const badgeEl = document.getElementById('previewSlippageBadge');
@@ -1248,6 +1317,24 @@ async function executeLeverageAdjustment() {
     document.getElementById('previewContainer').style.display = 'block';
     statusEl.style.display = 'none';
 
+    if (document.getElementById('settingsAutoSimulate').checked) {
+      const statusEl = document.getElementById('status');
+      statusEl.style.display = 'block';
+      statusEl.className = 'info';
+      statusEl.innerText = "Running dry-run simulation on mainnet fork...";
+      try {
+        const sim = await runSimulation(userAddress, MORPHO_BUNDLER_V3, finalCalldata, 0n);
+        const simContainer = document.getElementById('simulationResultContainer');
+        const simWarnings = document.getElementById('simulationWarningsContainer');
+        await renderSimulationResult(sim, simContainer, simWarnings, userAddress, finalCalldata, currentLevMarketParams);
+      } catch (simErr) {
+        console.error("Auto-simulation failed:", simErr);
+        const simContainer = document.getElementById('simulationResultContainer');
+        simContainer.style.display = 'block';
+        simContainer.innerHTML = `<span style="color: #ef4444;">⚠️ Auto-simulation failed: ${simErr.message}</span>`;
+      }
+    }
+
   } catch (err) {
     showError(err.message || err);
   }
@@ -1259,38 +1346,717 @@ function showError(msg) {
   statusEl.innerText = `Migration Execution Blocked:\n${msg}`;
 }
 
+// --- SETTINGS STORAGE & AUTOLOAD ---
+function saveSettings() {
+  const alchemyKey = document.getElementById('settingsAlchemyKey').value.trim();
+  const rpcUrl = document.getElementById('settingsRpcUrl').value.trim();
+  const autoSimulate = document.getElementById('settingsAutoSimulate').checked;
+
+  localStorage.setItem('morpho_migration_alchemy_key', alchemyKey);
+  localStorage.setItem('morpho_migration_rpc_url', rpcUrl);
+  localStorage.setItem('morpho_migration_auto_simulate', autoSimulate ? 'true' : 'false');
+}
+
+function loadSettings() {
+  const alchemyKey = localStorage.getItem('morpho_migration_alchemy_key') || '';
+  const rpcUrl = localStorage.getItem('morpho_migration_rpc_url') || '';
+  const autoSimulate = localStorage.getItem('morpho_migration_auto_simulate') !== 'false'; // default true
+
+  document.getElementById('settingsAlchemyKey').value = alchemyKey;
+  document.getElementById('settingsRpcUrl').value = rpcUrl;
+  document.getElementById('settingsAutoSimulate').checked = autoSimulate;
+}
+
+async function tryAutoloadFromEnv() {
+  try {
+    const response = await fetch('.env');
+    if (response.ok) {
+      const text = await response.text();
+      const lines = text.split('\n');
+      let envKey = '';
+      let envRpc = '';
+
+      for (const line of lines) {
+        const matchKey = line.match(/^\s*ALCHEMY_API_KEY\s*=\s*(.*)?\s*$/);
+        if (matchKey) {
+          envKey = (matchKey[1] || '').replace(/['"]/g, '').trim();
+        }
+        const matchRpc = line.match(/^\s*RPC_URL\s*=\s*(.*)?\s*$/);
+        if (matchRpc) {
+          envRpc = (matchRpc[1] || '').replace(/['"]/g, '').trim();
+        }
+      }
+
+      if (envKey && !document.getElementById('settingsAlchemyKey').value) {
+        document.getElementById('settingsAlchemyKey').value = envKey;
+      }
+      if (envRpc && !document.getElementById('settingsRpcUrl').value) {
+        document.getElementById('settingsRpcUrl').value = envRpc;
+      }
+      saveSettings();
+    }
+  } catch (err) {
+    // Silent fail if .env is missing or unreadable
+  }
+}
+
+// --- TAB 3: SIMULATE RAW TX IMPLEMENTATION ---
+function onRawTxTextChanged() {
+  const text = document.getElementById('rawTxDataTextarea').value.trim();
+  const preAssessmentEl = document.getElementById('rawTxPreAssessment');
+  if (!text) {
+    preAssessmentEl.style.display = 'none';
+    return;
+  }
+
+  try {
+    const json = JSON.parse(text);
+    if (!json.from || !json.to || !json.data) {
+      preAssessmentEl.style.display = 'block';
+      preAssessmentEl.innerHTML = `<span style="color: #ef4444;">⚠️ Invalid JSON: Must contain "from", "to", and "data" keys.</span>`;
+      return;
+    }
+
+    const value = json.value || '0';
+    const calldataLen = (json.data.length - 2) / 2;
+
+    preAssessmentEl.style.display = 'block';
+    preAssessmentEl.innerHTML = `
+      <strong>Raw Transaction Assessment:</strong><br>
+      From: <span style="font-family: monospace; color: #38bdf8;">${json.from}</span><br>
+      To: <span style="font-family: monospace; color: #38bdf8;">${json.to}</span><br>
+      Value: <span style="font-family: monospace; color: #f8fafc;">${value} wei</span><br>
+      Calldata Length: <span style="font-family: monospace; color: #f8fafc;">${calldataLen} bytes</span>
+    `;
+  } catch (err) {
+    preAssessmentEl.style.display = 'block';
+    preAssessmentEl.innerHTML = `<span style="color: #ef4444;">⚠️ JSON Parse Error: ${err.message}</span>`;
+  }
+}
+
+async function onRawTxFileSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    document.getElementById('rawTxDataTextarea').value = e.target.result;
+    onRawTxTextChanged();
+  };
+  reader.readAsText(file);
+}
+
+function warnOnAddressMismatches(fromAddress, data) {
+  const mismatches = [];
+  try {
+    const decodedOuter = decodeFunctionData({
+      abi: BUNDLER_ABI,
+      data
+    });
+
+    const bundle = decodedOuter.args[0];
+
+    const checkReenterBundle = (reenterItems) => {
+      for (const item of reenterItems) {
+        try {
+          const decodedSub = decodeFunctionData({
+            abi: ADAPTER_ABI,
+            data: item.data
+          });
+
+          let onBehalf;
+          if (decodedSub.functionName === 'morphoRepay') {
+            onBehalf = getAddress(decodedSub.args[4]);
+          } else if (decodedSub.functionName === 'morphoSupplyCollateral') {
+            onBehalf = getAddress(decodedSub.args[2]);
+          }
+
+          if (onBehalf && onBehalf.toLowerCase() !== fromAddress.toLowerCase()) {
+            mismatches.push({
+              functionName: decodedSub.functionName,
+              onBehalf,
+              expected: fromAddress
+            });
+          }
+        } catch (e) {
+          // Ignore decode error
+        }
+      }
+    };
+
+    for (const item of bundle) {
+      try {
+        const decoded = decodeFunctionData({
+          abi: ADAPTER_ABI,
+          data: item.data
+        });
+
+        let onBehalf;
+        if (decoded.functionName === 'morphoRepay') {
+          onBehalf = getAddress(decoded.args[4]);
+        } else if (decoded.functionName === 'morphoSupplyCollateral') {
+          onBehalf = getAddress(decoded.args[2]);
+        }
+
+        if (onBehalf && onBehalf.toLowerCase() !== fromAddress.toLowerCase()) {
+          mismatches.push({
+            functionName: decoded.functionName,
+            onBehalf,
+            expected: fromAddress
+          });
+        } else if (decoded.functionName === 'morphoFlashLoan') {
+          const callbackData = decoded.args[2];
+          const decodedReenter = decodeAbiParameters(
+            [
+              {
+                name: 'bundle',
+                type: 'tuple[]',
+                components: [
+                  { name: 'to', type: 'address' },
+                  { name: 'data', type: 'bytes' },
+                  { name: 'value', type: 'uint256' },
+                  { name: 'skipRevert', type: 'bool' },
+                  { name: 'callbackHash', type: 'bytes32' }
+                ]
+              }
+            ],
+            callbackData
+          );
+          checkReenterBundle(decodedReenter[0]);
+        }
+      } catch (e) {
+        // Ignore decode error
+      }
+    }
+  } catch (e) {
+    // Ignore outer decode failure
+  }
+  return mismatches;
+}
+
+async function runSimulation(fromAddress, toAddress, calldata, value) {
+  const apiKey = document.getElementById('settingsAlchemyKey').value.trim();
+  const customRpcUrl = document.getElementById('settingsRpcUrl').value.trim();
+
+  let rpcUrl = customRpcUrl;
+  if (!rpcUrl && apiKey) {
+    rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`;
+  }
+
+  if (!rpcUrl) {
+    throw new Error("RPC URL or Alchemy API Key is required to run simulations. Please configure it in the Simulate Raw Tx tab.");
+  }
+
+  const checkAuth = async (authorized) => {
+    try {
+      const client = publicClient || createPublicClient({ chain: mainnet, transport: http(rpcUrl) });
+      const auth = await client.readContract({
+        address: MORPHO_BLUE,
+        abi: [{"inputs":[{"name":"","type":"address"},{"name":"","type":"address"}],"name":"isAuthorized","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"}],
+        functionName: 'isAuthorized',
+        args: [fromAddress, authorized]
+      });
+      return auth;
+    } catch (err) {
+      console.warn(`Failed to read authorization state for ${authorized}:`, err);
+      return true;
+    }
+  };
+
+  const [isAdapterAuth, isBundlerAuth] = await Promise.all([
+    checkAuth(ETHER_GENERAL_ADAPTER_1),
+    checkAuth(MORPHO_BUNDLER_V3)
+  ]);
+
+  const calls = [];
+  if (!isAdapterAuth) {
+    calls.push({
+      from: fromAddress,
+      to: MORPHO_BLUE,
+      value: '0x0',
+      data: encodeFunctionData({
+        abi: [{"inputs":[{"name":"authorized","type":"address"},{"name":"newIsAuthorized","type":"bool"}],"name":"setAuthorization","outputs":[],"stateMutability":"nonpayable","type":"function"}],
+        functionName: 'setAuthorization',
+        args: [ETHER_GENERAL_ADAPTER_1, true]
+      })
+    });
+  }
+  if (!isBundlerAuth) {
+    calls.push({
+      from: fromAddress,
+      to: MORPHO_BLUE,
+      value: '0x0',
+      data: encodeFunctionData({
+        abi: [{"inputs":[{"name":"authorized","type":"address"},{"name":"newIsAuthorized","type":"bool"}],"name":"setAuthorization","outputs":[],"stateMutability":"nonpayable","type":"function"}],
+        functionName: 'setAuthorization',
+        args: [MORPHO_BUNDLER_V3, true]
+      })
+    });
+  }
+
+  calls.push({
+    from: fromAddress,
+    to: toAddress,
+    value: value ? `0x${BigInt(value).toString(16)}` : '0x0',
+    data: calldata
+  });
+
+  const payload = {
+    id: 1,
+    jsonrpc: "2.0",
+    method: "eth_simulateV1",
+    params: [
+      {
+        blockStateCalls: [
+          {
+            calls
+          }
+        ]
+      },
+      "latest"
+    ]
+  };
+
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Simulation RPC failed with status ${response.status}: ${response.statusText}`);
+  }
+
+  const resJson = await response.json();
+  if (resJson.error) {
+    throw new Error(`Simulation failed: ${resJson.error.message || JSON.stringify(resJson.error)}`);
+  }
+
+  const results = resJson.result[0].calls;
+  const mainCallResult = results[results.length - 1];
+  mainCallResult.to = toAddress;
+
+  const collectLogs = (res) => {
+    let logs = [];
+    if (res.calls && Array.isArray(res.calls)) {
+      for (const call of res.calls) {
+        if (call.logs && Array.isArray(call.logs)) {
+          logs = logs.concat(call.logs);
+        }
+        if (call.calls && Array.isArray(call.calls)) {
+          logs = logs.concat(collectLogs(call));
+        }
+      }
+    }
+    if (res.logs && Array.isArray(res.logs)) {
+      logs = logs.concat(res.logs);
+    }
+    return logs;
+  };
+
+  const logs = collectLogs(mainCallResult);
+
+  return {
+    success: mainCallResult.status === '0x1',
+    gasUsed: BigInt(mainCallResult.gasUsed),
+    traceTree: mainCallResult,
+    error: mainCallResult.error,
+    logs
+  };
+}
+
+const KNOWN_CONTRACTS = {
+  "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb": "Morpho Blue Core",
+  "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245": "Morpho Bundler V3",
+  "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0": "Ether General Adapter V1"
+};
+
+class BrowserLabelResolver {
+  constructor(rpcUrl) {
+    this.client = publicClient || createPublicClient({ chain: mainnet, transport: http(rpcUrl) });
+    this.cache = {};
+  }
+
+  async resolveLabel(address, marketParams = null) {
+    if (!address) return null;
+    let cleanAddr;
+    try {
+      cleanAddr = getAddress(address);
+    } catch (err) {
+      return null;
+    }
+    const key = cleanAddr.toLowerCase();
+    if (this.cache[key]) return this.cache[key];
+
+    const matchSystem = Object.keys(KNOWN_CONTRACTS).find(k => k.toLowerCase() === key);
+    if (matchSystem) {
+      this.cache[key] = KNOWN_CONTRACTS[matchSystem];
+      return this.cache[key];
+    }
+
+    if (marketParams) {
+      if (marketParams.collateralToken && key === getAddress(marketParams.collateralToken).toLowerCase()) {
+        this.cache[key] = `Collateral PT (${marketParams.collateralSymbol})`;
+        return this.cache[key];
+      }
+      if (marketParams.loanToken && key === getAddress(marketParams.loanToken).toLowerCase()) {
+        this.cache[key] = `Loan Asset (${marketParams.loanSymbol})`;
+        return this.cache[key];
+      }
+    }
+
+    try {
+      const symbol = await this.client.readContract({
+        address: cleanAddr,
+        abi: [{"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"stateMutability":"view","type":"function"}],
+        functionName: 'symbol'
+      });
+      this.cache[key] = symbol;
+      return symbol;
+    } catch (err) {
+      return null;
+    }
+  }
+}
+
+async function renderSimulationResult(simResult, containerEl, warningsEl, fromAddress, data, marketParams = null) {
+  containerEl.style.display = 'block';
+  containerEl.innerHTML = '';
+  warningsEl.style.display = 'none';
+  warningsEl.textContent = '';
+
+  const mismatches = warnOnAddressMismatches(fromAddress, data);
+  if (mismatches.length > 0) {
+    warningsEl.style.display = 'block';
+    let warningText = `⚠️ Address Context Mismatch Detected in Calldata!\n`;
+    warningText += `Transaction Sender: ${fromAddress}\n\n`;
+    mismatches.forEach(m => {
+      warningText += `├── Function: ${m.functionName}\n`;
+      warningText += `└── Encoded onBehalf: ${m.onBehalf} (does NOT match transaction sender)\n`;
+    });
+    warningText += `\nWithdrawal/borrow steps in General Adapter always act on the transaction sender. This transaction will likely revert on-chain.`;
+    warningsEl.textContent = warningText;
+  }
+
+  const headerHtml = `
+    <h3 style="margin-top: 0; color: #f8fafc; font-size: 16px; border-bottom: 1px solid #334155; padding-bottom: 10px;">
+      On-Chain Fork Simulation Summary
+    </h3>
+    <div style="margin-bottom: 16px; font-size: 14px;">
+      Status: ${simResult.success 
+        ? `<span style="color: #34d399; font-weight: bold;">✅ SUCCESSFUL</span>`
+        : `<span style="color: #f87171; font-weight: bold;">❌ REVERTED</span>`}
+      ${simResult.error ? `<br><span style="color: #f87171;">Revert Reason: ${simResult.error.message || JSON.stringify(simResult.error)}</span>` : ''}
+      <br>Gas Used: <span style="font-family: monospace; color: #38bdf8;">${simResult.gasUsed.toLocaleString()}</span>
+      <br>Estimated Net Cost: <span style="font-family: monospace; color: #e2e8f0;">${(Number(simResult.gasUsed) * 15 / 1e9).toFixed(6)} ETH</span> (at 15 gwei base fee)
+    </div>
+  `;
+  containerEl.innerHTML = headerHtml;
+
+  const traceTitle = `<h4 style="margin: 10px 0; color: #94a3b8; font-size: 13px; text-transform: uppercase;">Simulation Call Trace:</h4>`;
+  const treeContainer = document.createElement('div');
+  treeContainer.style.fontFamily = 'monospace';
+  treeContainer.style.fontSize = '12px';
+  treeContainer.style.lineHeight = '1.6';
+  treeContainer.style.backgroundColor = '#0f172a';
+  treeContainer.style.padding = '12px';
+  treeContainer.style.borderRadius = '8px';
+  treeContainer.style.overflowX = 'auto';
+
+  const apiKey = document.getElementById('settingsAlchemyKey').value.trim();
+  const customRpcUrl = document.getElementById('settingsRpcUrl').value.trim();
+  const resolver = new BrowserLabelResolver(customRpcUrl || `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`);
+
+  async function buildTraceNode(call, depth = 0) {
+    const nodeDiv = document.createElement('div');
+    nodeDiv.style.marginLeft = `${depth * 16}px`;
+    nodeDiv.style.borderLeft = depth > 0 ? '1px dashed #334155' : 'none';
+    nodeDiv.style.paddingLeft = depth > 0 ? '8px' : '0px';
+
+    const toAddress = call.to || 'Unknown';
+    const label = await resolver.resolveLabel(toAddress, marketParams);
+    const labelDisplay = label 
+      ? `<span style="color: #38bdf8; font-weight: bold;">${label}</span> <span style="color: #64748b;">[${toAddress}]</span>`
+      : `<span style="color: #64748b;">${toAddress}</span>`;
+
+    const statusDisplay = call.status === '0x1' 
+      ? `<span style="color: #34d399; font-weight: 600;">SUCCESS</span>`
+      : `<span style="color: #f87171; font-weight: 600;">REVERT</span>`;
+
+    const valueStr = call.value ? BigInt(call.value).toString() : '0';
+    const gas = parseInt(call.gasUsed, 16);
+
+    nodeDiv.innerHTML = `└── [CALL] To: ${labelDisplay} | Value: ${valueStr} | Status: ${statusDisplay} | Gas: ${gas.toLocaleString()}`;
+
+    if (call.error) {
+      const errDiv = document.createElement('div');
+      errDiv.style.color = '#f87171';
+      errDiv.style.paddingLeft = '16px';
+      errDiv.textContent = `⚠ Error: ${call.error.message || JSON.stringify(call.error)}`;
+      nodeDiv.appendChild(errDiv);
+    }
+
+    if (call.calls && Array.isArray(call.calls)) {
+      for (const subcall of call.calls) {
+        const childNode = await buildTraceNode(subcall, depth + 1);
+        nodeDiv.appendChild(childNode);
+      }
+    }
+
+    return nodeDiv;
+  }
+
+  const rootNode = await buildTraceNode(simResult.traceTree, 0);
+  treeContainer.appendChild(rootNode);
+
+  containerEl.appendChild(document.createRange().createContextualFragment(traceTitle));
+  containerEl.appendChild(treeContainer);
+}
+
+async function executeRawSimulation() {
+  const statusEl = document.getElementById('status');
+  statusEl.style.display = 'block';
+  statusEl.className = 'info';
+  statusEl.textContent = "Parsing transaction payload...";
+
+  const text = document.getElementById('rawTxDataTextarea').value.trim();
+  const containerEl = document.getElementById('simulationResultContainer');
+  const warningsEl = document.getElementById('simulationWarningsContainer');
+
+  try {
+    const json = JSON.parse(text);
+    if (!json.from || !json.to || !json.data) {
+      throw new Error("Invalid payload JSON. Must contain 'from', 'to', and 'data' fields.");
+    }
+
+    statusEl.textContent = "Executing mainnet fork simulation via eth_simulateV1...";
+    const simResult = await runSimulation(json.from, json.to, json.data, json.value || 0n);
+
+    statusEl.textContent = "Resolving address labels and rendering call trace...";
+    await renderSimulationResult(simResult, containerEl, warningsEl, json.from, json.data, null);
+    statusEl.style.display = 'none';
+
+  } catch (err) {
+    statusEl.className = 'error';
+    statusEl.textContent = `Simulation Execution Failed:\n${err.message}`;
+    containerEl.style.display = 'none';
+    warningsEl.style.display = 'none';
+  }
+}
+
+function generateRolloverCommand() {
+  const sourceMarketId = document.getElementById('oldMarketId').value.trim() || '<old-market-id>';
+  const destMarketId = document.getElementById('newMarketId').value.trim() || '<new-market-id>';
+  const user = userAddress || '<user-address>';
+  const type = migrationType; // 'full' or 'partial'
+  const debt = document.getElementById('debtAmount').value.trim() || '0';
+  const sourceCollateral = document.getElementById('oldCollateralAddress').value.trim();
+  const destCollateral = document.getElementById('newCollateralAddress').value.trim();
+  const slippage = document.getElementById('slippage').value.trim() || '1.0';
+  const sourceLoan = document.getElementById('sourceLoanAddress').value.trim();
+  const destLoan = document.getElementById('newLoanAddress').value.trim();
+
+  let cmd = `node cli.js rollover \\\n  --old-market-id ${sourceMarketId} \\\n  --new-market-id ${destMarketId} \\\n  --user ${user}`;
+  
+  if (type === 'partial') {
+    cmd += ` \\\n  --type partial \\\n  --debt ${debt}`;
+  } else {
+    cmd += ` \\\n  --type full`;
+  }
+
+  // Only include Collateral addresses if they don't match the current loaded market's collateral token
+  let includeSourceCollateral = true;
+  if (sourceMarketParams && sourceMarketParams.collateralToken.toLowerCase() === sourceCollateral.toLowerCase()) {
+    includeSourceCollateral = false;
+  }
+  if (sourceCollateral && includeSourceCollateral) {
+    cmd += ` \\\n  --old-collateral ${sourceCollateral}`;
+  }
+
+  let includeDestCollateral = true;
+  if (destMarketParams && destMarketParams.collateralToken.toLowerCase() === destCollateral.toLowerCase()) {
+    includeDestCollateral = false;
+  }
+  if (destCollateral && includeDestCollateral) {
+    cmd += ` \\\n  --new-collateral ${destCollateral}`;
+  }
+
+  if (slippage !== '1.0') {
+    cmd += ` \\\n  --slippage ${slippage}`;
+  }
+  if (sourceLoan && sourceLoan.toLowerCase() !== '0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48'.toLowerCase()) {
+    cmd += ` \\\n  --old-loan ${sourceLoan}`;
+  }
+  let includeDestLoan = true;
+  if (destMarketParams && destMarketParams.loanToken.toLowerCase() === destLoan.toLowerCase()) {
+    includeDestLoan = false;
+  } else if (destLoan.toLowerCase() === '0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48'.toLowerCase()) {
+    includeDestLoan = false;
+  }
+  if (destLoan && includeDestLoan) {
+    cmd += ` \\\n  --new-loan ${destLoan}`;
+  }
+  
+  cmd += ` \\\n  --simulation`;
+
+  return cmd;
+}
+
+function generateLeverageCommand() {
+  const marketId = document.getElementById('levMarketId').value.trim() || '<market-id>';
+  const targetLeverage = parseFloat(document.getElementById('levSlider').value).toFixed(2);
+  const user = userAddress || '<user-address>';
+  const pt = document.getElementById('levCollateralAddress').value.trim();
+  const slippage = document.getElementById('levSlippage').value.trim() || '1.0';
+  const usdc = document.getElementById('levLoanAddress').value.trim();
+
+  let cmd = `node cli.js adjust-leverage \\\n  --market-id ${marketId} \\\n  --target-leverage ${targetLeverage} \\\n  --user ${user}`;
+  
+  let includePt = true;
+  if (currentLevMarketParams && currentLevMarketParams.collateralToken.toLowerCase() === pt.toLowerCase()) {
+    includePt = false;
+  }
+  if (pt && includePt) {
+    cmd += ` \\\n  --collateral ${pt}`;
+  }
+
+  if (slippage !== '1.0') {
+    cmd += ` \\\n  --slippage ${slippage}`;
+  }
+  if (usdc && usdc.toLowerCase() !== '0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48'.toLowerCase()) {
+    cmd += ` \\\n  --loan ${usdc}`;
+  }
+  
+  cmd += ` \\\n  --simulation`;
+
+  return cmd;
+}
+
+function updateCliCommand() {
+  const codeEl = document.getElementById('cliCommandCode');
+  if (!codeEl) return;
+  if (activeTab === 'rollover') {
+    codeEl.textContent = generateRolloverCommand();
+  } else if (activeTab === 'leverage') {
+    codeEl.textContent = generateLeverageCommand();
+  }
+}
+
+async function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  
+  // Fallback for non-secure contexts or older browsers
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  
+  // Avoid scrolling to bottom
+  textArea.style.top = "0";
+  textArea.style.left = "0";
+  textArea.style.position = "fixed";
+  
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  
+  try {
+    const successful = document.execCommand('copy');
+    if (!successful) {
+      throw new Error('Fallback copy command failed');
+    }
+  } catch (err) {
+    throw new Error('Fallback copy failed: ' + err.message);
+  } finally {
+    document.body.removeChild(textArea);
+  }
+}
+
 // Programmatic Event Listener Bindings & Initializations
 try {
   // Tab Selection Navigation
   document.getElementById('tabHeaderRollover').addEventListener('click', () => switchTab('rollover'));
   document.getElementById('tabHeaderLeverage').addEventListener('click', () => switchTab('leverage'));
+  document.getElementById('tabHeaderSimulateRaw').addEventListener('click', () => switchTab('simulate_raw'));
+
+  // Settings
+  document.getElementById('settingsAlchemyKey').addEventListener('input', saveSettings);
+  document.getElementById('settingsRpcUrl').addEventListener('input', saveSettings);
+  document.getElementById('settingsAutoSimulate').addEventListener('change', saveSettings);
 
   // Tab 1 (Rollover) Inputs & Buttons
-  document.getElementById('oldPtAddress').addEventListener('input', () => onPtAddressInput('oldPtAddress', 'oldPtBadge'));
-  document.getElementById('newPtAddress').addEventListener('input', () => onPtAddressInput('newPtAddress', 'newPtBadge'));
-  document.getElementById('oldMarketId').addEventListener('input', () => onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldPtAddress', 'oldPtBadge'));
-  document.getElementById('newMarketId').addEventListener('input', () => onMarketIdInput('newMarketId', 'newMarketLabel', 'newPtAddress', 'newPtBadge'));
+  document.getElementById('oldCollateralAddress').addEventListener('input', () => { onTokenAddressInput('oldCollateralAddress', 'oldCollateralBadge'); updateCliCommand(); });
+  document.getElementById('newCollateralAddress').addEventListener('input', () => { onTokenAddressInput('newCollateralAddress', 'newCollateralBadge'); updateCliCommand(); });
+  document.getElementById('sourceLoanAddress').addEventListener('input', () => { onTokenAddressInput('sourceLoanAddress', 'sourceLoanBadge'); updateCliCommand(); });
+  document.getElementById('newLoanAddress').addEventListener('input', () => { onTokenAddressInput('newLoanAddress', 'destLoanBadge'); updateCliCommand(); });
+  document.getElementById('oldMarketId').addEventListener('input', () => { onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldCollateralAddress', 'oldCollateralBadge', 'sourceLoanAddress', 'sourceLoanBadge'); updateCliCommand(); });
+  document.getElementById('newMarketId').addEventListener('input', () => { onMarketIdInput('newMarketId', 'newMarketLabel', 'newCollateralAddress', 'newCollateralBadge', 'newLoanAddress', 'destLoanBadge'); updateCliCommand(); });
   document.getElementById('loadPositionBtn').addEventListener('click', connectAndLoadPosition);
   document.getElementById('toggleFull').addEventListener('click', () => selectMigrationType('full'));
   document.getElementById('togglePartial').addEventListener('click', () => selectMigrationType('partial'));
   document.getElementById('debtAmount').addEventListener('input', onDebtInputChange);
   document.getElementById('migrateBtn').addEventListener('click', initiateMigration);
+  document.getElementById('slippage').addEventListener('input', updateCliCommand);
 
   // Tab 2 (Leverage) Inputs & Buttons
-  document.getElementById('levMarketId').addEventListener('input', () => onMarketIdInput('levMarketId', 'levMarketLabel', 'levPtAddress', 'levPtBadge'));
-  document.getElementById('levPtAddress').addEventListener('input', () => onPtAddressInput('levPtAddress', 'levPtBadge'));
+  document.getElementById('levMarketId').addEventListener('input', () => { onMarketIdInput('levMarketId', 'levMarketLabel', 'levCollateralAddress', 'levCollateralBadge'); updateCliCommand(); });
+  document.getElementById('levCollateralAddress').addEventListener('input', () => { onTokenAddressInput('levCollateralAddress', 'levCollateralBadge'); updateCliCommand(); });
   document.getElementById('levLoadBtn').addEventListener('click', levConnectAndLoadPosition);
   document.getElementById('levSlider').addEventListener('input', onLevSliderChange);
   document.getElementById('levExecuteBtn').addEventListener('click', executeLeverageAdjustment);
   document.getElementById('confirmExecuteBtn').addEventListener('click', confirmAndSubmitTransaction);
+  document.getElementById('levLoanAddress').addEventListener('input', updateCliCommand);
+  document.getElementById('levSlippage').addEventListener('input', updateCliCommand);
+
+  // Tab 3 (Simulate Raw) Inputs & Buttons
+  document.getElementById('rawTxFileInput').addEventListener('change', onRawTxFileSelected);
+  document.getElementById('rawTxDataTextarea').addEventListener('input', onRawTxTextChanged);
+  document.getElementById('simulateRawBtn').addEventListener('click', executeRawSimulation);
+
+  // CLI Collapsible Header & Copy to Clipboard listeners
+  const cliCard = document.getElementById('cliCard');
+  const cliHeader = document.getElementById('cliHeader');
+  const cliToggleText = document.getElementById('cliToggleText');
+  cliHeader.addEventListener('click', () => {
+    const isExpanded = cliCard.classList.toggle('expanded');
+    cliToggleText.textContent = isExpanded ? 'Click to collapse' : 'Click to expand';
+  });
+
+  const copyCliBtn = document.getElementById('copyCliBtn');
+  const cliCommandCode = document.getElementById('cliCommandCode');
+  copyCliBtn.addEventListener('click', async () => {
+    try {
+      await copyToClipboard(cliCommandCode.textContent);
+      const originalHtml = copyCliBtn.innerHTML;
+      copyCliBtn.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        <span>Copied!</span>
+      `;
+      copyCliBtn.classList.add('copied');
+      setTimeout(() => {
+        copyCliBtn.innerHTML = originalHtml;
+        copyCliBtn.classList.remove('copied');
+      }, 2000);
+    } catch (err) {
+      console.warn("Failed to copy CLI command:", err);
+    }
+  });
 
   // Run Initial dynamic setups
-  onPtAddressInput('oldPtAddress', 'oldPtBadge');
-  onPtAddressInput('newPtAddress', 'newPtBadge');
-  onPtAddressInput('levPtAddress', 'levPtBadge');
-  onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldPtAddress', 'oldPtBadge');
-  onMarketIdInput('newMarketId', 'newMarketLabel', 'newPtAddress', 'newPtBadge');
-  onMarketIdInput('levMarketId', 'levMarketLabel', 'levPtAddress', 'levPtBadge');
+  onTokenAddressInput('sourceLoanAddress', 'sourceLoanBadge');
+  onTokenAddressInput('newLoanAddress', 'destLoanBadge');
+  onTokenAddressInput('oldCollateralAddress', 'oldCollateralBadge');
+  onTokenAddressInput('newCollateralAddress', 'newCollateralBadge');
+  onTokenAddressInput('levCollateralAddress', 'levCollateralBadge');
+  onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldCollateralAddress', 'oldCollateralBadge', 'sourceLoanAddress', 'sourceLoanBadge');
+  onMarketIdInput('newMarketId', 'newMarketLabel', 'newCollateralAddress', 'newCollateralBadge', 'newLoanAddress', 'destLoanBadge');
+  onMarketIdInput('levMarketId', 'levMarketLabel', 'levCollateralAddress', 'levCollateralBadge');
+
+  loadSettings();
+  tryAutoloadFromEnv();
+  
+  updateCliCommand();
 } catch (err) {
   console.error("Failed to bind event listeners:", err);
   showError("Initialization Error: " + err.message);

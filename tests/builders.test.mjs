@@ -20,7 +20,12 @@ const routeData = {
   tx: {
     to: '0x2CC8d502a65824B4cF9A58DB03490bA024BDB806',
     data: '0x'
-  }
+  },
+  outputs: [
+    {
+      amount: '1000000000000000000000'
+    }
+  ]
 };
 const userAddress = '0xdC382CDF2a25790F535a518EC26958c227e9DCF2';
 const ETHER_GENERAL_ADAPTER_1 = '0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0';
@@ -33,20 +38,22 @@ const bundle1 = buildDeleveragingBundle({
   collateralAmount,
   debtAmount,
   is1x: false,
-  ptAddress,
-  usdcAddress,
+  collateralAddress: ptAddress,
+  loanAddress: usdcAddress,
   routeData,
   userAddress,
   ETHER_GENERAL_ADAPTER_1,
-  MORPHO_BUNDLER_V3
+  MORPHO_BUNDLER_V3,
+  flashLoanAmount: debtAmount
 });
 
-// We expect 4 calls in the reenter bundle:
+// We expect 5 calls in the reenter bundle:
 // 0: Repay Morpho debt
 // 1: Withdraw collateral PT (receiver should be MORPHO_BUNDLER_V3)
 // 2: Approve Pendle Swap Router to spend PT
 // 3: Execute Swap
-assert.strictEqual(bundle1.length, 4);
+// 4: Transfer swapped USDC from Bundler to Adapter
+assert.strictEqual(bundle1.length, 5);
 assert.strictEqual(bundle1[1].to, ETHER_GENERAL_ADAPTER_1);
 console.log('Test 1: Deleveraging bundle recipient check');
 // Decode and verify the PT withdraw recipient is MORPHO_BUNDLER_V3
@@ -87,8 +94,8 @@ const bundle2 = buildLeveragingUpBundle({
   marketParams,
   collateralAmount,
   debtAmount,
-  ptAddress,
-  usdcAddress,
+  collateralAddress: ptAddress,
+  loanAddress: usdcAddress,
   routeData,
   userAddress,
   ETHER_GENERAL_ADAPTER_1,

@@ -50,8 +50,8 @@ global.fetch = async (url, options) => {
           markets: {
             items: [
               {
-                loanAsset: { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48', symbol: 'USDC' },
-                collateralAsset: { address: '0x3365554a61CeFF74A76528f9e86C1E87946d16a5', symbol: 'PT-apyUSD-18JUN2026' },
+                loanAsset: { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48', symbol: 'USDC', decimals: '6' },
+                collateralAsset: { address: '0x3365554a61CeFF74A76528f9e86C1E87946d16a5', symbol: 'PT-apyUSD-18JUN2026', decimals: '18' },
                 oracleAddress: '0x0000000000000000000000000000000000000002',
                 irmAddress: '0x0000000000000000000000000000000000000003',
                 lltv: '860000000000000000'

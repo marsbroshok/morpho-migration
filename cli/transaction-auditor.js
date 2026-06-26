@@ -44,8 +44,12 @@ export class TransactionAuditor {
     }
 
     if (spentAmount > 0n && receivedAmount > 0n) {
+      const spentDecimals = BigInt(details.spentDecimals || 18);
+      const receivedDecimals = BigInt(details.receivedDecimals || 18);
+
       if (txType === 'rollover') {
-        realizedRate = Number(receivedAmount * 10n ** 18n / spentAmount) / 1e18;
+        const exponent = 18n + spentDecimals - receivedDecimals;
+        realizedRate = Number(receivedAmount * 10n ** exponent / spentAmount) / 1e18;
         let realizedPriceImpact;
         if (details.oracleRate) {
           realizedPriceImpact = ((details.oracleRate - realizedRate) / details.oracleRate) * 100;
@@ -56,13 +60,19 @@ export class TransactionAuditor {
           realizedRate,
           estimatedRate: details.estimatedRate,
           realizedPriceImpact,
-          estimatedPriceImpact: details.estimatedPriceImpact
+          estimatedPriceImpact: details.estimatedPriceImpact,
+          spentDecimals: Number(spentDecimals),
+          receivedDecimals: Number(receivedDecimals),
+          spentSymbol: details.spentSymbol,
+          receivedSymbol: details.receivedSymbol
         };
       } else if (txType === 'leverage') {
         if (details.isLeverageUp) {
-          realizedRate = Number(spentAmount * 10n ** 30n / receivedAmount) / 1e18; // Price of 1 PT in USDC
+          const exponent = 18n + receivedDecimals - spentDecimals;
+          realizedRate = Number(spentAmount * 10n ** exponent / receivedAmount) / 1e18; // Price of 1 PT in USDC
         } else {
-          realizedRate = Number(receivedAmount * 10n ** 30n / spentAmount) / 1e18; // Price of 1 PT in USDC
+          const exponent = 18n + spentDecimals - receivedDecimals;
+          realizedRate = Number(receivedAmount * 10n ** exponent / spentAmount) / 1e18; // Price of 1 PT in USDC
         }
         let realizedPriceImpact;
         if (details.oracleRate) {
@@ -75,7 +85,11 @@ export class TransactionAuditor {
           estimatedRate: details.estimatedRate,
           realizedPriceImpact,
           estimatedPriceImpact: details.estimatedPriceImpact,
-          isLeverageUp: details.isLeverageUp
+          isLeverageUp: details.isLeverageUp,
+          spentDecimals: Number(spentDecimals),
+          receivedDecimals: Number(receivedDecimals),
+          spentSymbol: details.spentSymbol,
+          receivedSymbol: details.receivedSymbol
         };
       }
     } else {

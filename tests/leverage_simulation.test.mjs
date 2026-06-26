@@ -58,7 +58,7 @@ global.HTMLElement = dom.window.HTMLElement;
 global.window.fetch = global.fetch; // map fetch to Node fetch
 
 // Constants & mutable test state
-let TEST_USER_ADDRESS = '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a'; // Old market user (for deleveraging)
+let TEST_USER_ADDRESS = '0xF0A6e66B4396a70eE0620064da847821BeE70731'; // Old market user (for deleveraging)
 const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
 const BUNDLER_ADDRESS = '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245';
 const ADAPTER_ADDRESS = '0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0';
@@ -286,6 +286,9 @@ try {
   await new Promise(resolve => setTimeout(resolve, 5000));
 
   let calldata = document.getElementById('rawCalldataTextarea').value;
+  if (!calldata) {
+    console.error("Status Element Text on Failure:", document.getElementById('status').innerText);
+  }
   assert.ok(calldata, "Deleveraging calldata should be generated");
 
   let txPayload = { to: BUNDLER_ADDRESS, data: calldata, value: 0n };
@@ -317,7 +320,7 @@ try {
 
 
   // --- Step 3: Switch User & Market to Simulate Leveraging Up on active PT market ---
-  TEST_USER_ADDRESS = '0xa9BAbD59748a5077AdD757DA038F5F7083bCE9bD'; // New Market user with active position
+  TEST_USER_ADDRESS = '0x03aAA2081d2dCaB61AE20BeDAfACf2A5E44BBbE6'; // New Market user with active position
   const newMarketId = '0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c'; // New Market ID
   
   console.log("\nSwitching to New Market for Leveraging-up simulation...");
@@ -325,11 +328,11 @@ try {
   console.log(`New Market ID: ${newMarketId}`);
 
   document.getElementById('levMarketId').value = newMarketId;
-  document.getElementById('levPtAddress').value = PT_ADDRESS_NEW;
+  document.getElementById('levCollateralAddress').value = PT_ADDRESS_NEW;
   
   // Dispatch input events to trigger UI label changes
   document.getElementById('levMarketId').dispatchEvent(new window.Event('input'));
-  document.getElementById('levPtAddress').dispatchEvent(new window.Event('input'));
+  document.getElementById('levCollateralAddress').dispatchEvent(new window.Event('input'));
   await new Promise(resolve => setTimeout(resolve, 500));
 
   console.log("Loading live position in new market...");
@@ -340,9 +343,9 @@ try {
   console.log("Loaded new leverage position info:", levPositionInfo.replace(/<[^>]*>/g, ' ').trim());
   assert.ok(levPositionInfo.includes("Active Position Found"), "New leverage position should be loaded");
 
-  // --- Step 4: Simulate Leveraging Up Flow (Target Leverage 5.50x) ---
-  console.log("\n--- Simulating Leveraging Up Flow (Target: 5.50x) ---");
-  levSlider.value = "5.50";
+  // --- Step 4: Simulate Leveraging Up Flow (Target Leverage 6.00x) ---
+  console.log("\n--- Simulating Leveraging Up Flow (Target: 6.00x) ---");
+  levSlider.value = "6.00";
   levSlider.dispatchEvent(new window.Event('input'));
   await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -370,6 +373,17 @@ try {
 
   // Collect and analyze logs
   const levUpLogs = collectAllLogs(levUpMainCallResult);
+
+  console.log("Debug: All Transfer events in levUpLogs:");
+  levUpLogs.forEach(log => {
+    if (log.topics[0] === "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef" && log.topics.length >= 3) {
+      const token = log.address;
+      const from = '0x' + log.topics[1].slice(26);
+      const to = '0x' + log.topics[2].slice(26);
+      const value = BigInt(log.data === '0x' ? '0' : log.data);
+      console.log(`  Token: ${token}, From: ${from}, To: ${to}, Value: ${value}`);
+    }
+  });
 
   // Find USDC transfer from Adapter to Morpho Bundler V3 (borrowed USDC routed to Bundler to swap for PT)
   const usdcUpTransfers = findTransferLog(levUpLogs, USDC_ADDRESS, ADAPTER_ADDRESS, BUNDLER_ADDRESS);

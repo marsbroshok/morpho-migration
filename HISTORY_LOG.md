@@ -1,5 +1,8 @@
 ### Context Migration Summary: Morpho Blue Cross-Market PT Position Rollover
 
+> [!NOTE]
+> This history log documents the initial implementation context which targeted a specific Pendle PT rollover. The codebase has since been refactored and generalized to support arbitrary collateral and loan assets across Morpho Blue markets.
+
 This engineering summary contains the core context, parameter sets, and logic flows needed by your AI developer agent (`antigravity` / CLI environment) to orchestrate and simulate the custom DeFi position migration transaction.
 
 ---

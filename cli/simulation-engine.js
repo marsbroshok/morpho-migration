@@ -21,7 +21,7 @@ export class SimulationEngine {
    * @param {string} calldata 
    * @param {bigint} value 
    */
-  async simulateTransaction(fromAddress, toAddress, calldata, value) {
+  async simulateTransaction(fromAddress, toAddress, calldata, value, prependCalls = []) {
     const apiKey = this.alchemyKey || process.env.ALCHEMY_API_KEY;
     if (!apiKey) {
       throw new Error("Alchemy API Key is required for running on-chain simulations. Please set ALCHEMY_API_KEY.");
@@ -47,6 +47,9 @@ export class SimulationEngine {
     });
 
     const calls = [];
+    if (prependCalls && prependCalls.length > 0) {
+      calls.push(...prependCalls);
+    }
     if (!isAdapterAuth) {
       calls.push({
         from: fromAddress,

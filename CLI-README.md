@@ -1,6 +1,6 @@
-# Morpho Blue PT Position Migrator CLI
+# Morpho Blue Position Migrator CLI
 
-A modular, object-oriented command-line interface (CLI) tool for executing cross-market rollovers and adjusting leverage ratios for Principal Token (PT) positions on Morpho Blue.
+A modular, object-oriented command-line interface (CLI) tool for executing cross-market rollovers and adjusting leverage ratios for collateralized debt positions on Morpho Blue.
 
 This CLI tool provides 100% feature parity with the web application while offering robust security options (e.g., WalletConnect pairing) and automated execution modes.
 
@@ -8,9 +8,9 @@ This CLI tool provides 100% feature parity with the web application while offeri
 
 ## Features & Operations
 
-1. **Load Position & Metrics Query**: Reads live borrow debt, collateral PT balance, current LTV, and leverage ratio from Morpho Blue for any user address.
-2. **Proportional Migration Calculation**: Automatically calculates proportional PT collateral to withdraw and migrate during a partial rollover to keep the position healthy.
-3. **Optimal Swap Routing**: Queries Pendle Convert API to discover the most capital-efficient swap path (e.g., PT-old to PT-new, PT to USDC, or USDC to PT), and computes estimated slippage and price impact compared to Oracle fair-value ratios.
+1. **Load Position & Metrics Query**: Reads live borrow debt, collateral balance, current LTV, and leverage ratio from Morpho Blue for any user address.
+2. **Proportional Migration Calculation**: Automatically calculates proportional collateral to withdraw and migrate during a partial rollover to keep the position healthy.
+3. **Optimal Swap Routing**: Queries Swap Router API (e.g., Pendle Convert V3) to discover the most capital-efficient swap path (e.g., old collateral to new collateral, collateral to loan token, or loan token to collateral), and computes estimated slippage and price impact compared to Oracle fair-value ratios.
 4. **Leverage adjustment solving**: Solves target LTV/mode (`deleverage`, `deleverage-to-1x`, or `leverage-up`) and required swap amounts given a target leverage level between 1.0x and 6.0x.
 5. **Mainnet Fork Simulations**: Runs a full EVM execution trace of the compiled atomic flashloan multicall bundle on a mainnet fork, mock-authorizing adapter approvals on the fly and logging nested call steps, gas usage, and reverts.
 6. **Secure WalletConnect pairing**: Displays connection QR codes and URIs directly in the terminal, allowing pairing with desktop/mobile wallets (e.g., Rabby Wallet, MetaMask) so users never have to paste private keys.
@@ -51,7 +51,7 @@ morpho-migration/
 │   ├── blockchain-client.js       # On-chain queries & transaction sender (Viem)
 │   ├── wallet-connector.js        # WalletConnect pairing dApp manager
 │   ├── simulation-engine.js       # Mainnet-fork EVM simulator (eth_simulateV1)
-│   ├── pendle-router-client.js    # Pendle swap API router fetcher
+│   ├── swap-router-client.js      # Swap router SDK client fetcher
 │   ├── rollover-command.js        # Rollover collateral command execution handler
 │   ├── leverage-command.js        # Leverage adjustment command execution handler
 │   └── transaction-auditor.js     # Post-execution realized price & slippage auditor
@@ -70,21 +70,21 @@ morpho-migration/
 - `--simulation` / `-s`: Simulates the transaction execution on a mainnet fork instead of submitting to the network.
 - `--no-simulation`: Bypasses fork simulation and immediately attempts submission (default when execution signer is connected).
 - `--slippage <pct>`: Slippage limit percentage (default: `1.0`).
-- `--usdc <address>`: Custom USDC address (default: `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`).
+- `--old-loan <address>`: Custom source loan asset address (fetched dynamically if omitted; alias: `--usdc`).
 
 ---
 
 ### Command 1: `rollover`
-Migrates user PT collateral and USDC debt from a source Morpho Blue market to a destination market.
+Migrates user collateral and loan debt from a source Morpho Blue market to a destination market.
 
 #### Options
 - `--old-market-id <id>`: (Required) Source Morpho Blue market ID.
 - `--new-market-id <id>`: (Required) Destination Morpho Blue market ID.
 - `--user <address>`: (Required in simulation mode) Wallet address to fetch position for.
 - `--type <full|partial>`: Migration type (default: `full`).
-- `--debt <amount>`: USDC debt amount to repay (Required if type is `partial`).
-- `--old-pt <address>`: Source PT Token address (fetched dynamically from market params if omitted).
-- `--new-pt <address>`: Destination PT Token address (fetched dynamically from market params if omitted).
+- `--debt <amount>`: Debt amount to repay (Required if type is `partial`).
+- `--old-collateral <address>`: Source Collateral address (fetched dynamically if omitted; alias: `--old-pt`).
+- `--new-collateral <address>`: Destination Collateral address (fetched dynamically if omitted; alias: `--new-pt`).
 
 ---
 
@@ -95,7 +95,7 @@ Adjusts leverage ratio on an active Morpho Blue market.
 - `--market-id <id>`: (Required) Morpho Blue market ID.
 - `--target-leverage <number>`: (Required) Target leverage level between `1.0` (debt-free) and `6.0`.
 - `--user <address>`: (Required in simulation mode) Wallet address to fetch position for.
-- `--pt <address>`: PT Token address (fetched dynamically if omitted).
+- `--collateral <address>`: Collateral Token address (fetched dynamically if omitted; alias: `--pt`).
 
 ---
 
@@ -128,7 +128,7 @@ node cli.js adjust-leverage \
 
 **Workflow**:
 1. Copy the printed `wc:...` URI or scan the QR code using Rabby Wallet ("Quick Connect" button).
-2. The CLI pairs, loads your position, solves adjustment parameters, fetches optimal swap routing from Pendle, and runs simulation checks.
+2. The CLI pairs, loads your position, solves adjustment parameters, fetches optimal swap routing, and runs simulation checks.
 3. The CLI prompts your Rabby Wallet extension for transaction approval.
 4. Review the details in Rabby and approve.
 5. The CLI prints confirmation status, parses receipts, and outputs the post-execution realized price audit logs.
@@ -158,9 +158,9 @@ Upon successful execution, the tool outputs details from the parsed receipts log
 Waiting for block confirmation for transaction: 0x990113c7ef5f9a4c0c745e02c1c7e50b325868c164887dc1058f941bf0f1e137...
 
 [Post-Execution Audit]
-Realized Swap Rate: 1 PT-old = 0.9754 PT-new (Estimated: 0.9750 PT-new).
+Realized Swap Rate: 1 old-collateral = 0.9754 new-collateral (Estimated: 0.9750 new-collateral).
 Realized Price Impact: 2.46% (Estimated: 2.50%, vs. Oracle).
-(Checked via transfer events: spent 8.0 PT, received 7.8032 PT).
+(Checked via transfer events: spent 8.0 old-collateral, received 7.8032 new-collateral).
 ```
 
 ---

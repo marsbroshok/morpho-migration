@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { getAddress } from 'viem';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +33,8 @@ const mockMarketParams = {
   collateralToken: '0x3365554a61CeFF74A76528f9e86C1E87946d16a5',
   loanSymbol: 'USDC',
   collateralSymbol: 'PT-apyUSD-18JUN2026',
+  loanDecimals: 6,
+  collateralDecimals: 18,
   oracle: '0x0000000000000000000000000000000000000002',
   irm: '0x0000000000000000000000000000000000000003',
   lltv: 860000000000000000n
@@ -58,7 +61,7 @@ class MockBlockchainClient {
   async fetchMorphoPosition() {
     return mockPosition;
   }
-  async checkPtMaturity() {
+  async checkCollateralMaturity() {
     return { expiryDate: '11/05/2026', isExpired: false };
   }
   async isAuthorized() {
@@ -66,8 +69,8 @@ class MockBlockchainClient {
   }
 }
 
-class MockPendleRouterClient {
-  async fetchPendleRoute() {
+class MockSwapRouterClient {
+  async fetchSwapRoute() {
     return {
       outputs: [{ amount: '7800000000000000000' }], // 7.8 PT
       tx: { to: '0x0000000000000000000000000000000000000004', data: '0x00' }
@@ -76,13 +79,13 @@ class MockPendleRouterClient {
 }
 
 class MockSimulationEngine {
-  async simulateTransaction() {
+  async simulateTransaction(from, to, data, value, prependCalls) {
     console.log('[Mock Simulation] Executed successfully.');
     return {
       success: true,
       gasUsed: 120000n,
       logs: [],
-      traceTree: { to: '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', status: '0x1', gasUsed: '0x1d4c0' }
+      traceTree: { to: to || '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', status: '0x1', gasUsed: '0x1d4c0' }
     };
   }
 }
@@ -100,19 +103,21 @@ async function testImports() {
   const { BlockchainClient } = await import('../cli/blockchain-client.js');
   const { WalletConnector } = await import('../cli/wallet-connector.js');
   const { SimulationEngine } = await import('../cli/simulation-engine.js');
-  const { PendleRouterClient } = await import('../cli/pendle-router-client.js');
+  const { SwapRouterClient } = await import('../cli/swap-router-client.js');
   const { RolloverCommand } = await import('../cli/rollover-command.js');
   const { LeverageCommand } = await import('../cli/leverage-command.js');
   const { TransactionAuditor } = await import('../cli/transaction-auditor.js');
+  const { SimulateRawCommand } = await import('../cli/simulate-raw-command.js');
 
   assert.ok(CliRunner, 'CliRunner should be exported');
   assert.ok(BlockchainClient, 'BlockchainClient should be exported');
   assert.ok(WalletConnector, 'WalletConnector should be exported');
   assert.ok(SimulationEngine, 'SimulationEngine should be exported');
-  assert.ok(PendleRouterClient, 'PendleRouterClient should be exported');
+  assert.ok(SwapRouterClient, 'SwapRouterClient should be exported');
   assert.ok(RolloverCommand, 'RolloverCommand should be exported');
   assert.ok(LeverageCommand, 'LeverageCommand should be exported');
   assert.ok(TransactionAuditor, 'TransactionAuditor should be exported');
+  assert.ok(SimulateRawCommand, 'SimulateRawCommand should be exported');
   console.log('✅ Imports verified successfully!');
 }
 
@@ -186,6 +191,37 @@ async function testCliRunnerArgParsingOptions() {
   assert.strictEqual(leverageOptions.targetLeverage, 3.5);
   assert.strictEqual(leverageOptions.simulation, true);
 
+  // Test: simulate-raw parsing
+  const rawOptions = runner.parseArgs(['simulate-raw', '--file', 'tests/sample_raw_tx.json']);
+  assert.strictEqual(rawOptions.command, 'simulate-raw');
+  assert.strictEqual(rawOptions.file, 'tests/sample_raw_tx.json');
+  assert.strictEqual(rawOptions.simulation, true, 'simulate-raw command should force simulation to true');
+
+  const rawOptionsShort = runner.parseArgs(['simulate-raw', '-f', 'tests/sample_raw_tx.json']);
+  assert.strictEqual(rawOptionsShort.command, 'simulate-raw');
+  assert.strictEqual(rawOptionsShort.file, 'tests/sample_raw_tx.json');
+
+  // Test: simulate-raw missing file option throws error
+  assert.throws(() => {
+    runner.parseArgs(['simulate-raw']);
+  }, /--file <path> is required for simulate-raw command/);
+
+  // Test: Successful parse for generic rollover options
+  const genericRolloverOptions = runner.parseArgs(['rollover', '--old-market-id', '0x123', '--new-market-id', '0x456', '--old-collateral', '0xaaa', '--new-collateral', '0xbbb', '--old-loan', '0xccc']);
+  assert.strictEqual(genericRolloverOptions.oldCollateral, '0xaaa');
+  assert.strictEqual(genericRolloverOptions.oldPt, '0xaaa', 'oldPt alias should be populated');
+  assert.strictEqual(genericRolloverOptions.newCollateral, '0xbbb');
+  assert.strictEqual(genericRolloverOptions.newPt, '0xbbb', 'newPt alias should be populated');
+  assert.strictEqual(genericRolloverOptions.oldLoan, '0xccc');
+  assert.strictEqual(genericRolloverOptions.usdc, '0xccc', 'usdc alias should be populated');
+
+  // Test: Successful parse for generic leverage options
+  const genericLeverageOptions = runner.parseArgs(['adjust-leverage', '--market-id', '0x123', '--target-leverage', '3.0', '--collateral', '0xaaa', '--loan', '0xbbb']);
+  assert.strictEqual(genericLeverageOptions.collateral, '0xaaa');
+  assert.strictEqual(genericLeverageOptions.pt, '0xaaa', 'pt alias should be populated');
+  assert.strictEqual(genericLeverageOptions.loan, '0xbbb');
+  assert.strictEqual(genericLeverageOptions.usdc, '0xbbb', 'usdc alias should be populated');
+
   console.log('✅ CliRunner argument parsing options tests passed!');
 }
 
@@ -195,7 +231,7 @@ async function testRolloverCommandMock() {
   const { RolloverCommand } = await import('../cli/rollover-command.js');
   
   const blockchain = new MockBlockchainClient();
-  const router = new MockPendleRouterClient();
+  const router = new MockSwapRouterClient();
   const simulation = new MockSimulationEngine();
   const auditor = new MockTransactionAuditor();
 
@@ -222,7 +258,7 @@ async function testLeverageCommandMock() {
   const { LeverageCommand } = await import('../cli/leverage-command.js');
   
   const blockchain = new MockBlockchainClient();
-  const router = new MockPendleRouterClient();
+  const router = new MockSwapRouterClient();
   const simulation = new MockSimulationEngine();
   const auditor = new MockTransactionAuditor();
 
@@ -249,6 +285,88 @@ async function testLeverageCommandMock() {
   console.log('✅ LeverageCommand mock execution passed!');
 }
 
+async function testSimulateRawCommandMock() {
+  console.log('Testing SimulateRawCommand with mock clients...');
+  const { SimulateRawCommand } = await import('../cli/simulate-raw-command.js');
+
+  const blockchain = new MockBlockchainClient();
+  const simulation = new MockSimulationEngine();
+  const cmd = new SimulateRawCommand(blockchain, simulation);
+
+  // Create valid temporary JSON
+  const validPath = './tests/temp_valid_tx.json';
+  fs.writeFileSync(validPath, JSON.stringify({
+    from: "0xdC382CDF2a25790F535a518EC26958c227e9DCF2",
+    to: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    data: "0x70a08231000000000000000000000000dc382cdf2a25790f535a518ec26958c227e9dcf2",
+    value: "0x0"
+  }));
+
+  try {
+    // 1. Test load valid transaction data
+    const txData = cmd.loadTransactionData(validPath);
+    assert.strictEqual(txData.from, '0xdC382CDF2a25790F535a518EC26958c227e9DCF2');
+    assert.strictEqual(txData.to, '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
+    assert.strictEqual(txData.data, '0x70a08231000000000000000000000000dc382cdf2a25790f535a518ec26958c227e9dcf2');
+    assert.strictEqual(txData.value, 0n);
+
+    // 2. Test mock execution simulation
+    const simResult = await cmd.runSimulation(txData);
+    assert.ok(simResult.success, 'Simulation should succeed');
+    assert.strictEqual(simResult.traceTree.to, '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
+
+    // 3. Test missing properties throws
+    const invalidPath = './tests/temp_invalid_tx.json';
+    
+    // Missing "from"
+    fs.writeFileSync(invalidPath, JSON.stringify({
+      to: "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245",
+      data: "0x00"
+    }));
+    assert.throws(() => cmd.loadTransactionData(invalidPath), /Missing "from" address/);
+
+    // Missing "to"
+    fs.writeFileSync(invalidPath, JSON.stringify({
+      from: "0xdC382CDF2a25790F535a518EC26958c227e9DCF2",
+      data: "0x00"
+    }));
+    assert.throws(() => cmd.loadTransactionData(invalidPath), /Missing "to" address/);
+
+    // Missing "data"
+    fs.writeFileSync(invalidPath, JSON.stringify({
+      from: "0xdC382CDF2a25790F535a518EC26958c227e9DCF2",
+      to: "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245"
+    }));
+    assert.throws(() => cmd.loadTransactionData(invalidPath), /Missing "data" calldata/);
+
+    // Invalid "from" address
+    fs.writeFileSync(invalidPath, JSON.stringify({
+      from: "0xinvalid",
+      to: "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245",
+      data: "0x00"
+    }));
+    assert.throws(() => cmd.loadTransactionData(invalidPath), /Invalid "from" address/);
+
+    // Invalid "data" hex
+    fs.writeFileSync(invalidPath, JSON.stringify({
+      from: "0xdC382CDF2a25790F535a518EC26958c227e9DCF2",
+      to: "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245",
+      data: "not-hex"
+    }));
+    assert.throws(() => cmd.loadTransactionData(invalidPath), /Invalid "data" hex string/);
+
+    // Clean up invalid path
+    if (fs.existsSync(invalidPath)) fs.unlinkSync(invalidPath);
+
+  } finally {
+    // Clean up valid path
+    if (fs.existsSync(validPath)) fs.unlinkSync(validPath);
+  }
+
+  console.log('✅ SimulateRawCommand mock execution passed!');
+}
+
+
 // 5. Live Simulation integration tests (Only run if Alchemy API Key is available)
 async function runLiveForkSimulationTests() {
   if (!apiKey) {
@@ -258,7 +376,7 @@ async function runLiveForkSimulationTests() {
 
   console.log('\n--- Running Live Mainnet Fork Simulation tests ---');
   const { BlockchainClient } = await import('../cli/blockchain-client.js');
-  const { PendleRouterClient } = await import('../cli/pendle-router-client.js');
+  const { SwapRouterClient } = await import('../cli/swap-router-client.js');
   const { SimulationEngine } = await import('../cli/simulation-engine.js');
   const { TransactionAuditor } = await import('../cli/transaction-auditor.js');
   const { RolloverCommand } = await import('../cli/rollover-command.js');
@@ -266,7 +384,7 @@ async function runLiveForkSimulationTests() {
 
   const rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`;
   const blockchain = new BlockchainClient(rpcUrl, null);
-  const router = new PendleRouterClient();
+  const router = new SwapRouterClient();
   const simulation = new SimulationEngine(blockchain, apiKey);
   const auditor = new TransactionAuditor(blockchain.publicClient);
 
@@ -279,7 +397,8 @@ async function runLiveForkSimulationTests() {
     newMarketId: '0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c',
     type: 'full',
     slippage: 1.0,
-    simulation: true
+    simulation: true,
+    capBorrow: true
   });
   assert.strictEqual(fullRolloverResult.simulationResult.success, true, 'Full rollover simulation should succeed');
 
@@ -292,7 +411,8 @@ async function runLiveForkSimulationTests() {
     type: 'partial',
     debt: 2,
     slippage: 1.0,
-    simulation: true
+    simulation: true,
+    capBorrow: true
   });
   assert.strictEqual(partialRolloverResult.simulationResult.success, true, 'Partial rollover simulation should succeed');
 
@@ -363,6 +483,183 @@ async function testFormattingAndResolver() {
   console.log('✅ CliFormatter and AddressLabelResolver tests passed!');
 }
 
+// Test BlockchainClient checkAllowance and approveToken methods (TDD)
+async function testBlockchainClientAllowanceAndApprove() {
+  console.log('Testing BlockchainClient checkAllowance and approveToken...');
+  const { BlockchainClient } = await import('../cli/blockchain-client.js');
+
+  let readContractCalls = [];
+  let executeTransactionCalls = [];
+
+  const mockPublicClient = {
+    readContract: async (args) => {
+      readContractCalls.push(args);
+      if (args.functionName === 'allowance') {
+        return 5000000n; // 5 USDC
+      }
+      return 0n;
+    }
+  };
+
+  const client = new BlockchainClient('http://mock-rpc-url', '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
+  client.publicClient = mockPublicClient;
+  client.executeTransaction = async (args) => {
+    executeTransactionCalls.push(args);
+    return '0xmock-approval-tx-hash';
+  };
+
+  // 1. Test checkAllowance
+  const owner = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
+  const spender = '0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0';
+  const token = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+  
+  const allowance = await client.checkAllowance(token, owner, spender);
+  assert.strictEqual(allowance, 5000000n, 'allowance should return the value from publicClient');
+  assert.strictEqual(readContractCalls.length, 1);
+  assert.strictEqual(readContractCalls[0].address, token);
+  assert.strictEqual(readContractCalls[0].functionName, 'allowance');
+  assert.deepStrictEqual(readContractCalls[0].args, [owner, spender]);
+
+  // 2. Test approveToken
+  const amount = 10000000n; // 10 USDC
+  const txHash = await client.approveToken(token, spender, amount);
+  assert.strictEqual(txHash, '0xmock-approval-tx-hash', 'approveToken should return executed transaction hash');
+  assert.strictEqual(executeTransactionCalls.length, 1);
+  assert.strictEqual(executeTransactionCalls[0].to, token);
+  assert.ok(executeTransactionCalls[0].data.startsWith('0x095ea7b3'), 'calldata should start with approve selector (0x095ea7b3)');
+
+  console.log('✅ BlockchainClient checkAllowance and approveToken tests passed!');
+}
+
+// Test CliRunner allowance checking and auto-approval (TDD)
+async function testCliRunnerAllowanceCheckAndApproval() {
+  console.log('Testing CliRunner allowance checking and auto-approval...');
+  const { CliRunner } = await import('../cli/cli-runner.js');
+  const { BlockchainClient } = await import('../cli/blockchain-client.js');
+
+  let checkAllowanceCalled = 0;
+  let approveTokenCalled = 0;
+
+  // Stub publicClient property descriptor via prototype chain
+  // Stub publicClient property descriptor via prototype chain
+  Object.defineProperty(BlockchainClient.prototype, 'publicClient', {
+    get() {
+      return this._mockPublicClient;
+    },
+    set(val) {
+      this._mockPublicClient = {
+        readContract: async ({ address, functionName, args }) => {
+          const addr = getAddress(address);
+          let res = 0n;
+          
+          if (addr === getAddress('0x0000000022D53366457F9d5E68Ec105046FC4383') && functionName === 'get_address') {
+            res = '0xF98B45FA17DE75FB1aD0e7aFD971b0ca00e379fC';
+          } else if (addr === getAddress('0xF98B45FA17DE75FB1aD0e7aFD971b0ca00e379fC') && functionName === 'find_pool_for_coins') {
+            res = args[2] === 0n ? '0xE1B96555BbecA40E583BbB41a11C68Ca4706A414' : '0x0000000000000000000000000000000000000000';
+          } else if (addr === getAddress('0xE1B96555BbecA40E583BbB41a11C68Ca4706A414') && functionName === 'coins') {
+            const index = args[0];
+            if (index === 0n) res = '0x98A878b1Cd98131B271883B390f68D2c90674665'; // apxUSD
+            if (index === 1n) res = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'; // USDC
+          } else if (addr === getAddress('0xE1B96555BbecA40E583BbB41a11C68Ca4706A414') && functionName === 'get_dy') {
+            const dx = args[2];
+            res = (dx * 81n) / 100n / 10n ** 12n; // 1 apxUSD = 0.81 USDC
+          } else if (functionName === 'price') {
+            if (addr === getAddress('0x0000000000000000000000000000000000000002')) {
+              res = 117n * 10n ** 22n; // 1.17 USDC/collateral
+            } else if (addr === getAddress('0x0000000000000000000000000000000000000004')) {
+              res = 138n * 10n ** 34n; // 1.38 apxUSD/collateral
+            } else {
+              res = 950000n * 10n ** 18n;
+            }
+          }
+          
+          return res;
+        },
+        waitForTransactionReceipt: async () => {
+          return { status: 'success', logs: [] };
+        }
+      };
+    },
+    configurable: true
+  });
+
+  const originalCheckAllowance = BlockchainClient.prototype.checkAllowance;
+  const originalApproveToken = BlockchainClient.prototype.approveToken;
+  const originalExecuteTransaction = BlockchainClient.prototype.executeTransaction;
+  const originalFetchMarketParams = BlockchainClient.prototype.fetchMarketParams;
+  const originalFetchMorphoPosition = BlockchainClient.prototype.fetchMorphoPosition;
+  const originalCheckCollateralMaturity = BlockchainClient.prototype.checkCollateralMaturity;
+
+  BlockchainClient.prototype.fetchMarketParams = async (id) => {
+    if (id === 'old') return mockMarketParams;
+    if (id === 'new') return {
+      ...mockMarketParams,
+      loanToken: '0x98A878b1Cd98131B271883B390f68D2c90674665', // apxUSD (diff loan)
+      loanDecimals: 18,
+      loanSymbol: 'apxUSD',
+      oracle: '0x0000000000000000000000000000000000000004'
+    };
+    throw new Error('Unknown market id ' + id);
+  };
+  BlockchainClient.prototype.fetchMorphoPosition = async () => ({
+    collateral: 8000n * 10n ** 18n, // 8000 PT (solvent position)
+    debt: 6000n * 10n ** 6n, // 6000 USDC
+    borrowShares: 6000n * 10n ** 6n
+  });
+  BlockchainClient.prototype.checkCollateralMaturity = async () => ({ expiryDate: '11/05/2026', isExpired: false });
+
+  BlockchainClient.prototype.checkAllowance = async (token, owner, spender) => {
+    checkAllowanceCalled++;
+    return 1000000n; // 1 USDC (which is less than the 6000 USDC debt/shortfall)
+  };
+
+  BlockchainClient.prototype.approveToken = async (token, spender, amount) => {
+    approveTokenCalled++;
+    return '0xmock-approve-tx-hash';
+  };
+
+  BlockchainClient.prototype.executeTransaction = async () => {
+    return '0xmock-execute-tx-hash';
+  };
+
+  const runner = new CliRunner();
+
+  // Redirect console logs to capture output
+  const originalLog = console.log;
+  let logs = [];
+  console.log = (...args) => logs.push(args.join(' '));
+
+  try {
+    await runner.run([
+      'node',
+      'cli.js',
+      'rollover',
+      '--old-market-id', 'old',
+      '--new-market-id', 'new',
+      '--user', '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      '--private-key', '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+      '--rpc', 'http://mock-rpc-url',
+      '--type', 'partial',
+      '--debt', '100'
+    ]);
+  } finally {
+    // Restore originals
+    console.log = originalLog;
+    delete BlockchainClient.prototype.publicClient;
+    BlockchainClient.prototype.checkAllowance = originalCheckAllowance;
+    BlockchainClient.prototype.approveToken = originalApproveToken;
+    BlockchainClient.prototype.executeTransaction = originalExecuteTransaction;
+    BlockchainClient.prototype.fetchMarketParams = originalFetchMarketParams;
+    BlockchainClient.prototype.fetchMorphoPosition = originalFetchMorphoPosition;
+    BlockchainClient.prototype.checkCollateralMaturity = originalCheckCollateralMaturity;
+  }
+
+  assert.strictEqual(checkAllowanceCalled, 1, 'checkAllowance should be called exactly once');
+  assert.strictEqual(approveTokenCalled, 1, 'approveToken should be called exactly once since allowance is insufficient');
+
+  console.log('✅ CliRunner allowance checking and auto-approval tests passed!');
+}
+
 // 7. Test CliRunner env loading and RPC fallback behavior
 async function testCliRunnerEnvAndRpcFallback() {
   console.log('Testing CliRunner env loading and RPC fallback...');
@@ -405,21 +702,21 @@ async function testCliShellExecutionSimulation() {
   const newMarket = '0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c';
 
   // 1. Test: Full Rollover Simulation Shell Command
-  const cmd1 = `node ${cliPath} rollover --old-market-id ${oldMarket} --new-market-id ${newMarket} --user ${user} --simulation`;
+  const cmd1 = `node ${cliPath} rollover --old-market-id ${oldMarket} --new-market-id ${newMarket} --user ${user} --simulation --cap-borrow`;
   console.log(`  Spawning: ${cmd1}`);
   const stdout1 = execSync(cmd1, { encoding: 'utf8' }).toLowerCase();
   
-  assert.ok(stdout1.includes('morpho position rollover collateral'), 'Output should contain dashboard header');
+  assert.ok(stdout1.includes('morpho position rollover'), 'Output should contain dashboard header');
   assert.ok(stdout1.includes('transaction simulation successful'), 'Output should verify simulation success');
   assert.ok(stdout1.includes('morpho bundler v3'), 'Output should resolve contract label in call trace');
 
   // 2. Test: Partial Rollover Simulation Shell Command
-  const cmd2 = `node ${cliPath} rollover --old-market-id ${oldMarket} --new-market-id ${newMarket} --user ${user} --type partial --debt 2 --simulation`;
+  const cmd2 = `node ${cliPath} rollover --old-market-id ${oldMarket} --new-market-id ${newMarket} --user ${user} --type partial --debt 2 --simulation --cap-borrow`;
   console.log(`  Spawning: ${cmd2}`);
   const stdout2 = execSync(cmd2, { encoding: 'utf8' }).toLowerCase();
   
   assert.ok(stdout2.includes('migration plan (partial rollover)'), 'Output should indicate partial rollover');
-  assert.ok(stdout2.includes('usdc repayment') && stdout2.includes('2.00 usdc'), 'Output should format repayment amount');
+  assert.ok(stdout2.includes('debt repayment') && stdout2.includes('2.00 usdc'), 'Output should format repayment amount');
   assert.ok(stdout2.includes('transaction simulation successful'), 'Output should verify simulation success');
 
   // 3. Test: Leverage Adjustment Simulation Shell Command (Deleveraging)
@@ -427,8 +724,13 @@ async function testCliShellExecutionSimulation() {
   console.log(`  Spawning: ${cmd3}`);
   const stdout3 = execSync(cmd3, { encoding: 'utf8' }).toLowerCase();
   
-  assert.ok(stdout3.includes('deleverage position'), 'Output should indicate Deleverage');
-  assert.ok(stdout3.includes('transaction simulation successful'), 'Output should verify simulation success');
+  try {
+    assert.ok(stdout3.includes('deleverage position'), 'Output should indicate Deleverage');
+    assert.ok(stdout3.includes('transaction simulation successful'), 'Output should verify simulation success');
+  } catch (err) {
+    console.error('DEBUG: stdout3 output was:', stdout3);
+    throw err;
+  }
 
   // 4. Test: Validation constraint check (expected failure)
   const cmd4 = `node ${cliPath} rollover --private-key 0x123`;
@@ -436,6 +738,26 @@ async function testCliShellExecutionSimulation() {
   assert.throws(() => {
     execSync(cmd4, { stdio: 'pipe' });
   }, /--private-key requires --rpc/, 'Should exit with code 1 and output constraint error');
+
+  // 5. Test: simulate-raw shell execution
+  const tempJsonPath = './tests/temp_shell_raw_tx.json';
+  fs.writeFileSync(tempJsonPath, JSON.stringify({
+    from: "0xdC382CDF2a25790F535a518EC26958c227e9DCF2",
+    to: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    data: "0x70a08231000000000000000000000000dc382cdf2a25790f535a518ec26958c227e9dcf2",
+    value: "0x0"
+  }));
+
+  try {
+    const cmd5 = `node ${cliPath} simulate-raw --file ${tempJsonPath}`;
+    console.log(`  Spawning: ${cmd5}`);
+    const stdout5 = execSync(cmd5, { encoding: 'utf8' }).toLowerCase();
+    
+    assert.ok(stdout5.includes('raw transaction simulation'), 'Output should contain raw simulation header');
+    assert.ok(stdout5.includes('transaction simulation successful'), 'Output should verify simulation success');
+  } finally {
+    if (fs.existsSync(tempJsonPath)) fs.unlinkSync(tempJsonPath);
+  }
 
   console.log('✅ End-to-end CLI shell execution tests passed!');
 }
@@ -498,6 +820,9 @@ async function testWalletConnectorQrCodeGeneration() {
   const addresses = await walletClient.getAddresses();
   assert.deepStrictEqual(addresses, ['0x1111111111111111111111111111111111111111'], 'walletClient should expose mock session accounts');
 
+  const chainId = await walletClient.request({ method: 'eth_chainId' });
+  assert.strictEqual(chainId, '0x1', 'Should return hex chainId for mainnet');
+
   console.log('✅ WalletConnector QR code generation tests passed!');
 }
 
@@ -521,6 +846,7 @@ async function testCliHelpExecution() {
     assert.ok(generalHelpOutput.includes('available commands'), 'General help should contain commands section');
     assert.ok(generalHelpOutput.includes('rollover'), 'General help should list rollover');
     assert.ok(generalHelpOutput.includes('adjust-leverage'), 'General help should list adjust-leverage');
+    assert.ok(generalHelpOutput.includes('simulate-raw'), 'General help should list simulate-raw');
 
     // 2. Test Rollover Help
     logs = [];
@@ -529,6 +855,7 @@ async function testCliHelpExecution() {
     assert.ok(rolloverHelpOutput.includes('rollover command help'), 'Rollover help should contain title');
     assert.ok(rolloverHelpOutput.includes('--old-market-id'), 'Rollover help should document --old-market-id');
     assert.ok(rolloverHelpOutput.includes('--new-market-id'), 'Rollover help should document --new-market-id');
+    assert.ok(rolloverHelpOutput.includes('--cap-borrow'), 'Rollover help should document --cap-borrow');
 
     // 3. Test Leverage Help
     logs = [];
@@ -537,22 +864,72 @@ async function testCliHelpExecution() {
     assert.ok(leverageHelpOutput.includes('adjust-leverage command help'), 'Leverage help should contain title');
     assert.ok(leverageHelpOutput.includes('--market-id'), 'Leverage help should document --market-id');
     assert.ok(leverageHelpOutput.includes('--target-leverage'), 'Leverage help should document --target-leverage');
+
+    // 4. Test Simulate-Raw Help
+    logs = [];
+    await runner.run(['node', 'cli.js', 'simulate-raw', '--help']);
+    const rawHelpOutput = logs.join('\n').toLowerCase();
+    assert.ok(rawHelpOutput.includes('simulate-raw command help'), 'Simulate-raw help should contain title');
+    assert.ok(rawHelpOutput.includes('--file'), 'Simulate-raw help should document --file');
   } finally {
     console.log = originalLog;
   }
   console.log('✅ CliRunner help printing execution tests passed!');
 }
 
+async function testCliRunnerSignerMismatchValidation() {
+  console.log('Testing CliRunner signer mismatch validation...');
+  const { CliRunner } = await import('../cli/cli-runner.js');
+  const runner = new CliRunner();
+
+  const originalExit = process.exit;
+  const originalError = console.error;
+  
+  let exitCode = null;
+  let errorMsg = '';
+  
+  process.exit = (code) => {
+    exitCode = code;
+  };
+  console.error = (...args) => {
+    errorMsg += args.join(' ');
+  };
+
+  try {
+    await runner.run([
+      'node', 'cli.js', 'rollover',
+      '--old-market-id', '0x123',
+      '--new-market-id', '0x456',
+      '--user', '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a',
+      '--rpc', 'https://eth-mainnet.g.alchemy.com/v2/test',
+      '--private-key', '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
+    ]);
+    
+    assert.strictEqual(exitCode, 1, 'Process should exit with code 1 on mismatch error');
+    assert.ok(errorMsg.includes('does not match specified position user address'), 'Should log mismatch validation message');
+  } finally {
+    process.exit = originalExit;
+    console.error = originalError;
+  }
+
+  console.log('✅ CliRunner signer mismatch validation test passed!');
+}
+
+
 async function runAllTests() {
   try {
     await testImports();
     await testCliRunnerArgParsingOptions();
+    await testCliRunnerSignerMismatchValidation();
     await testCliHelpExecution();
     await testCliRunnerEnvAndRpcFallback();
     await testFormattingAndResolver();
+    await testBlockchainClientAllowanceAndApprove();
+    await testCliRunnerAllowanceCheckAndApproval();
     await testWalletConnectorQrCodeGeneration();
     await testRolloverCommandMock();
     await testLeverageCommandMock();
+    await testSimulateRawCommandMock();
     await testCliShellExecutionSimulation();
     await runLiveForkSimulationTests();
     console.log('\n🎉 All CLI tests completed successfully!');

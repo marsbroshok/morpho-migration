@@ -1,37 +1,16 @@
 import { getAddress, encodeFunctionData, encodeAbiParameters, keccak256 } from 'viem';
 import { calculateCollateralValue, calculateLtv, calculateLeverage } from '../math.js';
 import { formatMarketLabel } from '../labels.js';
-import { ERC20_ABI, ADAPTER_ABI } from '../builders.js';
+import { ERC20_ABI, ADAPTER_ABI, BUNDLER_ABI, buildRolloverBundle, findCurvePoolAndIndices, findUniswapV3Pool } from '../builders.js';
 
 const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
 const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
-
-const BUNDLER_ABI = [
-  {
-    "inputs": [
-      {
-        "components": [
-          { "name": "to", "type": "address" },
-          { "name": "data", "type": "bytes" },
-          { "name": "value", "type": "uint256" },
-          { "name": "skipRevert", "type": "bool" },
-          { "name": "callbackHash", "type": "bytes32" }
-        ],
-        "name": "bundle",
-        "type": "tuple[]"
-      }
-    ],
-    "name": "multicall",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  }
-];
+const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
 
 export class RolloverCommand {
   /**
    * @param {BlockchainClient} blockchainClient 
-   * @param {PendleRouterClient} routerClient 
+   * @param {SwapRouterClient} routerClient 
    * @param {SimulationEngine} simulationEngine 
    * @param {TransactionAuditor} auditor 
    */
@@ -42,31 +21,41 @@ export class RolloverCommand {
     this.auditor = auditor;
   }
 
+  async findCurvePoolAndIndices(fromToken, toToken, amount) {
+    return findCurvePoolAndIndices(this.blockchainClient.publicClient, fromToken, toToken, amount, getAddress);
+  }
+
+  async findUniswapV3Pool(tokenAddress) {
+    return findUniswapV3Pool(this.blockchainClient.publicClient, tokenAddress, getAddress);
+  }
+
+
   /**
    * Phase 1: Fetch details and assess user position.
    */
   async assessPosition(options) {
     const userAddress = getAddress(options.user);
-    const oldMarketId = options.oldMarketId;
-    const newMarketId = options.newMarketId;
-    const usdcAddress = getAddress(options.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-    const slippage = options.slippage;
+    const sourceMarketId = options.oldMarketId;
+    const destMarketId = options.newMarketId;
 
     // Fetch Market Params
-    const oldMarketParams = await this.blockchainClient.fetchMarketParams(oldMarketId);
-    const newMarketParams = await this.blockchainClient.fetchMarketParams(newMarketId);
+    const sourceMarketParams = await this.blockchainClient.fetchMarketParams(sourceMarketId);
+    const destMarketParams = await this.blockchainClient.fetchMarketParams(destMarketId);
 
-    const oldPtAddress = getAddress(options.oldPt || oldMarketParams.collateralToken);
-    const newPtAddress = getAddress(options.newPt || newMarketParams.collateralToken);
+    const sourceLoanAddress = getAddress(options.usdc || sourceMarketParams.loanToken || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const destLoanAddress = getAddress(options.newLoan || destMarketParams.loanToken || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+
+    const sourceCollateralAddress = getAddress(options.oldPt || sourceMarketParams.collateralToken);
+    const destCollateralAddress = getAddress(options.newPt || destMarketParams.collateralToken);
 
     // Fetch User position on source market
-    const position = await this.blockchainClient.fetchMorphoPosition(oldMarketId, userAddress);
+    const position = await this.blockchainClient.fetchMorphoPosition(sourceMarketId, userAddress);
     const liveCollateral = position.collateral;
     const liveDebt = position.debt;
     const liveBorrowShares = position.borrowShares;
 
     if (liveCollateral === 0n) {
-      throw new Error(`User does not have an active collateral position in market ${oldMarketId}`);
+      throw new Error(`User does not have an active collateral position in market ${sourceMarketId}`);
     }
 
     const isFull = (options.type === 'full');
@@ -77,41 +66,43 @@ export class RolloverCommand {
       if (!options.debt) {
         throw new Error('Debt amount is required for partial rollover');
       }
-      debtAmount = BigInt(Math.floor(options.debt * 1e6));
+      debtAmount = BigInt(Math.floor(options.debt * 10 ** sourceMarketParams.loanDecimals));
       if (debtAmount > liveDebt) {
-        throw new Error(`Requested debt amount ${options.debt} USDC exceeds user debt of ${Number(liveDebt)/1e6} USDC`);
+        const formattedLiveDebt = Number(liveDebt) / (10 ** sourceMarketParams.loanDecimals);
+        throw new Error(`Requested debt amount ${options.debt} ${sourceMarketParams.loanSymbol} exceeds user debt of ${formattedLiveDebt.toFixed(2)} ${sourceMarketParams.loanSymbol}`);
       }
       // Calculate proportional collateral withdrawn
       collateralAmount = (liveCollateral * debtAmount) / liveDebt;
     }
 
-    const oldCollateralSymbol = options.oldCollateralSymbol || "PT-old";
-    const oldLoanSymbol = options.oldLoanSymbol || "USDC";
-    const newCollateralSymbol = options.newCollateralSymbol || "PT-new";
-    const newLoanSymbol = options.newLoanSymbol || "USDC";
-    const maturity = await this.blockchainClient.checkPtMaturity(oldPtAddress);
+    const sourceCollateralSymbol = options.oldCollateralSymbol || sourceMarketParams.collateralSymbol || "PT-old";
+    const sourceLoanSymbol = options.oldLoanSymbol || sourceMarketParams.loanSymbol || "USDC";
+    const destCollateralSymbol = options.newCollateralSymbol || destMarketParams.collateralSymbol || "PT-new";
+    const destLoanSymbol = options.newLoanSymbol || destMarketParams.loanSymbol || "USDC";
+    const maturity = await this.blockchainClient.checkCollateralMaturity(sourceCollateralAddress);
 
     return {
       userAddress,
-      oldMarketId,
-      newMarketId,
-      usdcAddress,
-      slippage,
-      oldMarketParams,
-      newMarketParams,
-      oldPtAddress,
-      newPtAddress,
+      sourceMarketId,
+      destMarketId,
+      sourceLoanAddress,
+      destLoanAddress,
+      slippage: options.slippage,
+      sourceMarketParams,
+      destMarketParams,
+      sourceCollateralAddress,
+      destCollateralAddress,
       oldMarket: {
-        collateralToken: oldMarketParams.collateralToken,
-        collateralSymbol: oldCollateralSymbol,
-        loanToken: oldMarketParams.loanToken,
-        loanSymbol: oldLoanSymbol
+        collateralToken: sourceMarketParams.collateralToken,
+        collateralSymbol: sourceCollateralSymbol,
+        loanToken: sourceMarketParams.loanToken,
+        loanSymbol: sourceLoanSymbol
       },
       newMarket: {
-        collateralToken: newMarketParams.collateralToken,
-        collateralSymbol: newCollateralSymbol,
-        loanToken: newMarketParams.loanToken,
-        loanSymbol: newLoanSymbol
+        collateralToken: destMarketParams.collateralToken,
+        collateralSymbol: destCollateralSymbol,
+        loanToken: destMarketParams.loanToken,
+        loanSymbol: destLoanSymbol
       },
       maturity,
       position: {
@@ -126,36 +117,131 @@ export class RolloverCommand {
   }
 
   /**
-   * Phase 2: Fetch swap route quote from Pendle API.
+   * Phase 2: Fetch swap route quote from Swap Router API.
    */
   async fetchSwapRoute(assessment, options) {
+    const isSameCollateral = (assessment.sourceCollateralAddress === assessment.destCollateralAddress);
+    const isSameLoan = (assessment.sourceLoanAddress.toLowerCase() === assessment.destLoanAddress.toLowerCase());
     const slippageFrac = assessment.slippage / 100;
-    const routeData = await this.routerClient.fetchPendleRoute(
-      assessment.oldPtAddress,
-      assessment.collateralAmount,
-      assessment.newPtAddress,
-      slippageFrac
-    );
-    const expectedNewCollateral = BigInt(routeData.outputs[0].amount);
+
+    let routeData = null;
+    let expectedNewCollateral = assessment.collateralAmount;
+
+    if (!isSameCollateral) {
+       routeData = await this.routerClient.fetchSwapRoute(
+         assessment.sourceCollateralAddress,
+         assessment.collateralAmount,
+         assessment.destCollateralAddress,
+         slippageFrac,
+         ETHER_GENERAL_ADAPTER_1,
+         MORPHO_BUNDLER_V3
+       );
+      expectedNewCollateral = BigInt(routeData.outputs[0].amount);
+    }
 
     const [oldOraclePrice, newOraclePrice] = await Promise.all([
       this.blockchainClient.publicClient.readContract({
-        address: assessment.oldMarketParams.oracle,
+        address: assessment.sourceMarketParams.oracle,
         abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
         functionName: 'price'
       }),
       this.blockchainClient.publicClient.readContract({
-        address: assessment.newMarketParams.oracle,
+        address: assessment.destMarketParams.oracle,
         abi: [{"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
         functionName: 'price'
       })
     ]);
 
-    const oracleRatio = (oldOraclePrice * 10n ** 18n) / newOraclePrice;
-    const quotedRate = (expectedNewCollateral * 10n ** 18n) / assessment.collateralAmount;
-    const slippagePct = oracleRatio > 0n ? Number((oracleRatio - quotedRate) * 10000n / oracleRatio) / 100 : 0.0;
+    const oldScale = 36n + BigInt(assessment.sourceMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.collateralDecimals);
+    const newScale = 36n + BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.destMarketParams.collateralDecimals);
+
+    const oldOracleUSD = (oldOraclePrice * 10n ** 18n) / 10n ** oldScale;
+    const newOracleUSD = (newOraclePrice * 10n ** 18n) / 10n ** newScale;
+
+    let oracleRatio;
+    let quotedRate;
+    let slippagePct = 0.0;
+
+    if (isSameCollateral) {
+      oracleRatio = 10n ** 18n;
+      quotedRate = 10n ** 18n;
+      slippagePct = 0.0;
+    } else {
+      oracleRatio = (oldOracleUSD * 10n ** 18n) / newOracleUSD;
+      quotedRate = (expectedNewCollateral * 10n ** 18n) / assessment.collateralAmount;
+      slippagePct = oracleRatio > 0n ? Number((oracleRatio - quotedRate) * 10000n / oracleRatio) / 100 : 0.0;
+    }
+
+    // Handle cross-loan-asset routing
+    let loanRouteData = null;
+    let loanExpectedInput = 0n;
+    let loanExpectedOutput = 0n;
+    let loanOracleRate = 0n;
+    let loanSlippagePct = 0.0;
+
+    if (!isSameLoan) {
+      const exp = 18n + BigInt(newScale) - BigInt(oldScale);
+      loanOracleRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
+
+      // Estimate target borrow (which is in loanDecimals of the new market)
+      const decDiff = BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
+      const estimatedInput = (assessment.debtAmount * 10n ** 18n * 10n ** decDiff) / loanOracleRate;
+      
+      const slippageBuffer = BigInt(Math.max(50, Math.ceil(assessment.slippage * 100)));
+      loanExpectedInput = (estimatedInput * (10000n + slippageBuffer)) / 10000n;
+
+      // Validate/cap borrow amount based on Target Market LLTV safety threshold
+      const targetLltv = assessment.destMarketParams.lltv;
+      const safeLtv = targetLltv - 5000000000000000n; // 0.5% safety margin
+      const newCollateralValue = calculateCollateralValue(expectedNewCollateral, newOraclePrice);
+      const maxSafeBorrowAmount = (newCollateralValue * safeLtv) / 10n ** 18n;
+
+      if (loanExpectedInput > maxSafeBorrowAmount) {
+        if (options.capBorrow) {
+          console.warn(`\n⚠️  Warning: Projected borrow amount exceeds Target Market LLTV limit. Capping borrow amount at safe threshold (${(Number(safeLtv) / 1e16).toFixed(2)}% LTV) to prevent reversion. Shortfall will be funded by user wallet.`);
+          loanExpectedInput = maxSafeBorrowAmount;
+        } else {
+          const projectedLtv = calculateLtv(loanExpectedInput, newCollateralValue);
+          throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain. Try again with --cap-borrow flag to automatically cap target leverage.`);
+        }
+      }
+
+      // Try to find a direct Curve pool for dynamic exchange
+      const curvePool = await this.findCurvePoolAndIndices(
+        assessment.destLoanAddress,
+        assessment.sourceLoanAddress,
+        loanExpectedInput
+      );
+
+      if (curvePool) {
+        loanRouteData = {
+          isCurveDirect: true,
+          poolAddress: curvePool.poolAddress,
+          i: curvePool.i,
+          j: curvePool.j,
+          indexType: curvePool.indexType
+        };
+        loanExpectedOutput = curvePool.expectedOutput;
+      } else {
+        // Fetch route for swapping the borrowed new loan asset back to the old loan asset
+        loanRouteData = await this.routerClient.fetchSwapRoute(
+          assessment.destLoanAddress,
+          loanExpectedInput,
+          assessment.sourceLoanAddress,
+          slippageFrac,
+          MORPHO_BUNDLER_V3,
+          MORPHO_BUNDLER_V3
+        );
+        loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
+      }
+
+      const loanQuotedRate = (loanExpectedOutput * 10n ** (18n + decDiff)) / loanExpectedInput;
+      loanSlippagePct = loanOracleRate > 0n ? Number((loanOracleRate - loanQuotedRate) * 10000n / loanOracleRate) / 100 : 0.0;
+    }
 
     return {
+      isSameCollateral,
+      isSameLoan,
       routeData,
       expectedNewCollateral,
       oldOraclePrice,
@@ -166,7 +252,12 @@ export class RolloverCommand {
       expectedRate: Number(quotedRate) / 1e18,
       oracleRate: Number(oracleRatio) / 1e18,
       priceImpact: slippagePct,
-      expectedOutput: expectedNewCollateral
+      expectedOutput: expectedNewCollateral,
+      loanRouteData,
+      loanExpectedInput,
+      loanExpectedOutput,
+      loanOracleRate,
+      loanPriceImpact: loanSlippagePct
     };
   }
 
@@ -175,147 +266,88 @@ export class RolloverCommand {
    */
   async compileCalldata(assessment, swap, options) {
     const isFull = (assessment.type === 'full');
-    const bufferAmount = assessment.debtAmount > 100n * 10n ** 6n ? 2n * 10n ** 6n : (assessment.debtAmount * 2n / 1000n);
-    const flashLoanAmount = isFull ? (assessment.debtAmount + bufferAmount) : assessment.debtAmount;
-    const repayAmount = isFull ? 0n : assessment.debtAmount;
-    const repayShares = isFull ? assessment.position.borrowShares : 0n;
-    const supplyAmount = 2n ** 256n - 1n; // Auto supply full balance
-    const borrowAmount = flashLoanAmount;
-
+    
+    // Calculate safe borrow threshold
+    const targetLltv = assessment.destMarketParams.lltv;
+    const safeLtv = targetLltv - 5000000000000000n; // 0.5% safety margin
     const newCollateralValue = calculateCollateralValue(swap.expectedNewCollateral, swap.newOraclePrice);
+    const maxSafeBorrowAmount = (newCollateralValue * safeLtv) / 10n ** 18n;
+
+    // Call the shared buildRolloverBundle
+    const bundleResult = buildRolloverBundle({
+      encodeFunctionData,
+      encodeAbiParameters,
+      keccak256,
+      sourceMarketParams: assessment.sourceMarketParams,
+      destMarketParams: assessment.destMarketParams,
+      collateralAmount: assessment.collateralAmount,
+      debtAmount: assessment.debtAmount,
+      isFull,
+      sourceCollateralAddress: assessment.sourceCollateralAddress,
+      destCollateralAddress: assessment.destCollateralAddress,
+      routeData: swap.routeData,
+      userAddress: assessment.userAddress,
+      ETHER_GENERAL_ADAPTER_1,
+      MORPHO_BUNDLER_V3,
+      isSameCollateral: swap.isSameCollateral,
+      isSameLoan: swap.isSameLoan,
+      loanRouteData: swap.loanRouteData,
+      loanExpectedInput: swap.loanExpectedInput,
+      loanExpectedOutput: swap.loanExpectedOutput,
+      slippage: assessment.slippage,
+      borrowShares: assessment.position.borrowShares,
+      maxSafeBorrowAmount,
+      capBorrow: options.capBorrow
+    });
+
+    const borrowAmount = bundleResult.borrowAmount;
+    const flashLoanAmount = bundleResult.flashLoanAmount;
+    const finalCalldata = bundleResult.finalCalldata;
+
     const newLtv = calculateLtv(borrowAmount, newCollateralValue);
     const newLeverage = calculateLeverage(newCollateralValue, borrowAmount);
 
-    const reenterBundle = [];
+    const oldLoanDec = 10 ** assessment.sourceMarketParams.loanDecimals;
+    const oldCollDec = 10 ** assessment.sourceMarketParams.collateralDecimals;
+    const newLoanDec = 10 ** assessment.destMarketParams.loanDecimals;
+    const newCollDec = 10 ** assessment.destMarketParams.collateralDecimals;
 
-    // Call A: Repay debt
-    reenterBundle.push({
-      to: ETHER_GENERAL_ADAPTER_1,
-      data: encodeFunctionData({
-        abi: ADAPTER_ABI,
-        functionName: 'morphoRepay',
-        args: [assessment.oldMarketParams, repayAmount, repayShares, 2n ** 256n - 1n, assessment.userAddress, '0x']
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // Call B: Withdraw collateral
-    reenterBundle.push({
-      to: ETHER_GENERAL_ADAPTER_1,
-      data: encodeFunctionData({
-        abi: ADAPTER_ABI,
-        functionName: 'morphoWithdrawCollateral',
-        args: [assessment.oldMarketParams, assessment.collateralAmount, MORPHO_BUNDLER_V3]
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // Call C: Approve Pendle
-    reenterBundle.push({
-      to: assessment.oldPtAddress,
-      data: encodeFunctionData({
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [swap.routeData.tx.to, assessment.collateralAmount]
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // Call D: Swap Pendle
-    reenterBundle.push({
-      to: swap.routeData.tx.to,
-      data: swap.routeData.tx.data,
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // Call E: Supply collateral
-    reenterBundle.push({
-      to: ETHER_GENERAL_ADAPTER_1,
-      data: encodeFunctionData({
-        abi: ADAPTER_ABI,
-        functionName: 'morphoSupplyCollateral',
-        args: [assessment.newMarketParams, supplyAmount, assessment.userAddress, '0x']
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // Call F: Borrow back
-    reenterBundle.push({
-      to: ETHER_GENERAL_ADAPTER_1,
-      data: encodeFunctionData({
-        abi: ADAPTER_ABI,
-        functionName: 'morphoBorrow',
-        args: [assessment.newMarketParams, borrowAmount, 0n, 0n, ETHER_GENERAL_ADAPTER_1]
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-
-    // Encode Callback Bundle
-    const encodedReenterBundle = encodeAbiParameters(
-      [
-        {
-          name: 'bundle',
-          type: 'tuple[]',
-          components: [
-            { name: 'to', type: 'address' },
-            { name: 'data', type: 'bytes' },
-            { name: 'value', type: 'uint256' },
-            { name: 'skipRevert', type: 'bool' },
-            { name: 'callbackHash', type: 'bytes32' }
-          ]
-        }
-      ],
-      [reenterBundle]
-    );
-
-    const callbackHash = keccak256(encodedReenterBundle);
-
-    // Outer Bundle
-    const outerBundle = [
-      {
-        to: ETHER_GENERAL_ADAPTER_1,
-        data: encodeFunctionData({
-          abi: ADAPTER_ABI,
-          functionName: 'morphoFlashLoan',
-          args: [assessment.usdcAddress, flashLoanAmount, encodedReenterBundle]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: callbackHash
-      }
+    const steps = [
+      `Flashloan: Borrow ${Number(flashLoanAmount)/oldLoanDec} ${assessment.oldMarket.loanSymbol} from Adapter`,
+      `Repay Debt: Repay ${Number(bundleResult.repayAmount)/oldLoanDec} ${assessment.oldMarket.loanSymbol} on old market`,
+      `Withdraw: Withdraw ${Number(assessment.collateralAmount)/oldCollDec} ${assessment.oldMarket.collateralSymbol} from old market`
     ];
 
-    if (isFull) {
-      outerBundle.push({
-        to: ETHER_GENERAL_ADAPTER_1,
-        data: encodeFunctionData({
-          abi: ADAPTER_ABI,
-          functionName: 'erc20Transfer',
-          args: [assessment.usdcAddress, assessment.userAddress, 2n ** 256n - 1n]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
+    if (!swap.isSameCollateral) {
+      steps.push(`Approve: Approve Swap Router for ${Number(assessment.collateralAmount)/oldCollDec} ${assessment.oldMarket.collateralSymbol}`);
+      steps.push(`Swap: Swap ${assessment.oldMarket.collateralSymbol} for ${Number(swap.expectedNewCollateral)/newCollDec} ${assessment.newMarket.collateralSymbol}`);
     }
 
-    const finalCalldata = encodeFunctionData({
-      abi: BUNDLER_ABI,
-      functionName: 'multicall',
-      args: [outerBundle]
-    });
+    steps.push(`Supply: Supply ${assessment.newMarket.collateralSymbol} to new market`);
+    steps.push(`Borrow: Borrow ${Number(borrowAmount)/newLoanDec} ${assessment.newMarket.loanSymbol} from new market`);
+
+    if (!swap.isSameLoan) {
+      if (swap.loanRouteData?.isCurveDirect) {
+        steps.push(`Approve Curve Swap: Approve Curve Pool for ${Number(swap.loanExpectedInput)/newLoanDec} ${assessment.newMarket.loanSymbol}`);
+        steps.push(`Swap Loan Asset: Swap ${assessment.newMarket.loanSymbol} for USDC on Curve Pool`);
+      } else {
+        steps.push(`Approve Loan Swap: Approve Router for ${Number(swap.loanExpectedInput)/newLoanDec} ${assessment.newMarket.loanSymbol}`);
+        steps.push(`Swap Loan Asset: Swap ${assessment.newMarket.loanSymbol} for ${Number(swap.loanExpectedOutput)/oldLoanDec} ${assessment.oldMarket.loanSymbol}`);
+      }
+    }
+
+    let loanFairMarketValue = 0n;
+    let loanFairValueLoss = 0n;
+    let loanWalletShortfall = 0n;
+
+    if (!swap.isSameLoan) {
+      const exp = 18n + BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
+      loanFairMarketValue = (swap.loanExpectedInput * swap.loanOracleRate) / 10n ** exp;
+      loanFairValueLoss = loanFairMarketValue - swap.loanExpectedOutput;
+      loanWalletShortfall = flashLoanAmount - swap.loanExpectedOutput;
+    } else {
+      loanWalletShortfall = flashLoanAmount - borrowAmount;
+    }
 
     return {
       ...assessment,
@@ -323,28 +355,113 @@ export class RolloverCommand {
       simulatedNewDebt: borrowAmount,
       newLtv,
       newLeverage,
-      steps: [
-        `Flashloan: Borrow ${Number(flashLoanAmount)/1e6} USDC from Adapter`,
-        `Repay Debt: Repay ${Number(repayAmount)/1e6} USDC on old market`,
-        `Withdraw: Withdraw ${Number(assessment.collateralAmount)/1e18} PT-old from old market`,
-        `Approve: Approve Swap Router for ${Number(assessment.collateralAmount)/1e18} PT-old`,
-        `Swap: Swap PT-old for ${Number(swap.expectedNewCollateral)/1e18} PT-new`,
-        `Supply: Supply PT-new to new market`,
-        `Borrow: Borrow ${Number(borrowAmount)/1e6} USDC from new market`
-      ],
-      finalCalldata
+      steps,
+      finalCalldata,
+      flashLoanAmount,
+      loanFairMarketValue,
+      loanFairValueLoss,
+      loanWalletShortfall
     };
   }
 
-  /**
-   * Phase 4: Run transaction simulation on fork.
-   */
   async runSimulation(calldataResult, options) {
+    const prependCalls = [];
+
+    try {
+      const loanToken = calldataResult.sourceMarketParams.loanToken;
+      const loanDecimals = calldataResult.sourceMarketParams.loanDecimals;
+      
+      const poolWhale = await this.findUniswapV3Pool(loanToken);
+      if (poolWhale) {
+        prependCalls.push({
+          from: poolWhale,
+          to: loanToken,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: [{
+              "inputs": [
+                { "name": "recipient", "type": "address" },
+                { "name": "amount", "type": "uint256" }
+              ],
+              "name": "transfer",
+              "outputs": [{ "name": "", "type": "bool" }],
+              "stateMutability": "nonpayable",
+              "type": "function"
+            }],
+            functionName: 'transfer',
+            args: [ETHER_GENERAL_ADAPTER_1, 1000n * 10n ** BigInt(loanDecimals)]
+          })
+        });
+      }
+
+      // Fetch target market position of user and pre-repay existing target market debt to prevent target LTV reverts
+      const destLoanToken = calldataResult.destMarketParams.loanToken;
+      const destLoanDecimals = calldataResult.destMarketParams.loanDecimals;
+      
+      const targetPosition = await this.blockchainClient.fetchMorphoPosition(calldataResult.destMarketId, calldataResult.userAddress);
+      if (targetPosition.debt > 0n) {
+        const targetRepayWhale = await this.findUniswapV3Pool(destLoanToken);
+        if (targetRepayWhale) {
+          prependCalls.push({
+            from: targetRepayWhale,
+            to: destLoanToken,
+            value: '0x0',
+            data: encodeFunctionData({
+              abi: ERC20_ABI,
+              functionName: 'approve',
+              args: [MORPHO_BLUE, targetPosition.debt]
+            })
+          });
+
+          prependCalls.push({
+            from: targetRepayWhale,
+            to: MORPHO_BLUE,
+            value: '0x0',
+            data: encodeFunctionData({
+              abi: [
+                {
+                  "inputs": [
+                    {
+                      "components": [
+                        { "name": "loanToken", "type": "address" },
+                        { "name": "collateralToken", "type": "address" },
+                        { "name": "oracle", "type": "address" },
+                        { "name": "irm", "type": "address" },
+                        { "name": "lltv", "type": "uint256" }
+                      ],
+                      "name": "marketParams",
+                      "type": "tuple"
+                    },
+                    { "name": "assets", "type": "uint256" },
+                    { "name": "shares", "type": "uint256" },
+                    { "name": "onBehalf", "type": "address" },
+                    { "name": "data", "type": "bytes" }
+                  ],
+                  "name": "repay",
+                  "outputs": [
+                    { "name": "assetsRepaid", "type": "uint256" },
+                    { "name": "sharesRepaid", "type": "uint256" }
+                  ],
+                  "stateMutability": "nonpayable",
+                  "type": "function"
+                }
+              ],
+              functionName: 'repay',
+              args: [calldataResult.destMarketParams, targetPosition.debt, 0n, calldataResult.userAddress, '0x']
+            })
+          });
+        }
+      }
+    } catch (e) {
+      // Ignore funding error and attempt simulation anyway
+    }
+
     return this.simulationEngine.simulateTransaction(
       calldataResult.userAddress,
       MORPHO_BUNDLER_V3,
       calldataResult.finalCalldata,
-      0n
+      0n,
+      prependCalls
     );
   }
 
@@ -369,8 +486,12 @@ export class RolloverCommand {
         value: 0n
       });
       auditDetails = {
-        spentToken: assessment.oldPtAddress,
-        receivedToken: assessment.newPtAddress,
+        spentToken: assessment.sourceCollateralAddress,
+        receivedToken: assessment.destCollateralAddress,
+        spentDecimals: assessment.sourceMarketParams.collateralDecimals,
+        receivedDecimals: assessment.destMarketParams.collateralDecimals,
+        spentSymbol: assessment.oldMarket.collateralSymbol,
+        receivedSymbol: assessment.newMarket.collateralSymbol,
         oracleRate: swap.oracleRate,
         estimatedRate: swap.expectedRate,
         estimatedPriceImpact: swap.priceImpact

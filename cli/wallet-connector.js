@@ -84,6 +84,10 @@ export class WalletConnector {
           return accounts.map(acc => acc.split(':')[2]);
         }
 
+        if (requestObj.method === 'eth_chainId') {
+          return '0x1';
+        }
+
         // Forward arbitrary JSON-RPC calls via WalletConnect sign client request
         const accounts = self.session.namespaces.eip155.accounts;
         const fromAddress = accounts[0].split(':')[2];

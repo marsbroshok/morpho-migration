@@ -108,13 +108,13 @@ export class BlockchainClient {
     return { collateral, debt, borrowShares };
   }
 
-  async fetchMarketParams(marketId) {
+   async fetchMarketParams(marketId) {
     const query = `
       query GetMarket($id: String!) {
         markets(where: { uniqueKey_in: [$id] }) {
           items {
-            loanAsset { address symbol }
-            collateralAsset { address symbol }
+            loanAsset { address symbol decimals }
+            collateralAsset { address symbol decimals }
             oracleAddress
             irmAddress
             lltv
@@ -144,16 +144,26 @@ export class BlockchainClient {
       collateralToken: getAddress(market.collateralAsset.address),
       loanSymbol: market.loanAsset.symbol,
       collateralSymbol: market.collateralAsset.symbol,
+      loanDecimals: Number(market.loanAsset.decimals),
+      collateralDecimals: Number(market.collateralAsset.decimals),
       oracle: getAddress(market.oracleAddress),
       irm: getAddress(market.irmAddress),
       lltv: BigInt(market.lltv)
     };
   }
 
-  async checkPtMaturity(ptAddress) {
+  async fetchDecimals(tokenAddress) {
+    return await this.publicClient.readContract({
+      address: tokenAddress,
+      abi: [{"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"stateMutability":"view","type":"function"}],
+      functionName: 'decimals'
+    });
+  }
+
+  async checkCollateralMaturity(collateralAddress) {
     try {
       const expiry = await this.publicClient.readContract({
-        address: ptAddress,
+        address: collateralAddress,
         abi: [{"inputs":[],"name":"expiry","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
         functionName: 'expiry'
       });
@@ -165,6 +175,56 @@ export class BlockchainClient {
     } catch (err) {
       return { expiryDate: "Unknown", isExpired: false };
     }
+  }
+
+  /**
+   * Check allowance of a spender for a specific token and user.
+   */
+  async checkAllowance(tokenAddress, ownerAddress, spenderAddress) {
+    return await this.publicClient.readContract({
+      address: tokenAddress,
+      abi: [
+        {
+          "inputs": [
+            { "name": "owner", "type": "address" },
+            { "name": "spender", "type": "address" }
+          ],
+          "name": "allowance",
+          "outputs": [{ "name": "", "type": "uint256" }],
+          "stateMutability": "view",
+          "type": "function"
+        }
+      ],
+      functionName: 'allowance',
+      args: [ownerAddress, spenderAddress]
+    });
+  }
+
+  /**
+   * Execute ERC20 token approval.
+   */
+  async approveToken(tokenAddress, spenderAddress, amount) {
+    const { encodeFunctionData } = await import('viem');
+    const data = encodeFunctionData({
+      abi: [{
+        "inputs": [
+          { "name": "spender", "type": "address" },
+          { "name": "amount", "type": "uint256" }
+        ],
+        "name": "approve",
+        "outputs": [{ "name": "", "type": "bool" }],
+        "stateMutability": "nonpayable",
+        "type": "function"
+      }],
+      functionName: 'approve',
+      args: [spenderAddress, amount]
+    });
+
+    return await this.executeTransaction({
+      to: tokenAddress,
+      data,
+      value: 0n
+    });
   }
 
   async isAuthorized(userAddress, spenderAddress) {

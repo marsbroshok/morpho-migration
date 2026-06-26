@@ -42,7 +42,7 @@ export class AddressLabelResolver {
     // 2. Check current market params context
     if (marketParams) {
       if (marketParams.collateralToken && key === getAddress(marketParams.collateralToken).toLowerCase()) {
-        this.cache[key] = `Collateral PT (${marketParams.collateralSymbol})`;
+        this.cache[key] = `Collateral (${marketParams.collateralSymbol})`;
         return this.cache[key];
       }
       if (marketParams.loanToken && key === getAddress(marketParams.loanToken).toLowerCase()) {

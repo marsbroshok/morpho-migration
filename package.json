@@ -6,6 +6,7 @@
     "morpho-cli": "./cli.js"
   },
   "scripts": {
+    "dev": "node dev-server.js",
     "test": "npm test --prefix tests && node tests/cli.test.mjs"
   },
   "dependencies": {
