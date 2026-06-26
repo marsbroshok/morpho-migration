@@ -348,7 +348,13 @@ export class RolloverCommand {
       const exp = 18n + BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
       loanFairMarketValue = (swap.loanExpectedInput * swap.loanOracleRate) / 10n ** exp;
       loanFairValueLoss = loanFairMarketValue - swap.loanExpectedOutput;
-      loanWalletShortfall = flashLoanAmount - swap.loanExpectedOutput;
+      
+      if (swap.loanRouteData?.isCurveDirect) {
+        const minSwapOutput = (swap.loanExpectedOutput * BigInt(Math.floor((100 - assessment.slippage) * 100))) / 10000n;
+        loanWalletShortfall = flashLoanAmount - minSwapOutput;
+      } else {
+        loanWalletShortfall = flashLoanAmount - swap.loanExpectedOutput;
+      }
     } else {
       loanWalletShortfall = flashLoanAmount - borrowAmount;
     }

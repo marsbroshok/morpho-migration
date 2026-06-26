@@ -131,6 +131,13 @@ async function testCurveSuccess() {
 
   const stepsString = result.steps.join('\n').toLowerCase();
   assert.ok(stepsString.includes('curve'), 'Steps should mention Curve swap');
+
+  // Verify loanWalletShortfall is calculated using minSwapOutput (slippage haircut)
+  // Expected output is 96.493846 USDC (96493846 raw units)
+  // minSwapOutput is 96.493846 * 0.99 = 95.528907 USDC (95528907 raw units)
+  // flashLoanAmount is 100 USDC (100000000 raw units)
+  // loanWalletShortfall = 100000000 - 95528907 = 4471093 raw units
+  assert.strictEqual(result.loanWalletShortfall, 4471093n, 'Should compute shortfall based on minSwapOutput');
 }
 
 async function testLtvValidationFail() {

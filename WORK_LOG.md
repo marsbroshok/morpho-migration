@@ -2009,3 +2009,33 @@
   ```bash
   npm test --prefix tests
   ```
+
+---
+
+## 2026-06-26 - Fixed Rollover Shortfall Calculation & Approval Flow
+
+### Summary of Investigation & Fixes
+1. **The Bug:** Simulated rollovers using the CLI succeeded, but running the saved transaction payload or attempting live submission reverted with `transferFrom reverted` on USDC.
+2. **Analysis:**
+   - The CLI runner's simulation prepends helper calls (pre-funding and pre-approvals) to the trace, hiding shortfall and authorization issues.
+   - For Curve swaps, the bundle statically transfers only the minimum swap output (`minSwapOutput`) to the Adapter. Since `minSwapOutput` is lower than the flashloan amount due to the slippage haircut, the Adapter always pulls the remainder from the user's wallet.
+   - The CLI calculated `loanWalletShortfall` based on the *expected* output (which was higher than the flashloan amount, showing a surplus). As a result, it did not prompt the user for the necessary token approval, causing the transaction to revert on-chain.
+3. **Resolution:**
+   - Updated the `loanWalletShortfall` calculation in `cli/rollover-command.js` to use `minSwapOutput` for Curve direct swaps. This accurately calculates the actual out-of-pocket funding required and triggers the approval transaction.
+   - Verified that the updated shortfall matches the on-chain requirement and that the CLI properly handles the approvals.
+
+### Changes Applied
+* **File Updated:** `cli/rollover-command.js`
+  - Recalculated `loanWalletShortfall` using `minSwapOutput` for direct Curve swaps and `loanExpectedOutput` for other venues.
+* **File Updated:** `tests/rollover_curve.test.mjs`
+  - Added an integration test verifying that `loanWalletShortfall` is correctly computed based on `minSwapOutput`.
+
+### Verification Terminal Commands Run
+* Run Curve integration tests:
+  ```bash
+  node tests/rollover_curve.test.mjs
+  ```
+* Run main CLI tests:
+  ```bash
+  node tests/cli.test.mjs
+  ```
