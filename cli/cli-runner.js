@@ -128,21 +128,31 @@ export class CliRunner {
             const token = assessment.sourceMarketParams.loanToken;
             const owner = blockchainClient.userAddress || (await blockchainClient.walletClient.getAddresses())[0];
             const spender = ETHER_GENERAL_ADAPTER_1;
+            const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
             
-            const allowance = await blockchainClient.checkAllowance(token, owner, spender);
-            if (allowance < shortfall) {
-              const decimals = assessment.sourceMarketParams.loanDecimals;
-              const shortfallDisplay = Number(shortfall) / (10 ** decimals);
-              const allowanceDisplay = Number(allowance) / (10 ** decimals);
-              const symbol = assessment.oldMarket.loanSymbol;
-              
-              console.log(`\n⚠️  Allowance check: Spender General Adapter has insufficient allowance (${allowanceDisplay} ${symbol} approved vs ${shortfallDisplay} ${symbol} needed).`);
-              console.log(`Sending approval transaction for ${shortfallDisplay} ${symbol}...`);
-              const approveTxHash = await blockchainClient.approveToken(token, spender, shortfall);
-              console.log(`Approval transaction submitted: ${approveTxHash}`);
-              console.log(`Waiting for confirmation...`);
+            const decimals = assessment.sourceMarketParams.loanDecimals;
+            const shortfallDisplay = Number(shortfall) / (10 ** decimals);
+            const symbol = assessment.oldMarket.loanSymbol;
+
+            // 1. Check standard ERC20 allowance of the Permit2 contract
+            const erc20Allowance = await blockchainClient.checkAllowance(token, owner, PERMIT2_ADDRESS);
+            if (erc20Allowance < shortfall) {
+              console.log(`\n⚠️  USDC allowance for Permit2 is insufficient (Current: ${Number(erc20Allowance) / (10 ** decimals)} ${symbol}, Needed: ${shortfallDisplay} ${symbol}).`);
+              console.log(`🔑 Triggering standard ERC20 approval to Permit2 contract...`);
+              const approveTxHash = await blockchainClient.approveToken(token, PERMIT2_ADDRESS, 2n ** 256n - 1n);
+              console.log(`✅ Approved Permit2. Transaction Hash: ${approveTxHash}`);
+            }
+
+            // 2. Check Permit2 internal allowance for the Adapter
+            const permit2Allowance = await blockchainClient.checkPermit2Allowance(token, owner, spender);
+            if (permit2Allowance < shortfall) {
+              console.log(`\n⚠️  Permit2 allowance for Morpho General Adapter is insufficient (Current: ${Number(permit2Allowance) / (10 ** decimals)} ${symbol}, Needed: ${shortfallDisplay} ${symbol}).`);
+              console.log(`🔑 Triggering Permit2 approval to authorize the Adapter contract...`);
+              const approveTxHash = await blockchainClient.approvePermit2(token, spender, 2n ** 160n - 1n);
+              console.log(`✅ Authorized General Adapter inside Permit2. Transaction Hash: ${approveTxHash}`);
             }
           }
+
 
           commandResult.txHash = await blockchainClient.executeTransaction({
             to: MORPHO_BUNDLER_V3,

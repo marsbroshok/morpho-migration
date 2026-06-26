@@ -1,5 +1,32 @@
 # Project Work Log
 
+## 2026-06-26 - Resolved Missing Pre-Approval Prompt and Implemented Double-Layered Permit2 Checks (TDD)
+
+### Summary of Investigation
+1. **The Goal:** Investigate why the user did not receive a pre-approval prompt when executing a live rollover with their real wallet (`-w` flag instead of `--simulation`), leading to an on-chain transaction failure with `ERC20: transfer amount exceeds balance` on USDC.
+2. **Strategy & Implementation:**
+   - **Root Cause Identified:** The Morpho Blue General Adapter contract pulls the USDC shortfall from the user's wallet via the **Permit2** contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`). The CLI previously only checked and approved standard ERC20 token allowance directly to the Adapter. Since the user's standard ERC20 allowance to the Adapter was `4.86 USDC` (which exceeded the required shortfall of `0.44 USDC`), the CLI incorrectly skipped the approval prompt. However, because the user had `0 USDC` allowance granted to the Adapter *inside* the Permit2 contract, the Permit2 pull failed on-chain, causing the transaction to revert.
+   - **Double-Layered Permit2 Check:** Added support for Permit2 checks in the CLI runner. The CLI now performs a double-layered check:
+     1. Checks the user's standard ERC20 allowance of the Permit2 contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`). If it is less than the shortfall, it prompts and submits a standard ERC20 approval to the Permit2 contract.
+     2. Checks the user's internal Permit2 allowance of the Adapter contract (`0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0`). If it is less than the shortfall, it prompts and submits a Permit2 approval to authorize the Adapter contract.
+   - **Blockchain Client Updates:** Added `checkPermit2Allowance(tokenAddress, ownerAddress, spenderAddress)` and `approvePermit2(tokenAddress, spenderAddress, amount)` helper methods inside `cli/blockchain-client.js`.
+   - **Test Suite Alignment:** Updated the mocked `readContract` calls in `tests/cli.test.mjs` to return proper array tuples when called on the Permit2 address, resolving destructured argument errors.
+3. **Verification:**
+   - Run the entire test suite `npm test` successfully (all unit, integration, and UI component tests pass 100%).
+
+### Changes Applied
+* **File Modified:** [cli/blockchain-client.js](file://cli/blockchain-client.js) (added `checkPermit2Allowance` and `approvePermit2` helpers).
+* **File Modified:** [cli/cli-runner.js](file://cli/cli-runner.js) (integrated double-layered Permit2 checks and approvals).
+* **File Modified:** [tests/cli.test.mjs](file://tests/cli.test.mjs) (aligned mocked readContract handlers for Permit2 allowance calls).
+
+### Verification Terminal Commands Run
+* Run full project test suite:
+  ```bash
+  npm test
+  ```
+
+---
+
 ## 2026-06-26 - Implemented Simulation Payload Export & Enhanced Fork Simulation Robustness (TDD)
 
 ### Summary of Investigation

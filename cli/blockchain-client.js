@@ -242,6 +242,78 @@ export class BlockchainClient {
     });
   }
 
+  /**
+   * Check internal Permit2 allowance of a spender for a specific token and user.
+   */
+  async checkPermit2Allowance(tokenAddress, ownerAddress, spenderAddress) {
+    const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+    const [amount, expiration, nonce] = await this.publicClient.readContract({
+      address: PERMIT2_ADDRESS,
+      abi: [
+        {
+          "inputs": [
+            { "name": "owner", "type": "address" },
+            { "name": "token", "type": "address" },
+            { "name": "spender", "type": "address" }
+          ],
+          "name": "allowance",
+          "outputs": [
+            { "name": "amount", "type": "uint160" },
+            { "name": "expiration", "type": "uint48" },
+            { "name": "nonce", "type": "uint48" }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        }
+      ],
+      functionName: 'allowance',
+      args: [ownerAddress, tokenAddress, spenderAddress],
+      blockNumber: this.getBlockNumber()
+    });
+
+    // Check if the allowance has expired
+    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+    if (expiration <= currentTimestamp) {
+      return 0n;
+    }
+    return amount;
+  }
+
+  /**
+   * Execute Permit2 token approval.
+   */
+  async approvePermit2(tokenAddress, spenderAddress, amount) {
+    const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+    const { encodeFunctionData } = await import('viem');
+    
+    // Default expiration to max uint48 (approx 8900 years)
+    const maxExpiration = 281474976710655n; 
+    
+    const data = encodeFunctionData({
+      abi: [{
+        "inputs": [
+          { "name": "token", "type": "address" },
+          { "name": "spender", "type": "address" },
+          { "name": "amount", "type": "uint160" },
+          { "name": "expiration", "type": "uint48" }
+        ],
+        "name": "approve",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+      }],
+      functionName: 'approve',
+      args: [tokenAddress, spenderAddress, amount, maxExpiration]
+    });
+
+    return await this.executeTransaction({
+      to: PERMIT2_ADDRESS,
+      data,
+      value: 0n
+    });
+  }
+
+
   async isAuthorized(userAddress, spenderAddress) {
     return await this.publicClient.readContract({
       address: MORPHO_BLUE,

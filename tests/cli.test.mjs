@@ -495,10 +495,15 @@ async function testBlockchainClientAllowanceAndApprove() {
     readContract: async (args) => {
       readContractCalls.push(args);
       if (args.functionName === 'allowance') {
+        const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+        if (args.address.toLowerCase() === PERMIT2_ADDRESS.toLowerCase()) {
+          return [5000000n, 9999999999n, 0n];
+        }
         return 5000000n; // 5 USDC
       }
       return 0n;
     }
+
   };
 
   const client = new BlockchainClient('http://mock-rpc-url', '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
@@ -549,10 +554,17 @@ async function testCliRunnerAllowanceCheckAndApproval() {
     set(val) {
       this._mockPublicClient = {
         readContract: async ({ address, functionName, args }) => {
+
           const addr = getAddress(address);
-          let res = 0n;
+          const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
           
+          if (addr === getAddress(PERMIT2_ADDRESS) && functionName === 'allowance') {
+            return [0n, 0n, 0n]; // return empty Permit2 allowance tuple
+          }
+          
+          let res = 0n;
           if (addr === getAddress('0x0000000022D53366457F9d5E68Ec105046FC4383') && functionName === 'get_address') {
+
             res = '0xF98B45FA17DE75FB1aD0e7aFD971b0ca00e379fC';
           } else if (addr === getAddress('0xF98B45FA17DE75FB1aD0e7aFD971b0ca00e379fC') && functionName === 'find_pool_for_coins') {
             res = args[2] === 0n ? '0xE1B96555BbecA40E583BbB41a11C68Ca4706A414' : '0x0000000000000000000000000000000000000000';
