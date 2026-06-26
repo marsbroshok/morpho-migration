@@ -87,7 +87,7 @@ export class SimulationEngine {
             }
           ]
         },
-        "latest"
+        process.env.FORK_BLOCK_NUMBER ? (process.env.FORK_BLOCK_NUMBER.startsWith('0x') ? process.env.FORK_BLOCK_NUMBER : `0x${BigInt(process.env.FORK_BLOCK_NUMBER).toString(16)}`) : "latest"
       ]
     };
 
@@ -104,6 +104,9 @@ export class SimulationEngine {
 
     const results = data.result[0].calls;
     const mainCallResult = results[results.length - 1];
+    if (mainCallResult.status !== '0x1') {
+      console.error("DEBUG SIMULATION FAILED. Full Alchemy response:", JSON.stringify(data, null, 2));
+    }
     mainCallResult.to = toAddress;
 
     const logs = this.collectAllLogs(mainCallResult);

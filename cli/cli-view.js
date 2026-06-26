@@ -390,12 +390,8 @@ export class CliView {
       CliFormatter.printSubHeader('Additional Options');
       CliFormatter.printItem('--type <full|partial>', 'Migration type: \'full\' or \'partial\' (default: full).');
       CliFormatter.printItem('--debt <amount>', 'Debt amount to repay (Required if type is \'partial\').');
-      CliFormatter.printItem('--old-collateral <address>', 'Source Collateral address (fetched dynamically; alias: --old-pt).');
-      CliFormatter.printItem('--new-collateral <address>', 'Destination Collateral address (fetched dynamically; alias: --new-pt).');
       CliFormatter.printItem('--slippage <pct>', 'Slippage limit percentage (default: 1.0).');
       CliFormatter.printItem('--cap-borrow', 'Caps new market borrow amount dynamically to keep Projected LTV below LLTV safety threshold.');
-      CliFormatter.printItem('--old-loan <address>', 'Custom source loan token address (fetched dynamically; alias: --usdc).');
-      CliFormatter.printItem('--new-loan <address>', 'Custom destination loan token address (fetched dynamically).');
       
       CliFormatter.printSubHeader('Execution/Signing Flags');
       CliFormatter.printItem('-r, --rpc <url>', 'RPC provider URL (Required if using --private-key).');
@@ -403,6 +399,7 @@ export class CliView {
       CliFormatter.printItem('-w, --walletconnect', 'Initiates secure WalletConnect pairing session.');
       CliFormatter.printItem('-s, --simulation', 'Simulates transaction on a mainnet fork instead of submitting (Default if no signer).');
       CliFormatter.printItem('--no-simulation', 'Bypasses simulation and immediately submits transaction.');
+      CliFormatter.printItem('-o, --save-simulation <path>', 'Saves the raw transaction data payload to a JSON file (Only with simulation).');
 
       CliFormatter.printSubHeader('Examples');
       console.log(`  # Read-Only Mainnet Simulation (Default mode)`);
@@ -430,9 +427,7 @@ export class CliView {
       CliFormatter.printItem('-u, --user <address>', 'Wallet address to fetch position for (Required in simulation mode).', 'cyan');
       
       CliFormatter.printSubHeader('Additional Options');
-      CliFormatter.printItem('--collateral <address>', 'Collateral Token address (fetched dynamically; alias: --pt).');
       CliFormatter.printItem('--slippage <pct>', 'Slippage limit percentage (default: 1.0).');
-      CliFormatter.printItem('--loan <address>', 'Custom loan token address (fetched dynamically; alias: --usdc).');
       
       CliFormatter.printSubHeader('Execution/Signing Flags');
       CliFormatter.printItem('-r, --rpc <url>', 'RPC provider URL (Required if using --private-key).');
@@ -440,6 +435,7 @@ export class CliView {
       CliFormatter.printItem('-w, --walletconnect', 'Initiates secure WalletConnect pairing session.');
       CliFormatter.printItem('-s, --simulation', 'Simulates transaction on a mainnet fork instead of submitting (Default if no signer).');
       CliFormatter.printItem('--no-simulation', 'Bypasses simulation and immediately submits transaction.');
+      CliFormatter.printItem('-o, --save-simulation <path>', 'Saves the raw transaction data payload to a JSON file (Only with simulation).');
 
       CliFormatter.printSubHeader('Examples');
       console.log(`  # Deleverage Position via Mainnet Simulation`);
@@ -489,8 +485,8 @@ export class CliView {
       CliFormatter.printItem('-w, --walletconnect', 'Initiates secure WalletConnect pairing session.');
       CliFormatter.printItem('-s, --simulation', 'Simulates transaction on a mainnet fork instead of submitting (Default if no signer).');
       CliFormatter.printItem('--no-simulation', 'Bypasses simulation and immediately submits transaction.');
+      CliFormatter.printItem('-o, --save-simulation <path>', 'Saves the raw transaction data payload to a JSON file (Only with simulation).');
       CliFormatter.printItem('--slippage <pct>', 'Slippage limit percentage (default: 1.0).');
-      CliFormatter.printItem('--usdc <address>', 'Custom USDC address (default: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).');
       CliFormatter.printItem('-h, --help', 'Display help information for any command or general CLI usage.');
  
       CliFormatter.printSubHeader('Command Specific Help');

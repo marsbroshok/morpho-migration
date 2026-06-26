@@ -533,6 +533,75 @@ export function buildRolloverBundle({
   maxSafeBorrowAmount,
   capBorrow
 }) {
+  if (debtAmount === 0n) {
+    const bundle = [];
+    
+    // Call 1: Withdraw collateral
+    bundle.push({
+      to: ETHER_GENERAL_ADAPTER_1,
+      data: encodeFunctionData({
+        abi: ADAPTER_ABI,
+        functionName: 'morphoWithdrawCollateral',
+        args: [sourceMarketParams, collateralAmount, isSameCollateral ? ETHER_GENERAL_ADAPTER_1 : MORPHO_BUNDLER_V3]
+      }),
+      value: 0n,
+      skipRevert: false,
+      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+    });
+
+    // Call 2 & 3: Swap if needed
+    if (!isSameCollateral) {
+      const spenders = getSpendersToApprove(routeData);
+      for (const spender of spenders) {
+        bundle.push({
+          to: sourceCollateralAddress,
+          data: encodeFunctionData({
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [spender, 2n ** 256n - 1n]
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+        });
+      }
+
+      bundle.push({
+        to: routeData.tx.to,
+        data: routeData.tx.data,
+        value: 0n,
+        skipRevert: false,
+        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+      });
+    }
+
+    // Call 4: Supply collateral
+    bundle.push({
+      to: ETHER_GENERAL_ADAPTER_1,
+      data: encodeFunctionData({
+        abi: ADAPTER_ABI,
+        functionName: 'morphoSupplyCollateral',
+        args: [destMarketParams, 2n ** 256n - 1n, userAddress, '0x']
+      }),
+      value: 0n,
+      skipRevert: false,
+      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+    });
+
+    const finalCalldata = encodeFunctionData({
+      abi: BUNDLER_ABI,
+      functionName: 'multicall',
+      args: [bundle]
+    });
+
+    return {
+      borrowAmount: 0n,
+      flashLoanAmount: 0n,
+      repayAmount: 0n,
+      finalCalldata
+    };
+  }
+
   const oldLoanDecimals = sourceMarketParams.loanDecimals;
   const bufferAmount = debtAmount > 100n * 10n ** BigInt(oldLoanDecimals) ? 2n * 10n ** BigInt(oldLoanDecimals) : (debtAmount * 2n / 1000n);
   const flashLoanAmount = isFull ? (debtAmount + bufferAmount) : debtAmount;

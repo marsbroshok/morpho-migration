@@ -81,19 +81,31 @@ export class BlockchainClient {
     }
   }
 
-  async fetchMorphoPosition(marketId, userAddress) {
+  getBlockNumber() {
+    return process.env.FORK_BLOCK_NUMBER ? BigInt(process.env.FORK_BLOCK_NUMBER) : undefined;
+  }
+
+  async fetchMorphoPosition(marketId, userAddress, forceLive = false) {
+    if (!forceLive && (process.env.MOCK_POSITION_DEBT !== undefined || process.env.MOCK_POSITION_COLLATERAL !== undefined)) {
+      const debt = process.env.MOCK_POSITION_DEBT ? BigInt(process.env.MOCK_POSITION_DEBT) : 0n;
+      const collateral = process.env.MOCK_POSITION_COLLATERAL ? BigInt(process.env.MOCK_POSITION_COLLATERAL) : 1000000000000000000n;
+      const borrowShares = debt;
+      return { collateral, debt, borrowShares };
+    }
     const [posData, marketData] = await Promise.all([
       this.publicClient.readContract({
         address: MORPHO_BLUE,
         abi: MORPHO_BLUE_ABI,
         functionName: 'position',
-        args: [marketId, userAddress]
+        args: [marketId, userAddress],
+        blockNumber: this.getBlockNumber()
       }),
       this.publicClient.readContract({
         address: MORPHO_BLUE,
         abi: MORPHO_BLUE_ABI,
         functionName: 'market',
-        args: [marketId]
+        args: [marketId],
+        blockNumber: this.getBlockNumber()
       })
     ]);
 
@@ -156,7 +168,8 @@ export class BlockchainClient {
     return await this.publicClient.readContract({
       address: tokenAddress,
       abi: [{"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"stateMutability":"view","type":"function"}],
-      functionName: 'decimals'
+      functionName: 'decimals',
+      blockNumber: this.getBlockNumber()
     });
   }
 
@@ -165,7 +178,8 @@ export class BlockchainClient {
       const expiry = await this.publicClient.readContract({
         address: collateralAddress,
         abi: [{"inputs":[],"name":"expiry","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
-        functionName: 'expiry'
+        functionName: 'expiry',
+        blockNumber: this.getBlockNumber()
       });
       const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
       return {
@@ -196,7 +210,8 @@ export class BlockchainClient {
         }
       ],
       functionName: 'allowance',
-      args: [ownerAddress, spenderAddress]
+      args: [ownerAddress, spenderAddress],
+      blockNumber: this.getBlockNumber()
     });
   }
 
@@ -232,7 +247,8 @@ export class BlockchainClient {
       address: MORPHO_BLUE,
       abi: MORPHO_BLUE_ABI,
       functionName: 'isAuthorized',
-      args: [userAddress, spenderAddress]
+      args: [userAddress, spenderAddress],
+      blockNumber: this.getBlockNumber()
     });
   }
 

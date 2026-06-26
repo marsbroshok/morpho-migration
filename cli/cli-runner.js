@@ -111,6 +111,16 @@ export class CliRunner {
         // Phase 4: Execute/Simulate
         if (options.simulation) {
           commandResult.simulationResult = await cmd.runSimulation(calldataResult, options);
+          if (options.saveSimulation) {
+            const rawTx = {
+              from: calldataResult.userAddress,
+              to: MORPHO_BUNDLER_V3,
+              data: calldataResult.finalCalldata,
+              value: "0"
+            };
+            fs.writeFileSync(options.saveSimulation, JSON.stringify(rawTx, null, 2), 'utf8');
+            console.log(`Saved raw simulation payload to ${options.saveSimulation}`);
+          }
         } else {
           // Check shortfall and approve if needed
           const shortfall = calldataResult.loanWalletShortfall || 0n;
@@ -170,6 +180,16 @@ export class CliRunner {
         // Phase 4: Execute/Simulate
         if (options.simulation) {
           commandResult.simulationResult = await cmd.runSimulation(calldataResult, options);
+          if (options.saveSimulation) {
+            const rawTx = {
+              from: calldataResult.userAddress,
+              to: MORPHO_BUNDLER_V3,
+              data: calldataResult.finalCalldata,
+              value: "0"
+            };
+            fs.writeFileSync(options.saveSimulation, JSON.stringify(rawTx, null, 2), 'utf8');
+            console.log(`Saved raw simulation payload to ${options.saveSimulation}`);
+          }
         } else {
           commandResult.txHash = await blockchainClient.executeTransaction({
             to: MORPHO_BUNDLER_V3,
@@ -265,58 +285,25 @@ export class CliRunner {
         options.simulation = true;
       } else if (arg === '--no-simulation') {
         options.simulation = false;
+        options.explicitNoSimulation = true;
       } else if (arg === '--type') {
         options.type = args[++i];
       } else if (arg === '--debt') {
         options.debt = parseFloat(args[++i]);
-      } else if (arg === '--collateral') {
-        options.collateral = parseFloat(args[++i]);
       } else if (arg === '--slippage') {
         options.slippage = parseFloat(args[++i]);
       } else if (arg === '--cap-borrow') {
         options.capBorrow = true;
       } else if (arg === '--target-leverage' || arg === '-l') {
         options.targetLeverage = parseFloat(args[++i]);
-      } else if (arg === '--usdc') {
-        options.usdc = args[++i];
-      } else if (arg === '--new-loan') {
-        options.newLoan = args[++i];
-      } else if (arg === '--old-pt') {
-        options.oldPt = args[++i];
-      } else if (arg === '--new-pt') {
-        options.newPt = args[++i];
-      } else if (arg === '--pt') {
-        options.pt = args[++i];
-      } else if (arg === '--old-collateral') {
-        options.oldCollateral = args[++i];
-      } else if (arg === '--new-collateral') {
-        options.newCollateral = args[++i];
-      } else if (arg === '--collateral') {
-        options.collateral = args[++i];
-      } else if (arg === '--old-loan') {
-        options.oldLoan = args[++i];
-      } else if (arg === '--loan') {
-        options.loan = args[++i];
+      } else if (arg === '--save-simulation' || arg === '-o') {
+        options.saveSimulation = args[++i];
       } else if (arg === '--file' || arg === '-f') {
         options.file = args[++i];
       } else {
         throw new Error(`Unknown option "${arg}"`);
       }
     }
-
-    // Resolve generic aliases
-    options.oldCollateral = options.oldCollateral || options.oldPt;
-    options.newCollateral = options.newCollateral || options.newPt;
-    options.collateral = options.collateral || options.pt;
-    options.oldLoan = options.oldLoan || options.oldLoan || options.usdc;
-    options.loan = options.loan || options.usdc;
-
-    // Backwards compatibility mappings for older code expecting .oldPt, etc.
-    options.oldPt = options.oldCollateral;
-    options.newPt = options.newCollateral;
-    options.pt = options.collateral;
-    options.usdc = options.oldLoan || options.loan || options.usdc;
-
 
     // Command specific validation
     if (options.command === 'simulate-raw') {
@@ -329,6 +316,14 @@ export class CliRunner {
     // Linked flags validation: --private-key requires --rpc.
     if (options.privateKey && !options.rpc) {
       throw new Error('--private-key requires --rpc');
+    }
+
+    // Safety check for simulation saving
+    if (options.saveSimulation) {
+      if (options.explicitNoSimulation) {
+        throw new Error('Cannot use --save-simulation when simulation is disabled (--no-simulation)');
+      }
+      options.simulation = true; // Auto-enable simulation if save option is present
     }
 
     // If neither execution mode is selected, default to simulation = true

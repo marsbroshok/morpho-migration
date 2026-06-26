@@ -5,6 +5,7 @@ import { buildDeleveragingBundle, buildLeveragingUpBundle, ADAPTER_ABI } from '.
 
 const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
 const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
+const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
 
 const BUNDLER_ABI = [
   {
@@ -48,17 +49,16 @@ export class LeverageCommand {
   async assessPosition(options) {
     const userAddress = getAddress(options.user);
     const marketId = options.marketId;
-    const loanAddress = getAddress(options.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-    const slippage = options.slippage;
     const targetLeverage = options.targetLeverage;
-
+    const slippage = options.slippage;
     if (!targetLeverage || targetLeverage < 1.0 || targetLeverage > 6.0) {
       throw new Error("Leverage target is required and must be between 1.0 and 6.0");
     }
 
     // Fetch Market Params
     const marketParams = await this.blockchainClient.fetchMarketParams(marketId);
-    const collateralAddress = getAddress(options.pt || marketParams.collateralToken);
+    const loanAddress = getAddress(marketParams.loanToken);
+    const collateralAddress = getAddress(marketParams.collateralToken);
 
     // Fetch User position
     const position = await this.blockchainClient.fetchMorphoPosition(marketId, userAddress);
@@ -361,11 +361,60 @@ export class LeverageCommand {
    * Phase 4: Run transaction simulation on fork.
    */
   async runSimulation(calldataResult, options) {
+    const prependCalls = [];
+    try {
+      const livePosition = await this.blockchainClient.fetchMorphoPosition(calldataResult.marketId, calldataResult.userAddress, true);
+      const liveDebt = livePosition.debt;
+      if (liveDebt < calldataResult.position.debt) {
+        const borrowDiff = calldataResult.position.debt - liveDebt;
+        prependCalls.push({
+          from: calldataResult.userAddress,
+          to: MORPHO_BLUE,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: [
+              {
+                "inputs": [
+                  {
+                    "components": [
+                      { "name": "loanToken", "type": "address" },
+                      { "name": "collateralToken", "type": "address" },
+                      { "name": "oracle", "type": "address" },
+                      { "name": "irm", "type": "address" },
+                      { "name": "lltv", "type": "uint256" }
+                    ],
+                    "name": "marketParams",
+                    "type": "tuple"
+                  },
+                  { "name": "assets", "type": "uint256" },
+                  { "name": "shares", "type": "uint256" },
+                  { "name": "onBehalf", "type": "address" },
+                  { "name": "receiver", "type": "address" }
+                ],
+                "name": "borrow",
+                "outputs": [
+                  { "name": "assetsBorrowed", "type": "uint256" },
+                  { "name": "sharesBorrowed", "type": "uint256" }
+                ],
+                "stateMutability": "nonpayable",
+                "type": "function"
+              }
+            ],
+            functionName: 'borrow',
+            args: [calldataResult.marketParams, borrowDiff, 0n, calldataResult.userAddress, calldataResult.userAddress]
+          })
+        });
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+
     return this.simulationEngine.simulateTransaction(
       calldataResult.userAddress,
       MORPHO_BUNDLER_V3,
       calldataResult.finalCalldata,
-      0n
+      0n,
+      prependCalls
     );
   }
 

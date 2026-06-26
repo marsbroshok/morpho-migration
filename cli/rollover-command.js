@@ -42,11 +42,11 @@ export class RolloverCommand {
     const sourceMarketParams = await this.blockchainClient.fetchMarketParams(sourceMarketId);
     const destMarketParams = await this.blockchainClient.fetchMarketParams(destMarketId);
 
-    const sourceLoanAddress = getAddress(options.usdc || sourceMarketParams.loanToken || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-    const destLoanAddress = getAddress(options.newLoan || destMarketParams.loanToken || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const sourceLoanAddress = getAddress(sourceMarketParams.loanToken);
+    const destLoanAddress = getAddress(destMarketParams.loanToken);
 
-    const sourceCollateralAddress = getAddress(options.oldPt || sourceMarketParams.collateralToken);
-    const destCollateralAddress = getAddress(options.newPt || destMarketParams.collateralToken);
+    const sourceCollateralAddress = getAddress(sourceMarketParams.collateralToken);
+    const destCollateralAddress = getAddress(destMarketParams.collateralToken);
 
     // Fetch User position on source market
     const position = await this.blockchainClient.fetchMorphoPosition(sourceMarketId, userAddress);
@@ -312,11 +312,12 @@ export class RolloverCommand {
     const newLoanDec = 10 ** assessment.destMarketParams.loanDecimals;
     const newCollDec = 10 ** assessment.destMarketParams.collateralDecimals;
 
-    const steps = [
-      `Flashloan: Borrow ${Number(flashLoanAmount)/oldLoanDec} ${assessment.oldMarket.loanSymbol} from Adapter`,
-      `Repay Debt: Repay ${Number(bundleResult.repayAmount)/oldLoanDec} ${assessment.oldMarket.loanSymbol} on old market`,
-      `Withdraw: Withdraw ${Number(assessment.collateralAmount)/oldCollDec} ${assessment.oldMarket.collateralSymbol} from old market`
-    ];
+    const steps = [];
+    if (assessment.debtAmount > 0n) {
+      steps.push(`Flashloan: Borrow ${Number(flashLoanAmount)/oldLoanDec} ${assessment.oldMarket.loanSymbol} from Adapter`);
+      steps.push(`Repay Debt: Repay ${Number(bundleResult.repayAmount)/oldLoanDec} ${assessment.oldMarket.loanSymbol} on old market`);
+    }
+    steps.push(`Withdraw: Withdraw ${Number(assessment.collateralAmount)/oldCollDec} ${assessment.oldMarket.collateralSymbol} from old market`);
 
     if (!swap.isSameCollateral) {
       steps.push(`Approve: Approve Swap Router for ${Number(assessment.collateralAmount)/oldCollDec} ${assessment.oldMarket.collateralSymbol}`);
@@ -324,7 +325,10 @@ export class RolloverCommand {
     }
 
     steps.push(`Supply: Supply ${assessment.newMarket.collateralSymbol} to new market`);
-    steps.push(`Borrow: Borrow ${Number(borrowAmount)/newLoanDec} ${assessment.newMarket.loanSymbol} from new market`);
+    
+    if (assessment.debtAmount > 0n) {
+      steps.push(`Borrow: Borrow ${Number(borrowAmount)/newLoanDec} ${assessment.newMarket.loanSymbol} from new market`);
+    }
 
     if (!swap.isSameLoan) {
       if (swap.loanRouteData?.isCurveDirect) {
@@ -390,6 +394,115 @@ export class RolloverCommand {
             }],
             functionName: 'transfer',
             args: [ETHER_GENERAL_ADAPTER_1, 1000n * 10n ** BigInt(loanDecimals)]
+          })
+        });
+      }
+
+      const tokensToApprove = [
+        calldataResult.sourceMarketParams.collateralToken,
+        calldataResult.destMarketParams.collateralToken,
+        calldataResult.sourceMarketParams.loanToken,
+        calldataResult.destMarketParams.loanToken,
+        '0x38eeb52f0771140d10c4e9a9a72349a329fe8a6a', // apyUSD
+        '0x04F8DCa7bcCD8997ac57ca6feF7c705E17d6bcB6', // SY-5NOV
+        '0xa166323f03cd0dae70487d551d3b457c3151bee4'  // SY-18JUN
+      ];
+
+      const spendersToApprove = [
+        '0x888888888889758F76e7103c6CbF23ABbF58F946', // PENDLE_ROUTER
+        '0x30544e00cf296b34a9ee59e5540ae2f9cccd55dd', // Reflector
+        '0xc5F938A8ef5F3Bf9e72F5Aa094bAf5e03F4727d3', // Pendle Market
+        ETHER_GENERAL_ADAPTER_1,
+        MORPHO_BUNDLER_V3,
+        MORPHO_BLUE
+      ];
+
+      for (const token of tokensToApprove) {
+        for (const spender of spendersToApprove) {
+          // Approve from BUNDLER
+          prependCalls.push({
+            from: MORPHO_BUNDLER_V3,
+            to: getAddress(token),
+            value: '0x0',
+            data: encodeFunctionData({
+              abi: [{
+                "inputs": [
+                  { "name": "spender", "type": "address" },
+                  { "name": "amount", "type": "uint256" }
+                ],
+                "name": "approve",
+                "outputs": [{ "name": "", "type": "bool" }],
+                "stateMutability": "nonpayable",
+                "type": "function"
+              }],
+              functionName: 'approve',
+              args: [getAddress(spender), 2n ** 256n - 1n]
+            })
+          });
+          
+          // Approve from user
+          prependCalls.push({
+            from: calldataResult.userAddress,
+            to: getAddress(token),
+            value: '0x0',
+            data: encodeFunctionData({
+              abi: [{
+                "inputs": [
+                  { "name": "spender", "type": "address" },
+                  { "name": "amount", "type": "uint256" }
+                ],
+                "name": "approve",
+                "outputs": [{ "name": "", "type": "bool" }],
+                "stateMutability": "nonpayable",
+                "type": "function"
+              }],
+              functionName: 'approve',
+              args: [getAddress(spender), 2n ** 256n - 1n]
+            })
+          });
+        }
+      }
+
+      // Check user's live position and borrow debt if they have less on-chain than we want to simulate
+      const livePosition = await this.blockchainClient.fetchMorphoPosition(calldataResult.sourceMarketId, calldataResult.userAddress, true);
+      const liveDebt = livePosition.debt;
+      if (liveDebt < calldataResult.debtAmount) {
+        const borrowDiff = calldataResult.debtAmount - liveDebt;
+        prependCalls.push({
+          from: calldataResult.userAddress,
+          to: MORPHO_BLUE,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: [
+              {
+                "inputs": [
+                  {
+                    "components": [
+                      { "name": "loanToken", "type": "address" },
+                      { "name": "collateralToken", "type": "address" },
+                      { "name": "oracle", "type": "address" },
+                      { "name": "irm", "type": "address" },
+                      { "name": "lltv", "type": "uint256" }
+                    ],
+                    "name": "marketParams",
+                    "type": "tuple"
+                  },
+                  { "name": "assets", "type": "uint256" },
+                  { "name": "shares", "type": "uint256" },
+                  { "name": "onBehalf", "type": "address" },
+                  { "name": "receiver", "type": "address" }
+                ],
+                "name": "borrow",
+                "outputs": [
+                  { "name": "assetsBorrowed", "type": "uint256" },
+                  { "name": "sharesBorrowed", "type": "uint256" }
+                ],
+                "stateMutability": "nonpayable",
+                "type": "function"
+              }
+            ],
+            functionName: 'borrow',
+            args: [calldataResult.sourceMarketParams, borrowDiff, 0n, calldataResult.userAddress, calldataResult.userAddress]
           })
         });
       }
