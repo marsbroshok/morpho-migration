@@ -1,5 +1,60 @@
 # Project Work Log
 
+## 2026-06-27 - Resolved Out-of-Pocket Funding Reversion with On-Chain Swap Output Settlement (TDD)
+
+### Summary of Investigation & Execution
+1. **The Goal:** Resolve the transaction reversion issue during cross-loan-asset rollovers where a tiny worst-case swap shortfall statically generated a `permit2TransferFrom` wallet pull, reverting if the wallet was empty, even if the actual on-chain swap returned more than enough to cover the flashloan.
+2. **Investigation Findings & Architecture Upgrades:**
+   - **On-Chain Settlement Routing:** Realized that since the Pendle Convert API's `swapTokensToTokens` method is caller-settled (delivering output directly to the Morpho Bundler instead of the Adapter), we must explicitly transfer the guaranteed minimum swap output (`minOutAmount`) from the Bundler to the Adapter on-chain using a standard ERC20 `transfer` step in the callback bundle.
+   - **Zero-Funding Shortfall Pull:** If `minOutAmount < flashLoanAmount`, we pull only the difference (the true shortfall) from the user's wallet via Permit2.
+   - **Excess Swap Output Refund:** If `minOutAmount > flashLoanAmount` (due to low price impact or extra borrowed margin), the Adapter contract transfers the excess USDC back to the user's wallet (`erc20Transfer`) in the callback bundle. This leaves the Adapter with exactly the flashloan repayment amount, and sweeps the extra tokens safely back to the user.
+   - **Decoupled Cheat Pre-Funding:** Removed the `ETHER_GENERAL_ADAPTER_1` pre-funding helper from the simulation setup inside `cli/rollover-command.js`. The simulation now runs entirely with a realistic 0-balance starting condition, proving that the on-chain transfer and settlement steps are robust.
+3. **Outcome:**
+   - All CLI unit, integration, browser JSDOM fork simulations, and live Alchemy mainnet fork simulations (`npm test`) execute and pass successfully.
+   - Verified that the expected swap surplus (e.g. `0.017442 USDC` margin) is correctly swept back to the user's wallet on-chain, and the transient contracts are swept clean.
+
+### Changes Applied
+* **Modified:** [builders.js](file://builders.js) (implemented on-chain swap output transfer, shortfall pull, and surplus refund steps in callback bundle; set swap `skipRevert` to `false`).
+* **Modified:** [cli/rollover-command.js](file://cli/rollover-command.js) (removed simulation pre-funding helper block, fixed try/catch syntax).
+
+---
+
+## 2026-06-27 - Added CLI Debug Mode Flag and Integrated Extra Details Output & Saving (TDD)
+
+### Summary of Investigation & Execution
+1. **The Goal:** Add a new `--debug` flag to the CLI tool. When active, it displays detailed debug data (Swap Router Requests/Responses, Raw Calldata Payload, Full Alchemy simulation responses) after the main execution steps (1-6). If `--save-simulation` (`-o`) is also specified, save both the transaction payload and the debug payload in a backward-compatible format.
+2. **Implementation Details:**
+   - **Arg Parsing & Help:** Parsed `--debug` flag to `options.debug` in `CliRunner` and added documentation to all command help listings.
+   - **Swap Router Client:** Modified `SwapRouterClient` to record all router requests/responses in an internal `requests` array and removed default stdout printing.
+   - **Simulation Engine:** Modified `SimulationEngine.simulateTransaction` to return the `rawResponse` and removed default console logging for failed simulations.
+   - **Debug Display:** Implemented `printDebugData(debugInfo)` in `CliView` to print Swap Router Requests, Raw Calldata Payload, and Full Alchemy responses in uppercase after step 6.
+   - **JSON Simulation File Saving:** Updated both rollover and leverage commands' `--save-simulation` logic to write the extra debug object under a top-level `"debug"` key when `--debug` is active, maintaining compatibility with the `simulate-raw` command.
+3. **Outcome:**
+   - Created a comprehensive test `testCliDebugModeFeature` in `tests/cli.test.mjs` verifying parsing, debug outputs, JSON file layout, and `simulate-raw` roundtrip compatibility.
+   - All tests (`npm test`) execute and pass successfully.
+
+### Changes Applied
+* **Modified:** `cli/cli-runner.js` (debug flag parsing, save-simulation payload injection, debug display trigger).
+* **Modified:** `cli/swap-router-client.js` (requests tracking constructor/method, removed default logging).
+* **Modified:** `cli/simulation-engine.js` (simulateTransaction return rawResponse, removed console error logs).
+* **Modified:** `cli/rollover-command.js` (wrapped cross-loan borrow estimation debug messages inside option check).
+* **Modified:** `cli/cli-view.js` (added printDebugData method, removed automatic calldata printing, updated help).
+* **Modified:** `tests/cli.test.mjs` (added testCliRunnerArgParsingOptions tests, added testCliDebugModeFeature test, called in runAllTests).
+
+---
+
+## 2026-06-27 - Added "No Test/Simulation Circumvention" Rule to Project Rules
+
+### Summary of Investigation & Execution
+1. **The Goal:** Formulate and document a strict project rule to prevent agents from bypassing, disabling, or modifying tests and simulations to hide/silence errors rather than debugging and fixing the underlying code or environment setup.
+2. **Implementation Details:**
+   - Appended the **No Test/Simulation Circumvention** rule to Section 6 of the workspace rules at `.agents/AGENTS.md`.
+   - The rule explicitly states that any test or simulation failure must be resolved by fixing the underlying code/configuration rather than modifying/weakening the test assertions or setup.
+3. **Outcome:**
+   - Updated the project rules in `.agents/AGENTS.md` following user approval.
+
+---
+
 ## 2026-06-27 - Resolved Swap Receiver Bug and Upgraded Fork Simulation Integrity & Leak Detection
 
 ### Summary of Investigation & Execution

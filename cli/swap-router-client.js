@@ -1,6 +1,10 @@
 const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
 
 export class SwapRouterClient {
+  constructor() {
+    this.requests = [];
+  }
+
   /**
    * Fetch converted route details from Swap Router SDK.
    * @param {string} inputToken 
@@ -51,16 +55,24 @@ export class SwapRouterClient {
 
     if (!response.ok) {
       const errData = await response.json();
-      console.error("Swap Router Request:", JSON.stringify(requestBody, null, 2));
+      this.requests.push({
+        url: swapRouterApiUrl,
+        request: requestBody,
+        response: errData
+      });
       throw new Error(errData.message || "Failed to fetch routing data from Swap Router.");
     }
     const data = await response.json();
-    console.log("Swap Router Request:", JSON.stringify(requestBody, null, 2));
-    console.log("Swap Router Response Route[0]:", JSON.stringify(data.routes[0], null, 2));
+    this.requests.push({
+      url: swapRouterApiUrl,
+      request: requestBody,
+      response: data
+    });
     if (!data.routes || data.routes.length === 0) {
       throw new Error("No swap routes found on Swap Router Convert API.");
     }
     return data.routes[0];
   }
 }
+
 

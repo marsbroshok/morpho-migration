@@ -139,9 +139,6 @@ export class SimulationEngine {
     const results = data.result[0].calls;
     const mainCallIndex = results.length - 1 - leakCheckCallsCount;
     const mainCallResult = results[mainCallIndex];
-    if (mainCallResult.status !== '0x1') {
-      console.error("DEBUG SIMULATION FAILED. Full Alchemy response:", JSON.stringify(data, null, 2));
-    }
     mainCallResult.to = toAddress;
 
     // Check for balance leaks
@@ -173,8 +170,10 @@ export class SimulationEngine {
       prependedAdapterAuth: !isAdapterAuth,
       prependedBundlerAuth: !isBundlerAuth,
       logs,
-      leaks
+      leaks,
+      rawResponse: data
     };
+
   }
 
   collectAllLogs(simResult) {

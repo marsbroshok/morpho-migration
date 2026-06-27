@@ -133,11 +133,6 @@ export class CliView {
     data.steps.forEach((step, idx) => {
       console.log(`  ├── ${idx + 1}. ${step}`);
     });
-    
-    if (data.finalCalldata) {
-      console.log(`\n  ${CliFormatter.color('Raw Multicall Calldata Payload:', 'gray')}`);
-      console.log(data.finalCalldata);
-    }
   }
 
   /**
@@ -254,11 +249,6 @@ export class CliView {
     data.steps.forEach((step, idx) => {
       console.log(`  ├── ${idx + 1}. ${step}`);
     });
-
-    if (data.finalCalldata) {
-      console.log(`\n  ${CliFormatter.color('Raw Multicall Calldata Payload:', 'gray')}`);
-      console.log(data.finalCalldata);
-    }
   }
 
   /**
@@ -400,6 +390,7 @@ export class CliView {
       CliFormatter.printItem('-s, --simulation', 'Simulates transaction on a mainnet fork instead of submitting (Default if no signer).');
       CliFormatter.printItem('--no-simulation', 'Bypasses simulation and immediately submits transaction.');
       CliFormatter.printItem('-o, --save-simulation <path>', 'Saves the raw transaction data payload to a JSON file (Only with simulation).');
+      CliFormatter.printItem('--debug', 'Enables verbose debug output including swap routing details, calldata, and full simulator responses.');
 
       CliFormatter.printSubHeader('Examples');
       console.log(`  # Read-Only Mainnet Simulation (Default mode)`);
@@ -436,6 +427,7 @@ export class CliView {
       CliFormatter.printItem('-s, --simulation', 'Simulates transaction on a mainnet fork instead of submitting (Default if no signer).');
       CliFormatter.printItem('--no-simulation', 'Bypasses simulation and immediately submits transaction.');
       CliFormatter.printItem('-o, --save-simulation <path>', 'Saves the raw transaction data payload to a JSON file (Only with simulation).');
+      CliFormatter.printItem('--debug', 'Enables verbose debug output including swap routing details, calldata, and full simulator responses.');
 
       CliFormatter.printSubHeader('Examples');
       console.log(`  # Deleverage Position via Mainnet Simulation`);
@@ -462,6 +454,7 @@ export class CliView {
       
       CliFormatter.printSubHeader('Additional Options');
       CliFormatter.printItem('-r, --rpc <url>', 'RPC provider URL (Falls back to Alchemy if key is present).');
+      CliFormatter.printItem('--debug', 'Enables verbose debug output including swap routing details, calldata, and full simulator responses.');
       
       CliFormatter.printSubHeader('Examples');
       console.log(`  # Simulate transaction from a JSON file`);
@@ -487,6 +480,7 @@ export class CliView {
       CliFormatter.printItem('--no-simulation', 'Bypasses simulation and immediately submits transaction.');
       CliFormatter.printItem('-o, --save-simulation <path>', 'Saves the raw transaction data payload to a JSON file (Only with simulation).');
       CliFormatter.printItem('--slippage <pct>', 'Slippage limit percentage (default: 1.0).');
+      CliFormatter.printItem('--debug', 'Enables verbose debug output including swap routing details, calldata, and full simulator responses.');
       CliFormatter.printItem('-h, --help', 'Display help information for any command or general CLI usage.');
  
       CliFormatter.printSubHeader('Command Specific Help');
@@ -497,4 +491,36 @@ export class CliView {
     }
     console.log();
   }
+
+  /**
+   * Prints the gathered debug information after the execution finishes.
+   * @param {object} debugInfo
+   */
+  printDebugData(debugInfo) {
+    CliFormatter.printHeader('DEBUG INFORMATION');
+    
+    if (debugInfo.swapRequests && debugInfo.swapRequests.length > 0) {
+      CliFormatter.printSubHeader('Swap Router Requests & Responses');
+      debugInfo.swapRequests.forEach((req, idx) => {
+        console.log(`\n  --- Swap Request #${idx + 1} ---`);
+        console.log(`  URL: ${req.url}`);
+        console.log(`  Request Body:`);
+        console.log(JSON.stringify(req.request, null, 2).split('\n').map(l => '    ' + l).join('\n'));
+        console.log(`  Response:`);
+        console.log(JSON.stringify(req.response, null, 2).split('\n').map(l => '    ' + l).join('\n'));
+      });
+    }
+
+    if (debugInfo.rawCalldata) {
+      CliFormatter.printSubHeader('Raw Multicall Calldata Payload');
+      console.log(debugInfo.rawCalldata);
+    }
+
+    if (debugInfo.alchemyResponse) {
+      CliFormatter.printSubHeader('Full Alchemy response');
+      console.log(JSON.stringify(debugInfo.alchemyResponse, null, 2));
+    }
+    console.log();
+  }
 }
+

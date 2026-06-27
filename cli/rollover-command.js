@@ -204,8 +204,10 @@ export class RolloverCommand {
       
       // loanOracleRate represents the true conversion rate from the router (scaled to 18 decimals)
       loanOracleRate = (nominalOutput * 10n ** (18n + decDiff)) / nominalInput;
-      console.log("DEBUG: nominalInput:", nominalInput, "nominalOutput:", nominalOutput);
-      console.log("DEBUG: loanOracleRate:", loanOracleRate);
+      if (options.debug) {
+        console.log("DEBUG: nominalInput:", nominalInput, "nominalOutput:", nominalOutput);
+        console.log("DEBUG: loanOracleRate:", loanOracleRate);
+      }
 
       // 3. Solve exact borrow input required to cover flashloan worst-case output
       // Desired Output = flashLoanAmount / (1 - slippage)
@@ -231,7 +233,7 @@ export class RolloverCommand {
       }
 
       // Fetch final route for swapping the borrowed new loan asset back to the old loan asset (settles directly to ETHER_GENERAL_ADAPTER_1)
-      const swapInputAmount = loanExpectedInput - 100000n;
+      let swapInputAmount = loanExpectedInput - 100000n;
       loanRouteData = await this.routerClient.fetchSwapRoute(
         assessment.destLoanAddress,
         swapInputAmount,
@@ -241,6 +243,29 @@ export class RolloverCommand {
         MORPHO_BUNDLER_V3
       );
       loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
+
+      let minSwapOutput = (loanExpectedOutput * (10000n - strictSlippageBps)) / 10000n;
+
+      // If worst-case swap output falls short of the flashloan requirement due to price impact,
+      // and we have room to borrow more under target market LLTV safety limits, perform iterative scaling.
+      if (minSwapOutput < assessment.debtAmount && loanExpectedInput < maxSafeBorrowAmount) {
+        const adjustedInput = (loanExpectedInput * assessment.debtAmount) / minSwapOutput;
+        loanExpectedInput = adjustedInput > maxSafeBorrowAmount ? maxSafeBorrowAmount : adjustedInput;
+
+        if (loanExpectedInput > swapInputAmount) {
+          swapInputAmount = loanExpectedInput - 100000n;
+          loanRouteData = await this.routerClient.fetchSwapRoute(
+            assessment.destLoanAddress,
+            swapInputAmount,
+            assessment.sourceLoanAddress,
+            slippageFrac,
+            ETHER_GENERAL_ADAPTER_1,
+            MORPHO_BUNDLER_V3
+          );
+          loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
+          minSwapOutput = (loanExpectedOutput * (10000n - strictSlippageBps)) / 10000n;
+        }
+      }
 
       const loanQuotedRate = (loanExpectedOutput * 10n ** (18n + decDiff)) / loanExpectedInput;
       loanSlippagePct = loanOracleRate > 0n ? Number((loanOracleRate - loanQuotedRate) * 10000n / loanOracleRate) / 100 : 0.0;
@@ -426,29 +451,29 @@ export class RolloverCommand {
         getAddress(MORPHO_BLUE)
       ]);
 
-      if (calldataResult.routeData) {
-        spendersToApprove.add(getAddress(calldataResult.routeData.tx.to));
-        if (calldataResult.routeData.limitRouter) {
-          spendersToApprove.add(getAddress(calldataResult.routeData.limitRouter));
+      if (calldataResult.swap?.routeData) {
+        spendersToApprove.add(getAddress(calldataResult.swap.routeData.tx.to));
+        if (calldataResult.swap.routeData.limitRouter) {
+          spendersToApprove.add(getAddress(calldataResult.swap.routeData.limitRouter));
         }
-        if (calldataResult.routeData.inputs) {
-          calldataResult.routeData.inputs.forEach(i => tokensToApprove.add(getAddress(i.token)));
+        if (calldataResult.swap.routeData.inputs) {
+          calldataResult.swap.routeData.inputs.forEach(i => tokensToApprove.add(getAddress(i.token)));
         }
-        if (calldataResult.routeData.outputs) {
-          calldataResult.routeData.outputs.forEach(o => tokensToApprove.add(getAddress(o.token)));
+        if (calldataResult.swap.routeData.outputs) {
+          calldataResult.swap.routeData.outputs.forEach(o => tokensToApprove.add(getAddress(o.token)));
         }
       }
 
-      if (calldataResult.loanRouteData) {
-        spendersToApprove.add(getAddress(calldataResult.loanRouteData.tx.to));
-        if (calldataResult.loanRouteData.limitRouter) {
-          spendersToApprove.add(getAddress(calldataResult.loanRouteData.limitRouter));
+      if (calldataResult.swap?.loanRouteData) {
+        spendersToApprove.add(getAddress(calldataResult.swap.loanRouteData.tx.to));
+        if (calldataResult.swap.loanRouteData.limitRouter) {
+          spendersToApprove.add(getAddress(calldataResult.swap.loanRouteData.limitRouter));
         }
-        if (calldataResult.loanRouteData.inputs) {
-          calldataResult.loanRouteData.inputs.forEach(i => tokensToApprove.add(getAddress(i.token)));
+        if (calldataResult.swap.loanRouteData.inputs) {
+          calldataResult.swap.loanRouteData.inputs.forEach(i => tokensToApprove.add(getAddress(i.token)));
         }
-        if (calldataResult.loanRouteData.outputs) {
-          calldataResult.loanRouteData.outputs.forEach(o => tokensToApprove.add(getAddress(o.token)));
+        if (calldataResult.swap.loanRouteData.outputs) {
+          calldataResult.swap.loanRouteData.outputs.forEach(o => tokensToApprove.add(getAddress(o.token)));
         }
       }
 

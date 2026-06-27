@@ -55,6 +55,7 @@ These rules apply to all development, styling, calculations, simulations, testin
 - **Mainnet Fork Block Pinning:** All mainnet fork simulation tests must run against a pinned block number to prevent flakiness due to sliding live states, accrued interest, or market fluctuations.
 - **Block Pinning Sequence:** Set the `process.env.FORK_BLOCK_NUMBER` environment variable *before* instantiating any viem or custom blockchain client that relies on it. Respect and preserve pre-defined environment values without overwriting them.
 - **Mainnet Fork Test Resilience:** If a fork simulation test relies on a live mainnet position, the test setup must dynamically check the position state and, if needed, programmatically modify the state (e.g., prepending debt repayments or collateral deposits) before executing the simulation, preventing LLTV or margin-based flakiness.
+- **No Test/Simulation Circumvention:** Do not modify, relax, comment out, or delete test assertions, validation thresholds, or simulation conditions to bypass failures. Any failure in a test or simulation must be resolved by debugging and fixing the underlying implementation or correcting the environment setup, rather than altering the test criteria to force a passing state.
 
 ---
 

@@ -216,6 +216,13 @@ async function testCliRunnerArgParsingOptions() {
     runner.parseArgs(['rollover', '--old-market-id', '0x123', '--new-market-id', '0x456', '--no-simulation', '--save-simulation', 'temp_out.json']);
   }, /Cannot use --save-simulation when simulation is disabled/);
 
+  // Test: --debug flag parsing
+  const debugOptions = runner.parseArgs(['rollover', '--old-market-id', '0x123', '--new-market-id', '0x456', '--debug']);
+  assert.strictEqual(debugOptions.debug, true, '--debug flag should parse options.debug as true');
+
+  const defaultDebugOptions = runner.parseArgs(['rollover', '--old-market-id', '0x123', '--new-market-id', '0x456']);
+  assert.strictEqual(defaultDebugOptions.debug, false, '--debug flag should default to false');
+
   console.log('✅ CliRunner argument parsing options tests passed!');
 }
 
@@ -1147,6 +1154,135 @@ async function testSaveSimulationFeature() {
 }
 
 
+async function testCliDebugModeFeature() {
+  console.log('Testing CLI Debug Mode feature (TDD)...');
+  const { CliRunner } = await import('../cli/cli-runner.js');
+  const { BlockchainClient } = await import('../cli/blockchain-client.js');
+  const { SwapRouterClient } = await import('../cli/swap-router-client.js');
+  const { SimulationEngine } = await import('../cli/simulation-engine.js');
+
+  const tempSimFile = path.resolve(__dirname, '../temp_test_debug_simulation.json');
+  if (fs.existsSync(tempSimFile)) {
+    fs.unlinkSync(tempSimFile);
+  }
+
+  const originalFetchMarketParams = BlockchainClient.prototype.fetchMarketParams;
+  const originalFetchMorphoPosition = BlockchainClient.prototype.fetchMorphoPosition;
+  const originalCheckCollateralMaturity = BlockchainClient.prototype.checkCollateralMaturity;
+  const originalFetchSwapRoute = SwapRouterClient.prototype.fetchSwapRoute;
+  const originalSimulateTransaction = SimulationEngine.prototype.simulateTransaction;
+
+  BlockchainClient.prototype.fetchMarketParams = async (id) => ({
+    loanToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    collateralToken: id === '0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124' ? '0x3365554a61CeFF74A76528f9e86C1E87946d16a5' : '0x1111111111111111111111111111111111111111',
+    loanSymbol: 'USDC',
+    collateralSymbol: id === '0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124' ? 'PT-token-1' : 'PT-token-2',
+    loanDecimals: 6,
+    collateralDecimals: 18,
+    oracle: '0x0000000000000000000000000000000000000002',
+    irm: '0x0000000000000000000000000000000000000003',
+    lltv: 860000000000000000n
+  });
+
+  BlockchainClient.prototype.fetchMorphoPosition = async () => ({
+    collateral: 8000000000000000000n,
+    debt: 6000000000n,
+    borrowShares: 6000000000n
+  });
+
+  BlockchainClient.prototype.checkCollateralMaturity = async () => ({
+    expiryDate: '11/05/2026',
+    isExpired: false
+  });
+
+  SwapRouterClient.prototype.fetchSwapRoute = async function(inputToken, inputAmount, outputToken, slippage, receiver, sender) {
+    const mockRoute = {
+      outputs: [{ amount: '7800000000000000000' }],
+      tx: { to: '0x0000000000000000000000000000000000000004', data: '0x00' }
+    };
+    this.requests.push({
+      url: 'mock-url',
+      request: { inputToken, inputAmount: inputAmount.toString(), outputToken },
+      response: mockRoute
+    });
+    return mockRoute;
+  };
+
+  SimulationEngine.prototype.simulateTransaction = async (from, to, data, value, prependCalls) => {
+    return {
+      success: true,
+      gasUsed: 120000n,
+      logs: [],
+      traceTree: { to, status: '0x1', gasUsed: '0x1d4c0' },
+      rawResponse: { jsonrpc: '2.0', result: [{ calls: [] }] }
+    };
+  };
+
+  const originalLog = console.log;
+  let logs = [];
+  console.log = (...args) => logs.push(args.join(' '));
+
+  try {
+    const runner = new CliRunner();
+
+    await runner.run([
+      'node',
+      'cli.js',
+      'rollover',
+      '--old-market-id', '0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124',
+      '--new-market-id', '0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c',
+      '--user', '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a',
+      '--save-simulation', tempSimFile,
+      '--debug'
+    ]);
+
+    const outputText = logs.join('\n').toUpperCase();
+    assert.ok(outputText.includes('DEBUG INFORMATION'), 'Should print DEBUG INFORMATION header');
+    assert.ok(outputText.includes('SWAP ROUTER REQUESTS & RESPONSES'), 'Should print Swap Router debug subheader');
+    assert.ok(outputText.includes('RAW MULTICALL CALLDATA PAYLOAD'), 'Should print Raw Multicall Calldata debug subheader');
+    assert.ok(outputText.includes('FULL ALCHEMY RESPONSE'), 'Should print Full Alchemy response debug subheader');
+
+
+    // Check that JSON file has the debug payload saved
+    assert.ok(fs.existsSync(tempSimFile), 'Simulation JSON file should be created');
+    const simData = JSON.parse(fs.readFileSync(tempSimFile, 'utf8'));
+    assert.strictEqual(simData.from, '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a');
+    assert.ok(simData.debug, 'Saved JSON must contain the debug object');
+    assert.ok(Array.isArray(simData.debug.swapRequests), 'debug.swapRequests must be an array');
+    assert.strictEqual(simData.debug.swapRequests[0].url, 'mock-url');
+    assert.ok(simData.debug.rawCalldata.startsWith('0x'), 'debug.rawCalldata must contain calldata payload');
+    assert.ok(simData.debug.alchemyResponse, 'debug.alchemyResponse must contain alchemy simulator response');
+
+    // Check compatibility by executing simulate-raw roundtrip against the file containing the "debug" field
+    logs = [];
+    await runner.run([
+      'node',
+      'cli.js',
+      'simulate-raw',
+      '--file', tempSimFile,
+      '--debug'
+    ]);
+    const simulateRawOutput = logs.join('\n');
+    assert.ok(simulateRawOutput.includes('DEBUG INFORMATION'), 'simulate-raw should show debug info with --debug active');
+
+  } finally {
+    console.log = originalLog;
+    BlockchainClient.prototype.fetchMarketParams = originalFetchMarketParams;
+    BlockchainClient.prototype.fetchMorphoPosition = originalFetchMorphoPosition;
+    BlockchainClient.prototype.checkCollateralMaturity = originalCheckCollateralMaturity;
+    SwapRouterClient.prototype.fetchSwapRoute = originalFetchSwapRoute;
+    SimulationEngine.prototype.simulateTransaction = originalSimulateTransaction;
+
+    if (fs.existsSync(tempSimFile)) {
+      fs.unlinkSync(tempSimFile);
+    }
+  }
+
+  console.log('✅ CLI Debug Mode feature tests passed!');
+}
+
+
+
 async function runAllTests() {
   try {
     await testImports();
@@ -1162,6 +1298,7 @@ async function runAllTests() {
     await testLeverageCommandMock();
     await testSimulateRawCommandMock();
     await testSaveSimulationFeature();
+    await testCliDebugModeFeature();
     await testZeroDebtRollover();
     await testCliShellExecutionSimulation();
     await runLiveForkSimulationTests();

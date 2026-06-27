@@ -1,3 +1,5 @@
+import { getAddress } from 'viem';
+
 export const ERC20_ABI = [
   { "inputs": [{ "name": "spender", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" },
   { "inputs": [{ "name": "recipient", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "transfer", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" }
@@ -27,34 +29,43 @@ export const BUNDLER_ABI = [
 
 function getSpendersToApprove(routeData) {
   if (!routeData) return [];
-  const spenders = [routeData.tx.to];
-  try {
-    const params = routeData.contractParamInfo?.contractCallParams;
-    if (params && Array.isArray(params)) {
-      if (typeof params[0] === 'string' && params[0].startsWith('0x')) {
-        spenders.push(params[0]);
-      }
-      for (const param of params) {
-        if (Array.isArray(param)) {
-          for (const swap of param) {
-            if (swap.swapData?.extRouter) {
-              spenders.push(swap.swapData.extRouter);
-            }
-          }
+  const spenders = new Set();
+  if (routeData.tx && routeData.tx.to) {
+    spenders.add(getAddress(routeData.tx.to));
+  }
+
+  // Recursive walker to find all address strings
+  function walk(obj) {
+    if (!obj) return;
+    if (typeof obj === 'string') {
+      if (obj.startsWith('0x') && obj.length === 42) {
+        try {
+          spenders.add(getAddress(obj));
+        } catch (e) {
+          // Ignore invalid address strings
         }
       }
+    } else if (Array.isArray(obj)) {
+      obj.forEach(walk);
+    } else if (typeof obj === 'object') {
+      Object.values(obj).forEach(walk);
     }
-  } catch (e) {
-    // Ignore parsing errors
   }
 
-  const PENDLE_ROUTER = '0x888888888889758F76e7103c6CbF23ABbF58F946';
-  const PENDLE_LIMIT_ROUTER = '0x000000000000c9B3E2C3Ec88B1B4c0cD853f4321';
-  if (spenders.some(s => s.toLowerCase() === PENDLE_ROUTER.toLowerCase())) {
-    spenders.push(PENDLE_LIMIT_ROUTER);
+  walk(routeData);
+
+  // Add Pendle Limit Router if Pendle Router is present
+  const PENDLE_ROUTER = getAddress('0x888888888889758F76e7103c6CbF23ABbF58F946');
+  const PENDLE_LIMIT_ROUTER = getAddress('0x000000000000c9B3E2C3Ec88B1B4c0cD853f4321');
+  if (spenders.has(PENDLE_ROUTER)) {
+    spenders.add(PENDLE_LIMIT_ROUTER);
   }
 
-  return spenders;
+  // Exclude common non-spender addresses
+  const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+  spenders.delete(ZERO_ADDRESS);
+
+  return Array.from(spenders);
 }
 
 const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
@@ -728,7 +739,7 @@ export function buildRolloverBundle({
       appendApprovals(reenterBundle, destMarketParams.loanToken, spender, encodeFunctionData);
     }
 
-    // Execute Swap (settles directly to ETHER_GENERAL_ADAPTER_1)
+    // Execute Swap (settles directly to MORPHO_BUNDLER_V3)
     reenterBundle.push({
       to: loanRouteData.tx.to,
       data: loanRouteData.tx.data,
@@ -739,6 +750,19 @@ export function buildRolloverBundle({
 
     const minOutAmount = (loanExpectedOutput * (10000n - BigInt(Math.round(slippage * 100)))) / 10000n;
 
+    // Transfer the guaranteed swap output (minOutAmount) from the Bundler to the Adapter
+    reenterBundle.push({
+      to: sourceMarketParams.loanToken,
+      data: encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: 'transfer',
+        args: [ETHER_GENERAL_ADAPTER_1, minOutAmount]
+      }),
+      value: 0n,
+      skipRevert: false,
+      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+    });
+
     // Only generate Permit2 pull if the minimum swap output is below the repayment threshold
     if (minOutAmount < flashLoanAmount) {
       const shortfall = flashLoanAmount - minOutAmount;
@@ -748,6 +772,22 @@ export function buildRolloverBundle({
           abi: ADAPTER_ABI,
           functionName: 'permit2TransferFrom',
           args: [sourceMarketParams.loanToken, ETHER_GENERAL_ADAPTER_1, shortfall]
+        }),
+        value: 0n,
+        skipRevert: false,
+        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+      });
+    }
+
+    // Refund excess swap output from Adapter back to the user's wallet
+    if (minOutAmount > flashLoanAmount) {
+      const surplus = minOutAmount - flashLoanAmount;
+      reenterBundle.push({
+        to: ETHER_GENERAL_ADAPTER_1,
+        data: encodeFunctionData({
+          abi: ADAPTER_ABI,
+          functionName: 'erc20Transfer',
+          args: [sourceMarketParams.loanToken, userAddress, surplus]
         }),
         value: 0n,
         skipRevert: false,

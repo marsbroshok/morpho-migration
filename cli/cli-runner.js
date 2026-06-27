@@ -99,6 +99,7 @@ export class CliRunner {
       };
       let txType;
       let marketParams;
+      let txData = null;
 
       if (options.command === 'rollover') {
         const cmd = new RolloverCommand(blockchainClient, routerClient, simulationEngine, auditor);
@@ -129,6 +130,13 @@ export class CliRunner {
               data: calldataResult.finalCalldata,
               value: "0"
             };
+            if (options.debug) {
+              rawTx.debug = {
+                swapRequests: routerClient.requests || [],
+                rawCalldata: calldataResult.finalCalldata,
+                alchemyResponse: commandResult.simulationResult?.rawResponse || null
+              };
+            }
             fs.writeFileSync(options.saveSimulation, JSON.stringify(rawTx, null, 2), 'utf8');
             console.log(`Saved raw simulation payload to ${options.saveSimulation}`);
           }
@@ -208,6 +216,13 @@ export class CliRunner {
               data: calldataResult.finalCalldata,
               value: "0"
             };
+            if (options.debug) {
+              rawTx.debug = {
+                swapRequests: routerClient.requests || [],
+                rawCalldata: calldataResult.finalCalldata,
+                alchemyResponse: commandResult.simulationResult?.rawResponse || null
+              };
+            }
             fs.writeFileSync(options.saveSimulation, JSON.stringify(rawTx, null, 2), 'utf8');
             console.log(`Saved raw simulation payload to ${options.saveSimulation}`);
           }
@@ -231,7 +246,7 @@ export class CliRunner {
         const cmd = new SimulateRawCommand(blockchainClient, simulationEngine);
         txType = 'simulate-raw';
 
-        const txData = cmd.loadTransactionData(options.file);
+        txData = cmd.loadTransactionData(options.file);
         view.printRawSimulationAssessment(txData);
 
         commandResult.simulationResult = await cmd.runSimulation(txData);
@@ -247,6 +262,16 @@ export class CliRunner {
         view.printTransactionSubmitted(commandResult.txHash);
         const auditResult = await auditor.auditRealizedPrice(commandResult.txHash, txType, commandResult.auditDetails);
         view.printPostExecutionAudit(txType, auditResult);
+      }
+
+      // Render Debug Info if flag is active
+      if (options.debug) {
+        const debugInfo = {
+          swapRequests: routerClient.requests || [],
+          rawCalldata: commandResult.finalCalldata || txData?.data || null,
+          alchemyResponse: commandResult.simulationResult?.rawResponse || null
+        };
+        view.printDebugData(debugInfo);
       }
     } catch (err) {
       console.error(`Error: ${err.message}`);
@@ -282,7 +307,8 @@ export class CliRunner {
       simulation: false, // Default is execute immediately
       walletconnect: false,
       slippage: 1.0,
-      type: 'full'
+      type: 'full',
+      debug: false
     };
 
     // Manual arguments parser loop
@@ -321,10 +347,13 @@ export class CliRunner {
         options.saveSimulation = args[++i];
       } else if (arg === '--file' || arg === '-f') {
         options.file = args[++i];
+      } else if (arg === '--debug') {
+        options.debug = true;
       } else {
         throw new Error(`Unknown option "${arg}"`);
       }
     }
+
 
     // Command specific validation
     if (options.command === 'simulate-raw') {
