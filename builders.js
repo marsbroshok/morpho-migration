@@ -722,21 +722,13 @@ export function buildRolloverBundle({
   // Call G & H: Only if loan assets are different
   if (!isSameLoan) {
     const spenders = getSpendersToApprove(loanRouteData);
-    const tokensToApprove = [
-      destMarketParams.loanToken,
-      sourceMarketParams.loanToken,
-      destMarketParams.collateralToken,
-      '0x04F8DCa7bcCD8997ac57ca6feF7c705E17d6bcB6', // SY-5NOV
-      '0xa166323f03cd0dae70487d551d3b457c3151bee4', // SY-18JUN
-      '0xb5be35d8ff83d431899b95851cb17a2b4bcef150'  // PT-5NOV
-    ];
-    for (const token of tokensToApprove) {
-      for (const spender of spenders) {
-        appendApprovals(reenterBundle, token, spender, encodeFunctionData);
-      }
+    
+    // Gas-optimized approvals: Only approve the swap input token to the active spenders
+    for (const spender of spenders) {
+      appendApprovals(reenterBundle, destMarketParams.loanToken, spender, encodeFunctionData);
     }
 
-    // Execute Swap
+    // Execute Swap (settles directly to ETHER_GENERAL_ADAPTER_1)
     reenterBundle.push({
       to: loanRouteData.tx.to,
       data: loanRouteData.tx.data,
@@ -747,21 +739,8 @@ export function buildRolloverBundle({
 
     const minOutAmount = (loanExpectedOutput * (10000n - BigInt(Math.round(slippage * 100)))) / 10000n;
 
+    // Only generate Permit2 pull if the minimum swap output is below the repayment threshold
     if (minOutAmount < flashLoanAmount) {
-      // 1. Transfer all guaranteed swap output to Adapter
-      reenterBundle.push({
-        to: sourceMarketParams.loanToken,
-        data: encodeFunctionData({
-          abi: ERC20_ABI,
-          functionName: 'transfer',
-          args: [ETHER_GENERAL_ADAPTER_1, minOutAmount]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
-
-      // 2. Pull the shortfall from user to Adapter using Permit2
       const shortfall = flashLoanAmount - minOutAmount;
       reenterBundle.push({
         to: ETHER_GENERAL_ADAPTER_1,
@@ -774,49 +753,6 @@ export function buildRolloverBundle({
         skipRevert: false,
         callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
       });
-
-      // 3. Transfer the expected surplus (loanExpectedOutput - minOutAmount) to user wallet
-      if (loanExpectedOutput > minOutAmount) {
-        reenterBundle.push({
-          to: sourceMarketParams.loanToken,
-          data: encodeFunctionData({
-            abi: ERC20_ABI,
-            functionName: 'transfer',
-            args: [userAddress, loanExpectedOutput - minOutAmount]
-          }),
-          value: 0n,
-          skipRevert: false,
-          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-        });
-      }
-    } else {
-      // Transfer flashLoanAmount back to General Adapter for repayment
-      reenterBundle.push({
-        to: sourceMarketParams.loanToken,
-        data: encodeFunctionData({
-          abi: ERC20_ABI,
-          functionName: 'transfer',
-          args: [ETHER_GENERAL_ADAPTER_1, flashLoanAmount]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
-
-      // Transfer surplus (minOutAmount - flashLoanAmount) to user wallet
-      if (minOutAmount > flashLoanAmount) {
-        reenterBundle.push({
-          to: sourceMarketParams.loanToken,
-          data: encodeFunctionData({
-            abi: ERC20_ABI,
-            functionName: 'transfer',
-            args: [userAddress, minOutAmount - flashLoanAmount]
-          }),
-          value: 0n,
-          skipRevert: false,
-          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-        });
-      }
     }
   }
 

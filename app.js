@@ -692,13 +692,19 @@ async function initiateMigration() {
     if (!isSameLoan) {
       const decDiff = BigInt(destMarketParams.loanDecimals) - BigInt(sourceMarketParams.loanDecimals);
       const nominalInput = 10n ** BigInt(destMarketParams.loanDecimals);
+      
+      // Enforce 0.5% max slippage cap on basis points to align with MEV protection
+      const userSlippageBps = BigInt(Math.round(slippage * 10000));
+      const strictSlippageBps = userSlippageBps > 50n ? 50n : userSlippageBps;
+      const executionSlippage = Number(strictSlippageBps) / 10000;
+      
       let nominalRoute;
       try {
         nominalRoute = await fetchSwapRoute(
           destLoanAddress,
           nominalInput,
           sourceLoanAddress,
-          slippage,
+          executionSlippage,
           ETHER_GENERAL_ADAPTER_1,
           MORPHO_BUNDLER_V3
         );
@@ -711,8 +717,7 @@ async function initiateMigration() {
       console.log("DEBUG UI: nominalInput:", nominalInput, "nominalOutput:", nominalOutput);
       console.log("DEBUG UI: loanOracleRate:", loanOracleRate);
 
-      const slippageBasisPoints = BigInt(Math.round(slippage * 10000));
-      const desiredOutput = (debtAmount * 10000n) / (10000n - slippageBasisPoints);
+      const desiredOutput = (debtAmount * 10000n) / (10000n - strictSlippageBps);
       loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
 
       const targetLltv = destMarketParams.lltv;
@@ -736,7 +741,7 @@ async function initiateMigration() {
           destLoanAddress,
           loanExpectedInput,
           sourceLoanAddress,
-          slippage,
+          executionSlippage,
           ETHER_GENERAL_ADAPTER_1,
           MORPHO_BUNDLER_V3
         );
@@ -753,6 +758,9 @@ async function initiateMigration() {
     statusEl.innerText = "Compiling atomic flashloan bundle...";
 
     // Construct rollover bundle via builders.js helper
+    const userSlippageBps = BigInt(Math.round(slippage * 10000));
+    const strictSlippageBps = userSlippageBps > 50n ? 50n : userSlippageBps;
+
     const bundleResult = buildRolloverBundle({
       encodeFunctionData,
       encodeAbiParameters,
@@ -773,7 +781,7 @@ async function initiateMigration() {
       loanRouteData,
       loanExpectedInput,
       loanExpectedOutput,
-      slippage: slippage * 100,
+      slippage: Number(strictSlippageBps) / 100,
       borrowShares: liveBorrowShares
     });
 

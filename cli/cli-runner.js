@@ -39,6 +39,17 @@ export class CliRunner {
       // Determine wallet connection details
       let walletClient = null;
       const rpcUrl = this.resolveRpcUrl(options);
+      
+      // 1. Fetch current block number using a temporary lightweight provider first (only in simulation mode and if not already pinned)
+      if (options.simulation && !process.env.FORK_BLOCK_NUMBER) {
+        const tempClient = new BlockchainClient(rpcUrl, null);
+        const currentBlockNumber = await tempClient.publicClient.getBlockNumber();
+        process.env.FORK_BLOCK_NUMBER = currentBlockNumber.toString();
+        console.log(`Pinning simulation and queries to block: ${currentBlockNumber}`);
+      } else if (options.simulation && process.env.FORK_BLOCK_NUMBER) {
+        console.log(`Using pre-defined pinned simulation block: ${process.env.FORK_BLOCK_NUMBER}`);
+      }
+
       const alchemyKey = process.env.ALCHEMY_API_KEY || null;
       
       if (options.walletconnect) {
@@ -52,7 +63,7 @@ export class CliRunner {
         console.log('WalletConnect connection established.');
       }
 
-      // Initialize clients
+      // 2. Safely instantiate primary execution client with block environment pinned
       const blockchainClient = new BlockchainClient(rpcUrl, walletClient || options.privateKey);
 
       // Resolve signer address if signer is available
@@ -351,8 +362,16 @@ export class CliRunner {
     let rpcUrl = options.rpc || process.env.RPC_URL || null;
     const alchemyKey = process.env.ALCHEMY_API_KEY || null;
 
-    if (!rpcUrl && alchemyKey) {
-      rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${alchemyKey}`;
+    if (!rpcUrl) {
+      if (options.simulation) {
+        if (alchemyKey) {
+          rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${alchemyKey}`;
+        }
+      } else {
+        // MEV-Blocker for mainnet (default/empty or CHAIN_ID=1), fallback otherwise
+        const chainId = process.env.CHAIN_ID || '1';
+        rpcUrl = chainId === '1' ? 'https://rpc.mevblocker.io' : (process.env.RPC_URL || 'https://cloudflare-eth.com');
+      }
     }
     return rpcUrl;
   }

@@ -1,5 +1,47 @@
 # Project Work Log
 
+## 2026-06-27 - Resolved Morpho Rollover Simulation Reverts and Overhauled MEV Routing and Slippage (TDD)
+
+### Summary of Investigation
+1. **The Goal:** Fix Morpho position rollover simulation reverts, mitigate MEV/sandwich attack risks, optimize token approvals, and resolve block-pinning race conditions during simulations.
+2. **Investigation Findings & Strategy:**
+   - **MEV Protection & RPC Fallback:** Set the execution RPC fallback to MEV-Blocker (`https://rpc.mevblocker.io`) by default for all Mainnet transactions, shielding them from public mempool searcher bots. Added multi-chain fallback to support alternative networks if `CHAIN_ID` is set to something other than `1`.
+   - **Slippage Bps Scaling & Clamp:** Capped execution slippage tolerance to a maximum of 0.5% bps dynamically at runtime. Converted slippage parsing to BigInt basis points natively immediately upon CLI or UI input reading, eliminating float-to-BigInt precision drift issues.
+   - **Simplified Shortfall Callback Routing:** Routed the swap output directly to `ETHER_GENERAL_ADAPTER_1` as recipient. This allows the adapter to settle the flashloan repayment natively inside the callback, removing the need for redundant transfers/surplus transfers.
+   - **Gas-Optimized Token Approvals:** Streamlined `buildRolloverBundle` to only loop and approve `destMarketParams.loanToken` (the swap input token) to the active spenders parsed from the route, removing the gas-heavy O(N x M) loop over unrelated collateral and Pendle tokens.
+   - **Block-Pinning Race Condition Fix:** Refactored the CLI client startup sequence inside `cli/cli-runner.js` to query the block number using a temporary lightweight provider, declare `process.env.FORK_BLOCK_NUMBER` globally, and only then instantiate the primary execution client.
+   - **Simulation Permit2 Authorization Prepend:** Updated the JSDOM test suite (`tests/simulation.test.mjs`) to dynamically prepend standard ERC20 and Permit2 approvals for the old/new loan tokens to the adapter from `TEST_USER_ADDRESS`, preventing simulated shortfall reverts on the mainnet fork.
+3. **Outcome:**
+   - Implemented native basis point slippage clamping in both CLI and Web UI.
+   - Optimized approval bundles and shortfall routing logic.
+   - Verified that the new unit test `tests/mev_best_practices.test.mjs` passes.
+   - Verified that all live integration simulation tests (`npm test` and `node tests/simulation.test.mjs`) execute and pass successfully on mainnet forks.
+   - Manually checked slippage clamp and low-slippage pass-through behaviors.
+
+### Changes Applied
+* **File Modified:** [builders.js](file://builders.js) (gas-optimized approvals and direct adapter callback swap output routing).
+* **File Modified:** [cli/cli-runner.js](file://cli/cli-runner.js) (fixed block pinning race condition, resolved multi-chain RPC routing).
+* **File Modified:** [cli/rollover-command.js](file://cli/rollover-command.js) (implemented native BigInt basis point slippage capping and logged MEV warnings).
+* **File Modified:** [app.js](file://app.js) (implemented dynamic basis point slippage capping and aligned frontend parameters).
+* **File Modified:** [tests/simulation.test.mjs](file://tests/simulation.test.mjs) (added dynamic Permit2 and ERC20 approval prepending for simulated users).
+* **File New:** [tests/mev_best_practices.test.mjs](file://tests/mev_best_practices.test.mjs) (TDD unit test verifying MEV protection, adapter swap output routing, and gas optimization).
+
+### Verification Terminal Commands Run
+* Run TDD unit tests:
+  ```bash
+  node tests/mev_best_practices.test.mjs
+  ```
+* Run integration simulation tests:
+  ```bash
+  node tests/simulation.test.mjs
+  ```
+* Run full project tests:
+  ```bash
+  npm test
+  ```
+
+---
+
 ## 2026-06-27 - Refactored Cross-Loan Borrow Estimation to Iterative Scaling, Cleaned Prepend Approvals, and Documented Math (TDD)
 
 ### Summary of Investigation

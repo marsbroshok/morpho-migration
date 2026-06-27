@@ -122,7 +122,13 @@ export class RolloverCommand {
   async fetchSwapRoute(assessment, options) {
     const isSameCollateral = (assessment.sourceCollateralAddress === assessment.destCollateralAddress);
     const isSameLoan = (assessment.sourceLoanAddress.toLowerCase() === assessment.destLoanAddress.toLowerCase());
-    const slippageFrac = assessment.slippage / 100;
+    
+    // Parse slippage to BigInt basis points (bps) and cap at 50 bps (0.5%) for MEV protection
+    const userSlippageBps = BigInt(Math.round((options.slippage || 3.0) * 100));
+    const strictSlippageBps = userSlippageBps > 50n ? 50n : userSlippageBps;
+    const slippageFrac = Number(strictSlippageBps) / 10000;
+
+    console.log(`MEV Protection: Enforcing execution slippage tolerance of ${Number(strictSlippageBps) / 100}% (Requested: ${options.slippage || 3.0}%).`);
 
     let routeData = null;
     let expectedNewCollateral = assessment.collateralAmount;
@@ -163,9 +169,9 @@ export class RolloverCommand {
     let slippagePct = 0.0;
 
     if (isSameCollateral) {
-      oracleRatio = 10n ** 18n;
-      quotedRate = 10n ** 18n;
-      slippagePct = 0.0;
+       oracleRatio = 10n ** 18n;
+       quotedRate = 10n ** 18n;
+       slippagePct = 0.0;
     } else {
       oracleRatio = (oldOracleUSD * 10n ** 18n) / newOracleUSD;
       quotedRate = (expectedNewCollateral * 10n ** 18n) / assessment.collateralAmount;
@@ -203,8 +209,7 @@ export class RolloverCommand {
 
       // 3. Solve exact borrow input required to cover flashloan worst-case output
       // Desired Output = flashLoanAmount / (1 - slippage)
-      const slippageBasisPoints = BigInt(Math.round(assessment.slippage * 100));
-      const desiredOutput = (assessment.debtAmount * 10000n) / (10000n - slippageBasisPoints);
+      const desiredOutput = (assessment.debtAmount * 10000n) / (10000n - strictSlippageBps);
       
       // Required Input = (desiredOutput * nominalInput) / nominalOutput
       loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
@@ -225,7 +230,7 @@ export class RolloverCommand {
         }
       }
 
-      // Fetch final route for swapping the borrowed new loan asset back to the old loan asset
+      // Fetch final route for swapping the borrowed new loan asset back to the old loan asset (settles directly to ETHER_GENERAL_ADAPTER_1)
       const swapInputAmount = loanExpectedInput - 100000n;
       loanRouteData = await this.routerClient.fetchSwapRoute(
         assessment.destLoanAddress,
@@ -233,7 +238,7 @@ export class RolloverCommand {
         assessment.sourceLoanAddress,
         slippageFrac,
         MORPHO_BUNDLER_V3,
-        MORPHO_BUNDLER_V3
+        ETHER_GENERAL_ADAPTER_1
       );
       loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
 
@@ -269,6 +274,9 @@ export class RolloverCommand {
   async compileCalldata(assessment, swap, options) {
     const isFull = (assessment.type === 'full');
     
+    const userSlippageBps = BigInt(Math.round((options.slippage || 3.0) * 100));
+    const strictSlippageBps = userSlippageBps > 50n ? 50n : userSlippageBps;
+
     // Calculate safe borrow threshold
     const targetLltv = assessment.destMarketParams.lltv;
     const safeLtv = targetLltv - 5000000000000000n; // 0.5% safety margin
@@ -295,8 +303,8 @@ export class RolloverCommand {
       isSameLoan: swap.isSameLoan,
       loanRouteData: swap.loanRouteData,
       loanExpectedInput: swap.loanExpectedInput,
-      loanExpectedOutput: swap.isSameLoan ? 0n : (swap.loanExpectedOutput * (10000n - BigInt(Math.round(assessment.slippage * 100)))) / 10000n,
-      slippage: 0,
+      loanExpectedOutput: swap.isSameLoan ? 0n : swap.loanExpectedOutput,
+      slippage: Number(strictSlippageBps) / 100,
       borrowShares: assessment.position.borrowShares,
       maxSafeBorrowAmount,
       capBorrow: options.capBorrow
@@ -352,8 +360,7 @@ export class RolloverCommand {
       loanFairValueLoss = loanFairMarketValue - swap.loanExpectedOutput;
       
       // Calculate worst-case minimum swap output based on slippage (matching builders.js)
-      const slippageBasisPoints = BigInt(Math.round(assessment.slippage * 100));
-      const minSwapOutput = (swap.loanExpectedOutput * (10000n - slippageBasisPoints)) / 10000n;
+      const minSwapOutput = (swap.loanExpectedOutput * (10000n - strictSlippageBps)) / 10000n;
       
       loanWalletShortfall = flashLoanAmount - minSwapOutput;
     } else {

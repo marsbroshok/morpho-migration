@@ -16,6 +16,7 @@ These rules apply to all development, styling, calculations, simulations, testin
 - **Multi-Decimal Scaling:** All mathematical functions handling token amounts, prices, LTV, or leverage must be tested with combinations of mixed decimal tokens (e.g., 6-decimal USDC, 18-decimal WETH, 24-decimal oracles, etc.) to ensure scaling factors are applied correctly.
 - **Formulas Documentation:** Any core mathematical formula implemented in code (e.g., LTV, collateral value, leverage ratio) must include a docstring or comment showing the mathematical equation and the expected scaling factors (e.g. division by $10^{36}$).
 - **No Hardcoded Scaling in UI/Display:** Display preview and rate formatting logic in the frontend (`app.js` or CLI console outputs) must dynamically scale values based on the loan asset and collateral asset decimals retrieved from the Morpho API, rather than assuming USDC/18-decimal defaults (e.g., avoid hardcoding `10n ** 6n` or `/ 1e6`).
+- **Immediate BigInt Slippage Parsing:** User slippage inputs must be parsed directly into BigInt basis points (bps) immediately at CLI/UI boundaries. Keep all downstream math, sizing, and threshold logic natively in BigInt to avoid float-to-BigInt precision drift.
 
 ---
 
@@ -27,6 +28,7 @@ These rules apply to all development, styling, calculations, simulations, testin
   1. Fetch a nominal swap quote using a 1:1 guess (scaled by decimals).
   2. Use the returned rate to calculate the exact required input amount.
   3. Re-query the swap router with the solved input amount to obtain the final route.
+- **MEV Routing Dynamic Fallbacks:** Default execution RPCs to private MEV-blocker endpoints (e.g., MEV-Blocker) for Mainnet transactions, but verify `CHAIN_ID` first. Fall back to standard configured providers for other chain IDs to support L2 and testnet testing.
 
 ---
 
@@ -51,4 +53,5 @@ These rules apply to all development, styling, calculations, simulations, testin
 - **Import Simplicity for Shadow Tests:** Browser-side imports inside `app.js` must be kept as simple, single-line imports (`import { ... } from '...';`) to ensure regex-based Node.js shadow testing compatibility is preserved.
 - **ESM Cache Isolation:** Tests utilizing dynamically generated shadow files must be run in isolated child processes to avoid stale module states resulting from Node.js ESM import caching.
 - **Mainnet Fork Block Pinning:** All mainnet fork simulation tests must run against a pinned block number to prevent flakiness due to sliding live states, accrued interest, or market fluctuations.
+- **Block Pinning Sequence:** Set the `process.env.FORK_BLOCK_NUMBER` environment variable *before* instantiating any viem or custom blockchain client that relies on it. Respect and preserve pre-defined environment values without overwriting them.
 - **Mainnet Fork Test Resilience:** If a fork simulation test relies on a live mainnet position, the test setup must dynamically check the position state and, if needed, programmatically modify the state (e.g., prepending debt repayments or collateral deposits) before executing the simulation, preventing LLTV or margin-based flakiness.

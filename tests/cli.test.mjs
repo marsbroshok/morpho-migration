@@ -691,8 +691,11 @@ async function testCliRunnerEnvAndRpcFallback() {
   delete process.env.RPC_URL;
   process.env.ALCHEMY_API_KEY = 'mock_alchemy_key';
   
-  const resolved = runner.resolveRpcUrl({});
-  assert.strictEqual(resolved, 'https://eth-mainnet.g.alchemy.com/v2/mock_alchemy_key', 'Should fallback to Alchemy endpoint');
+  const resolved = runner.resolveRpcUrl({ simulation: true });
+  assert.strictEqual(resolved, 'https://eth-mainnet.g.alchemy.com/v2/mock_alchemy_key', 'Should fallback to Alchemy endpoint for simulation');
+
+  const resolvedLive = runner.resolveRpcUrl({});
+  assert.strictEqual(resolvedLive, 'https://rpc.mevblocker.io', 'Should fallback to MEV-Blocker for live transactions');
   
   // Restore
   if (backupKey) process.env.ALCHEMY_API_KEY = backupKey;

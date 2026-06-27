@@ -222,6 +222,57 @@ async function getPrependRepayCalls() {
       });
     }
   }
+
+  // Prepend standard ERC20 and Permit2 approvals for the old and new loan tokens to ETHER_GENERAL_ADAPTER_1
+  const oldMarketId = document.getElementById('oldMarketId').value;
+  const newMarketId = document.getElementById('newMarketId').value;
+  
+  const [oldMarketParams, newMarketParams] = await Promise.all([
+    blockchainClient.fetchMarketParams(oldMarketId),
+    blockchainClient.fetchMarketParams(newMarketId)
+  ]);
+
+  const tokensToApprove = [oldMarketParams.loanToken, newMarketParams.loanToken];
+  const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+  const ADAPTER_ADDRESS = '0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0';
+  
+  for (const token of tokensToApprove) {
+    // 1. ERC20 approve Permit2
+    prependCalls.push({
+      from: TEST_USER_ADDRESS,
+      to: token,
+      value: '0x0',
+      data: encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [PERMIT2_ADDRESS, 2n ** 256n - 1n]
+      })
+    });
+    
+    // 2. Permit2 approve Adapter
+    prependCalls.push({
+      from: TEST_USER_ADDRESS,
+      to: PERMIT2_ADDRESS,
+      value: '0x0',
+      data: encodeFunctionData({
+        abi: [{
+          "inputs": [
+            { "name": "token", "type": "address" },
+            { "name": "spender", "type": "address" },
+            { "name": "amount", "type": "uint160" },
+            { "name": "expiration", "type": "uint48" }
+          ],
+          "name": "approve",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }],
+        functionName: 'approve',
+        args: [token, ADAPTER_ADDRESS, 2n ** 160n - 1n, 2 ** 32 - 1]
+      })
+    });
+  }
+
   return prependCalls;
 }
 
