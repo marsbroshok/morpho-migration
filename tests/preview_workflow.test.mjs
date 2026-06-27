@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { JSDOM, VirtualConsole } from 'jsdom';
-import { decodeFunctionData, decodeAbiParameters } from 'viem';
+import { decodeFunctionData, decodeAbiParameters, encodeAbiParameters } from 'viem';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,6 +29,24 @@ const dom = new JSDOM(html, {
 global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
+
+// Mock localStorage
+const storage = {
+  morpho_migration_rpc_url: 'https://eth-mainnet.g.alchemy.com/v2/mockkey',
+  morpho_migration_alchemy_key: 'mockkey',
+  morpho_migration_auto_simulate: 'true'
+};
+const mockLocalStorage = {
+  getItem: (key) => storage[key] || null,
+  setItem: (key, val) => { storage[key] = val; },
+  removeItem: (key) => { delete storage[key]; },
+  clear: () => { Object.keys(storage).forEach(k => delete storage[k]); }
+};
+Object.defineProperty(dom.window, 'localStorage', {
+  value: mockLocalStorage,
+  writable: true
+});
+global.localStorage = mockLocalStorage;
 
 // Mock window.ethereum
 global.sendTransactionCalled = false;
@@ -90,8 +108,72 @@ global.fetch = async (url, options) => {
       })
     };
   }
+  if (urlStr.includes('alchemy.com') || urlStr.includes('localhost') || urlStr.includes('127.0.0.1')) {
+    const reqBody = JSON.parse(options.body);
+    console.log(`[DEBUG fetch mock] Intercepted RPC URL: ${urlStr}, method: ${reqBody.method}`);
+    let positionCallCount = 0;
+    const mockCalls = reqBody.params[0].blockStateCalls[0].calls.map((c) => {
+      // Decode data to see if it is a position call
+      let isPosition = false;
+      try {
+        const decoded = decodeFunctionData({
+          abi: [
+            {
+              "inputs": [
+                { "name": "id", "type": "bytes32" },
+                { "name": "user", "type": "address" }
+              ],
+              "name": "position",
+              "outputs": [
+                { "name": "supplyShares", "type": "uint256" },
+                { "name": "borrowShares", "type": "uint128" },
+                { "name": "collateral", "type": "uint128" }
+              ],
+              "stateMutability": "view",
+              "type": "function"
+            }
+          ],
+          data: c.data
+        });
+        if (decoded.functionName === 'position') {
+          isPosition = true;
+        }
+      } catch (e) {}
+
+      if (isPosition) {
+        positionCallCount++;
+        const collateralVal = (positionCallCount === 2) ? 8000320000000000000000n : 0n;
+        const returnData = encodeAbiParameters(
+          [
+            { name: 'supplyShares', type: 'uint256' },
+            { name: 'borrowShares', type: 'uint128' },
+            { name: 'collateral', type: 'uint128' }
+          ],
+          [0n, 0n, collateralVal]
+        );
+        return { status: "0x1", returnData };
+      }
+      return {
+        status: "0x1",
+        returnData: "0x0000000000000000000000000000000000000000000000000000000000000000"
+      };
+    });
+    return {
+      ok: true,
+      json: async () => ({
+        jsonrpc: "2.0",
+        id: 1,
+        result: [
+          {
+            calls: mockCalls
+          }
+        ]
+      })
+    };
+  }
   throw new Error(`Unhandled mock fetch request: ${urlStr}`);
 };
+global.window.fetch = global.fetch;
 
 // 3. Preprocess app.js and write shadow file
 const appPath = path.resolve(__dirname, '../app.js');
@@ -205,6 +287,12 @@ try {
   await new Promise(resolve => setTimeout(resolve, 50));
 
   // Verify that preview container is visible but transaction was NOT sent to wallet yet
+  if (previewContainer.style.display !== 'block') {
+    const errorBanner = document.getElementById('globalErrorBanner');
+    console.error("Global Error Banner Text:", errorBanner ? errorBanner.innerText : "none");
+    const statusText = document.getElementById('status');
+    console.error("Status Element Text:", statusText ? statusText.innerText : "none");
+  }
   assert.strictEqual(previewContainer.style.display, 'block', "previewContainer should be visible");
   assert.strictEqual(global.sendTransactionCalled, false, "walletClient.sendTransaction should NOT be called yet");
   assert.strictEqual(maturityNotice.style.display, 'none', "maturityNotice should be hidden since PT is not expired");
@@ -287,7 +375,11 @@ try {
   );
 
   const reenterBundle = decodedReenterParams[0];
-  assert.strictEqual(reenterBundle.length, 8, "Reenter bundle should contain 8 actions");
+  console.log("Decoded reenterBundle calls in test:");
+  reenterBundle.forEach((c, idx) => {
+    console.log(`  Call #${idx}: to=${c.to}`);
+  });
+  assert.strictEqual(reenterBundle.length, 9, "Reenter bundle should contain 9 actions");
 
   const repayCall = reenterBundle[0];
   const decodedRepay = decodeFunctionData({

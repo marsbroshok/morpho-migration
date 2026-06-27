@@ -335,6 +335,10 @@ export class CliView {
     }
 
     if (txType === 'rollover') {
+      if (audit.isSameCollateral) {
+        console.log(`  ${CliFormatter.color('Direct Rollover: Same collateral asset used for both markets (No swap required).', 'green')}`);
+        return;
+      }
       const spentSym = audit.spentSymbol || "PT-old";
       const receivedSym = audit.receivedSymbol || "PT-new";
       CliFormatter.printItem('Realized Swap Rate', `1 ${spentSym} = ${audit.realizedRate.toFixed(4)} ${receivedSym}`);

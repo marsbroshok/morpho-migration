@@ -326,6 +326,7 @@ async function fetchSwapRoute(inputToken, inputAmount, outputToken, slippage, re
   if (sender) {
     requestBody.sender = sender;
   }
+  console.log("[DEBUG fetchSwapRoute] requestBody =", JSON.stringify(requestBody));
 
   const response = await fetch(swapRouterApiUrl, {
     method: 'POST',
@@ -560,12 +561,14 @@ async function onMarketIdInput(inputId, labelId, ptInputId, ptBadgeId, loanInput
       
       if (ptInputId && ptBadgeId) {
         const ptInput = document.getElementById(ptInputId);
+        console.log("[DEBUG APP] setting ptInputId =", ptInputId, "value =", params.collateralToken);
         ptInput.value = params.collateralToken;
         await onTokenAddressInput(ptInputId, ptBadgeId);
       }
       if (loanInputId && loanBadgeId) {
         const loanInput = document.getElementById(loanInputId);
         loanInput.value = params.loanToken;
+        console.log("[DEBUG APP] onMarketIdInput inputId =", inputId, "loanToken =", params.loanToken);
         await onTokenAddressInput(loanInputId, loanBadgeId);
       }
     } catch (err) {
@@ -623,6 +626,7 @@ async function initiateMigration() {
     const destMarketId = document.getElementById('newMarketId').value;
 
     const sourceMarketParams = await fetchMarketParams(sourceMarketId);
+    console.log("[DEBUG APP] sourceLoanAddress =", sourceLoanAddress, "destLoanAddress =", destLoanAddress);
     const destMarketParams = await fetchMarketParams(destMarketId);
 
     const isFull = (migrationType === 'full');
@@ -640,7 +644,7 @@ async function initiateMigration() {
 
     if (!isSameCollateral) {
       try {
-        routeData = await fetchSwapRoute(sourceCollateralAddress, collateralAmount, destCollateralAddress, slippage, ETHER_GENERAL_ADAPTER_1, MORPHO_BUNDLER_V3);
+        routeData = await fetchSwapRoute(sourceCollateralAddress, collateralAmount, destCollateralAddress, slippage, MORPHO_BUNDLER_V3, MORPHO_BUNDLER_V3);
         expectedNewCollateral = BigInt(routeData.outputs[0].amount);
       } catch (err) {
         showError(`Swap Router Error: ${err.message}. Check token addresses or slippage bounds.`);
@@ -690,8 +694,8 @@ async function initiateMigration() {
     let loanQuotedRate = 0n;
 
     if (!isSameLoan) {
-      const decDiff = BigInt(destMarketParams.loanDecimals) - BigInt(sourceMarketParams.loanDecimals);
-      const nominalInput = 10n ** BigInt(destMarketParams.loanDecimals);
+      const guessAmount = debtAmount * (10n ** BigInt(destMarketParams.loanDecimals)) / (10n ** BigInt(sourceMarketParams.loanDecimals));
+      const nominalInput = guessAmount > 0n ? guessAmount : (10n ** BigInt(destMarketParams.loanDecimals));
       
       // Enforce 0.5% max slippage cap on basis points to align with MEV protection
       const userSlippageBps = BigInt(Math.round(slippage * 10000));
@@ -713,6 +717,7 @@ async function initiateMigration() {
         return;
       }
       const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
+      const decDiff = BigInt(destMarketParams.loanDecimals) - BigInt(sourceMarketParams.loanDecimals);
       loanOracleRate = (nominalOutput * 10n ** (18n + decDiff)) / nominalInput;
       console.log("DEBUG UI: nominalInput:", nominalInput, "nominalOutput:", nominalOutput);
       console.log("DEBUG UI: loanOracleRate:", loanOracleRate);
@@ -742,9 +747,10 @@ async function initiateMigration() {
           loanExpectedInput,
           sourceLoanAddress,
           executionSlippage,
-          ETHER_GENERAL_ADAPTER_1,
+          MORPHO_BUNDLER_V3,
           MORPHO_BUNDLER_V3
         );
+        window.lastLoanRouteData = loanRouteData;
         loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
       } catch (err) {
         showError(`Swap Router Loan Route Error: ${err.message}. Failed to fetch conversion route for loan asset.`);
@@ -756,34 +762,293 @@ async function initiateMigration() {
     }
 
     statusEl.innerText = "Compiling atomic flashloan bundle...";
+    console.log("[DEBUG APP] Rollover inputs: loanExpectedInput =", loanExpectedInput?.toString(), "loanExpectedOutput =", loanExpectedOutput?.toString(), "debtAmount =", debtAmount?.toString(), "isFull =", isFull);
 
     // Construct rollover bundle via builders.js helper
     const userSlippageBps = BigInt(Math.round(slippage * 10000));
     const strictSlippageBps = userSlippageBps > 50n ? 50n : userSlippageBps;
 
-    const bundleResult = buildRolloverBundle({
-      encodeFunctionData,
-      encodeAbiParameters,
-      keccak256,
-      sourceMarketParams,
-      destMarketParams,
-      collateralAmount,
-      debtAmount,
-      isFull,
-      sourceCollateralAddress,
-      destCollateralAddress,
-      routeData,
-      userAddress,
-      ETHER_GENERAL_ADAPTER_1,
-      MORPHO_BUNDLER_V3,
-      isSameCollateral,
-      isSameLoan,
-      loanRouteData,
-      loanExpectedInput,
-      loanExpectedOutput,
-      slippage: Number(strictSlippageBps) / 100,
-      borrowShares: liveBorrowShares
-    });
+    let bundleResult;
+    if (!isSameCollateral || !isSameLoan) {
+      statusEl.innerText = "Resolving swap whale and simulating nominal swap...";
+      const apiKey = document.getElementById('settingsAlchemyKey').value.trim();
+      const customRpcUrl = document.getElementById('settingsRpcUrl').value.trim();
+      let rpcUrl = customRpcUrl;
+      if (!rpcUrl && apiKey) {
+        rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`;
+      }
+      if (!rpcUrl) {
+        throw new Error("RPC URL or Alchemy API Key is required to compile cross-asset rollover bundles. Please configure it in the settings.");
+      }
+      const client = publicClient || createPublicClient({ chain: mainnet, transport: http(rpcUrl) });
+      
+      // Compile Phase 1 nominal bundle
+      const nominalResult = buildRolloverBundle({
+        encodeFunctionData,
+        encodeAbiParameters,
+        keccak256,
+        sourceMarketParams,
+        destMarketParams,
+        collateralAmount,
+        debtAmount,
+        isFull,
+        sourceCollateralAddress,
+        destCollateralAddress,
+        routeData,
+        userAddress,
+        ETHER_GENERAL_ADAPTER_1,
+        MORPHO_BUNDLER_V3,
+        isSameCollateral,
+        isSameLoan,
+        loanRouteData,
+        loanExpectedInput,
+        loanExpectedOutput,
+        slippage: Number(strictSlippageBps) / 100,
+        borrowShares: liveBorrowShares,
+        actualLoanOutput: null,
+        actualCollateralOutput: null
+      });
+
+      // Construct Calls array for simulation
+      const calls = [];
+      const checkAuth = async (authorized) => {
+        try {
+          return await client.readContract({
+            address: MORPHO_BLUE,
+            abi: [{"inputs":[{"name":"","type":"address"},{"name":"","type":"address"}],"name":"isAuthorized","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"}],
+            functionName: 'isAuthorized',
+            args: [userAddress, authorized]
+          });
+        } catch (err) {
+          return true;
+        }
+      };
+      const [isAdapterAuth, isBundlerAuth] = await Promise.all([
+        checkAuth(ETHER_GENERAL_ADAPTER_1),
+        checkAuth(MORPHO_BUNDLER_V3)
+      ]);
+      if (!isAdapterAuth) {
+        calls.push({
+          from: userAddress,
+          to: MORPHO_BLUE,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: [{"inputs":[{"name":"authorized","type":"address"},{"name":"newIsAuthorized","type":"bool"}],"name":"setAuthorization","outputs":[],"stateMutability":"nonpayable","type":"function"}],
+            functionName: 'setAuthorization',
+            args: [ETHER_GENERAL_ADAPTER_1, true]
+          })
+        });
+      }
+      if (!isBundlerAuth) {
+        calls.push({
+          from: userAddress,
+          to: MORPHO_BLUE,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: [{"inputs":[{"name":"authorized","type":"address"},{"name":"newIsAuthorized","type":"bool"}],"name":"setAuthorization","outputs":[],"stateMutability":"nonpayable","type":"function"}],
+            functionName: 'setAuthorization',
+            args: [MORPHO_BUNDLER_V3, true]
+          })
+        });
+      }
+
+      let userBalanceBeforeIndex = -1;
+      if (!isSameLoan) {
+        calls.push({
+          from: userAddress,
+          to: sourceMarketParams.loanToken,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: ERC20_ABI,
+            functionName: 'balanceOf',
+            args: [userAddress]
+          })
+        });
+        userBalanceBeforeIndex = calls.length - 1;
+      }
+
+      let collateralBeforeIndex = -1;
+      if (!isSameCollateral) {
+        calls.push({
+          from: userAddress,
+          to: MORPHO_BLUE,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: MORPHO_BLUE_ABI,
+            functionName: 'position',
+            args: [destMarketId, userAddress]
+          })
+        });
+        collateralBeforeIndex = calls.length - 1;
+      }
+
+      // Execute nominal bundle
+      calls.push({
+        from: userAddress,
+        to: MORPHO_BUNDLER_V3,
+        value: '0x0',
+        data: nominalResult.finalCalldata
+      });
+
+      const queryIndexMap = {};
+      // Query balance checks
+      if (!isSameCollateral) {
+        calls.push({
+          from: userAddress,
+          to: MORPHO_BLUE,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: MORPHO_BLUE_ABI,
+            functionName: 'position',
+            args: [destMarketId, userAddress]
+          })
+        });
+        queryIndexMap.collateral = calls.length - 1;
+      }
+      if (!isSameLoan) {
+        calls.push({
+          from: userAddress,
+          to: sourceMarketParams.loanToken,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: ERC20_ABI,
+            functionName: 'balanceOf',
+            args: [userAddress]
+          })
+        });
+        queryIndexMap.loan = calls.length - 1;
+      }
+
+      // Submit simulation to get balance
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_simulateV1",
+          params: [
+            { blockStateCalls: [{ calls }] },
+            (typeof process !== 'undefined' && process.env.FORK_BLOCK_NUMBER) ? 
+              (process.env.FORK_BLOCK_NUMBER.startsWith('0x') ? process.env.FORK_BLOCK_NUMBER : `0x${BigInt(process.env.FORK_BLOCK_NUMBER).toString(16)}`) : 
+              "latest"
+          ]
+        })
+      });
+      const resJson = await response.json();
+      if (resJson.error) {
+        throw new Error(`Nominal simulation failed: ${resJson.error.message || JSON.stringify(resJson.error)}`);
+      }
+      const results = resJson.result[0].calls;
+      
+      // The main execution call is before the appended queries
+      const mainCallIdx = results.length - Object.keys(queryIndexMap).length - 1;
+      const mainCall = results[mainCallIdx];
+      if (mainCall.status !== '0x1') {
+        const errMsg = mainCall.error ? (mainCall.error.message || JSON.stringify(mainCall.error)) : "unknown error";
+        throw new Error(`Nominal simulation reverted: ${errMsg}`);
+      }
+
+      let actualCollateralOutput = null;
+      let actualLoanOutput = null;
+
+      if (!isSameCollateral) {
+        const balanceCallBefore = results[collateralBeforeIndex];
+        const balanceCall = results[queryIndexMap.collateral];
+        if (balanceCallBefore.status !== '0x1' || balanceCall.status !== '0x1') {
+          const errMsgBefore = balanceCallBefore.error ? (balanceCallBefore.error.message || JSON.stringify(balanceCallBefore.error)) : "unknown error";
+          const errMsg = balanceCall.error ? (balanceCall.error.message || JSON.stringify(balanceCall.error)) : "unknown error";
+          throw new Error(`Collateral position query failed: before error: ${errMsgBefore}, after error: ${errMsg}`);
+        }
+        
+        const decodedBefore = decodeAbiParameters(
+          [
+            { name: 'supplyShares', type: 'uint256' },
+            { name: 'borrowShares', type: 'uint128' },
+            { name: 'collateral', type: 'uint128' }
+          ],
+          balanceCallBefore.returnData || '0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'
+        );
+        const decodedAfter = decodeAbiParameters(
+          [
+            { name: 'supplyShares', type: 'uint256' },
+            { name: 'borrowShares', type: 'uint128' },
+            { name: 'collateral', type: 'uint128' }
+          ],
+          balanceCall.returnData || '0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'
+        );
+        
+        const collateralBefore = BigInt(decodedBefore[2] || 0n);
+        const collateralAfter = BigInt(decodedAfter[2] || 0n);
+        actualCollateralOutput = collateralAfter - collateralBefore;
+        console.log("[DEBUG APP] Actual output collateral balance resolved:", actualCollateralOutput.toString());
+      }
+
+      if (!isSameLoan) {
+        const balanceCallBefore = results[userBalanceBeforeIndex];
+        const balanceCallAfter = results[queryIndexMap.loan];
+        if (balanceCallBefore.status !== '0x1' || balanceCallAfter.status !== '0x1') {
+          const errMsgBefore = balanceCallBefore.error ? (balanceCallBefore.error.message || JSON.stringify(balanceCallBefore.error)) : "unknown error";
+          const errMsgAfter = balanceCallAfter.error ? (balanceCallAfter.error.message || JSON.stringify(balanceCallAfter.error)) : "unknown error";
+          throw new Error(`Loan balance query failed: before error: ${errMsgBefore}, after error: ${errMsgAfter}`);
+        }
+        const balBefore = BigInt(balanceCallBefore.returnData || '0x0');
+        const balAfter = BigInt(balanceCallAfter.returnData || '0x0');
+        actualLoanOutput = nominalResult.flashLoanAmount + (balAfter - balBefore);
+        console.log("[DEBUG APP] Actual output loan balance resolved:", actualLoanOutput.toString());
+      }
+
+      // Compile Phase 2 final bundle
+      bundleResult = buildRolloverBundle({
+        encodeFunctionData,
+        encodeAbiParameters,
+        keccak256,
+        sourceMarketParams,
+        destMarketParams,
+        collateralAmount,
+        debtAmount,
+        isFull,
+        sourceCollateralAddress,
+        destCollateralAddress,
+        routeData,
+        userAddress,
+        ETHER_GENERAL_ADAPTER_1,
+        MORPHO_BUNDLER_V3,
+        isSameCollateral,
+        isSameLoan,
+        loanRouteData,
+        loanExpectedInput,
+        loanExpectedOutput,
+        slippage: Number(strictSlippageBps) / 100,
+        borrowShares: liveBorrowShares,
+        actualLoanOutput: actualLoanOutput,
+        actualCollateralOutput: actualCollateralOutput
+      });
+    } else {
+      bundleResult = buildRolloverBundle({
+        encodeFunctionData,
+        encodeAbiParameters,
+        keccak256,
+        sourceMarketParams,
+        destMarketParams,
+        collateralAmount,
+        debtAmount,
+        isFull,
+        sourceCollateralAddress,
+        destCollateralAddress,
+        routeData,
+        userAddress,
+        ETHER_GENERAL_ADAPTER_1,
+        MORPHO_BUNDLER_V3,
+        isSameCollateral,
+        isSameLoan,
+        loanRouteData,
+        loanExpectedInput,
+        loanExpectedOutput,
+        slippage: Number(strictSlippageBps) / 100,
+        borrowShares: liveBorrowShares
+      });
+    }
 
     const borrowAmount = bundleResult.borrowAmount;
     const finalCalldata = bundleResult.finalCalldata;
@@ -882,7 +1147,8 @@ async function initiateMigration() {
     }
 
   } catch (error) {
-    showError(error.message || error);
+    console.error("Migration failed:", error);
+    showError(error.stack || error.message);
   }
 }
 

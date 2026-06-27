@@ -21,6 +21,16 @@ export class TransactionAuditor {
   async auditRealizedPrice(txHash, txType, details) {
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash });
 
+    if (txType === 'rollover' && details.spentToken.toLowerCase() === details.receivedToken.toLowerCase()) {
+      return {
+        isSameCollateral: true,
+        spentSymbol: details.spentSymbol || 'Collateral',
+        receivedSymbol: details.receivedSymbol || 'Collateral',
+        spentDecimals: details.spentDecimals,
+        receivedDecimals: details.receivedDecimals
+      };
+    }
+
     let spentToken = getAddress(details.spentToken);
     let receivedToken = getAddress(details.receivedToken);
     let realizedRate = 0;

@@ -28,6 +28,24 @@ global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
 
+// Mock localStorage
+const storage = {
+  morpho_migration_rpc_url: 'https://eth-mainnet.g.alchemy.com/v2/mockkey',
+  morpho_migration_alchemy_key: 'mockkey',
+  morpho_migration_auto_simulate: 'true'
+};
+const mockLocalStorage = {
+  getItem: (key) => storage[key] || null,
+  setItem: (key, val) => { storage[key] = val; },
+  removeItem: (key) => { delete storage[key]; },
+  clear: () => { Object.keys(storage).forEach(k => delete storage[k]); }
+};
+Object.defineProperty(dom.window, 'localStorage', {
+  value: mockLocalStorage,
+  writable: true
+});
+global.localStorage = mockLocalStorage;
+
 // Mock window.ethereum
 global.sendTransactionCalled = false;
 global.window.ethereum = {
@@ -73,6 +91,25 @@ global.fetch = async (url, options) => {
           {
             outputs: [{ amount: '3000000000' }], // USDC expected output amount (for PT -> USDC swap during deleverage)
             tx: { to: '0x0000000000000000000000000000000000000004', data: '0x00' }
+          }
+        ]
+      })
+    };
+  }
+  if (urlStr.includes('alchemy.com') || urlStr.includes('localhost') || urlStr.includes('127.0.0.1')) {
+    return {
+      ok: true,
+      json: async () => ({
+        jsonrpc: "2.0",
+        id: 1,
+        result: [
+          {
+            calls: [
+              {
+                status: "0x1",
+                returnData: "0x"
+              }
+            ]
           }
         ]
       })

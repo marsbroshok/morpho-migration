@@ -1281,7 +1281,94 @@ async function testCliDebugModeFeature() {
   console.log('✅ CLI Debug Mode feature tests passed!');
 }
 
+async function testTransactionAuditorSameCollateral() {
+  console.log('Testing TransactionAuditor same collateral direct rollover bypass...');
+  const { TransactionAuditor } = await import('../cli/transaction-auditor.js');
 
+  const mockPublicClient = {
+    waitForTransactionReceipt: async ({ hash }) => {
+      return { logs: [], status: '0x1' };
+    }
+  };
+
+  const auditor = new TransactionAuditor(mockPublicClient);
+  const result = await auditor.auditRealizedPrice(
+    '0x123',
+    'rollover',
+    {
+      spentToken: '0x38EEb52F0771140d10c4E9A9a72349A329Fe8a6A',
+      receivedToken: '0x38EEb52F0771140d10c4E9A9a72349A329Fe8a6A',
+      spentSymbol: 'apyUSD',
+      receivedSymbol: 'apyUSD',
+      spentDecimals: 18,
+      receivedDecimals: 18
+    }
+  );
+
+  assert.ok(result.isSameCollateral, 'Should identify same collateral rollover');
+  assert.strictEqual(result.spentSymbol, 'apyUSD');
+  assert.strictEqual(result.receivedSymbol, 'apyUSD');
+  console.log('✅ TransactionAuditor same collateral direct rollover bypass test passed!');
+}
+
+async function testTransactionAuditorCrossCollateral() {
+  console.log('Testing TransactionAuditor cross-collateral rollover normal auditing...');
+  const { TransactionAuditor } = await import('../cli/transaction-auditor.js');
+
+  const spentToken = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+  const receivedToken = '0x98A878b1Cd98131B271883B390f68D2c90674665';
+
+  const mockPublicClient = {
+    waitForTransactionReceipt: async ({ hash }) => {
+      return {
+        status: '0x1',
+        logs: [
+          {
+            address: spentToken,
+            topics: [
+              '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+              '0x0000000000000000000000006566194141eefa99af43bb5aa71460ca2dc90245',
+              '0x0000000000000000000000001111111111111111111111111111111111111111'
+            ],
+            data: '0x00000000000000000000000000000000000000000000000000000000000f4240'
+          },
+          {
+            address: receivedToken,
+            topics: [
+              '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+              '0x0000000000000000000000002222222222222222222222222222222222222222',
+              '0x0000000000000000000000004a6c312ec70e8747a587ee860a0353cd42be0ae0'
+            ],
+            data: '0x0000000000000000000000000000000000000000000000000de0b6b3a7640000'
+          }
+        ]
+      };
+    }
+  };
+
+  const auditor = new TransactionAuditor(mockPublicClient);
+  const result = await auditor.auditRealizedPrice(
+    '0x123',
+    'rollover',
+    {
+      spentToken,
+      receivedToken,
+      spentSymbol: 'USDC',
+      receivedSymbol: 'apxUSD',
+      spentDecimals: 6,
+      receivedDecimals: 18,
+      oracleRate: 1.0,
+      estimatedRate: 1.0,
+      estimatedPriceImpact: 0.0
+    }
+  );
+
+  assert.ok(!result.isSameCollateral, 'Should not be same collateral');
+  assert.strictEqual(result.spentAmount, 1000000n);
+  assert.strictEqual(result.receivedAmount, 1000000000000000000n);
+  assert.strictEqual(result.realizedRate, 1.0);
+  console.log('✅ TransactionAuditor cross-collateral rollover normal auditing test passed!');
+}
 
 async function runAllTests() {
   try {
@@ -1301,6 +1388,8 @@ async function runAllTests() {
     await testCliDebugModeFeature();
     await testZeroDebtRollover();
     await testCliShellExecutionSimulation();
+    await testTransactionAuditorSameCollateral();
+    await testTransactionAuditorCrossCollateral();
     await runLiveForkSimulationTests();
     console.log('\n🎉 All CLI tests completed successfully!');
   } catch (err) {

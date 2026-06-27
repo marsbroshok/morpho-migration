@@ -28,6 +28,24 @@ try {
 }
 global.HTMLElement = dom.window.HTMLElement;
 
+// Mock localStorage
+const storage = {
+  morpho_migration_rpc_url: 'https://eth-mainnet.g.alchemy.com/v2/mockkey',
+  morpho_migration_alchemy_key: 'mockkey',
+  morpho_migration_auto_simulate: 'true'
+};
+const mockLocalStorage = {
+  getItem: (key) => storage[key] || null,
+  setItem: (key, val) => { storage[key] = val; },
+  removeItem: (key) => { delete storage[key]; },
+  clear: () => { Object.keys(storage).forEach(k => delete storage[k]); }
+};
+Object.defineProperty(dom.window, 'localStorage', {
+  value: mockLocalStorage,
+  writable: true
+});
+global.localStorage = mockLocalStorage;
+
 // Mock window.ethereum
 global.window.ethereum = {
   request: async (requestObj) => {

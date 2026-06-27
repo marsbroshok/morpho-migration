@@ -53,6 +53,25 @@ const dom = new JSDOM(html, {
   virtualConsole
 });
 
+// Mock localStorage
+const storage = {
+  morpho_migration_rpc_url: ALCHEMY_RPC_URL,
+  morpho_migration_alchemy_key: apiKey,
+  morpho_migration_auto_simulate: 'true'
+};
+const mockLocalStorage = {
+  getItem: (key) => storage[key] || null,
+  setItem: (key, value) => { storage[key] = value.toString(); },
+  removeItem: (key) => { delete storage[key]; },
+  clear: () => { for (const key in storage) delete storage[key]; }
+};
+Object.defineProperty(dom.window, 'localStorage', {
+  value: mockLocalStorage,
+  writable: true,
+  configurable: true
+});
+global.localStorage = mockLocalStorage;
+
 global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
@@ -293,7 +312,7 @@ fs.writeFileSync(shadowPath, appCode, 'utf8');
 try {
   // Import app code to bind events
   const appModule = await import('./simulation.shadow.mjs');
-  await new Promise(resolve => setTimeout(resolve, 100)); // wait for initial render
+  await new Promise(resolve => setTimeout(resolve, 2500)); // wait for initial render and queries to finish
 
   const loadPositionBtn = document.getElementById('loadPositionBtn');
   const migrateBtn = document.getElementById('migrateBtn');

@@ -2,7 +2,8 @@ import { getAddress } from 'viem';
 
 export const ERC20_ABI = [
   { "inputs": [{ "name": "spender", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" },
-  { "inputs": [{ "name": "recipient", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "transfer", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" }
+  { "inputs": [{ "name": "recipient", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "transfer", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" },
+  { "inputs": [{ "name": "account", "type": "address" }], "name": "balanceOf", "outputs": [{ "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" }
 ];
 
 export const BUNDLER_ABI = [
@@ -581,7 +582,9 @@ export function buildRolloverBundle({
   slippage,
   borrowShares,
   maxSafeBorrowAmount,
-  capBorrow
+  capBorrow,
+  actualLoanOutput = null,
+  actualCollateralOutput = null
 }) {
   if (debtAmount === 0n) {
     const bundle = [];
@@ -609,6 +612,20 @@ export function buildRolloverBundle({
       bundle.push({
         to: routeData.tx.to,
         data: routeData.tx.data,
+        value: 0n,
+        skipRevert: false,
+        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+      });
+
+      // Transfer actual/expected swap output from the Bundler to the Adapter
+      const resolvedCollateralOutput = actualCollateralOutput !== null ? actualCollateralOutput : BigInt(routeData.outputs[0].amount);
+      bundle.push({
+        to: destMarketParams.collateralToken,
+        data: encodeFunctionData({
+          abi: ERC20_ABI,
+          functionName: 'transfer',
+          args: [ETHER_GENERAL_ADAPTER_1, resolvedCollateralOutput]
+        }),
         value: 0n,
         skipRevert: false,
         callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
@@ -696,6 +713,20 @@ export function buildRolloverBundle({
       skipRevert: false,
       callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
     });
+
+    // Transfer actual/expected swap output from the Bundler to the Adapter
+    const resolvedCollateralOutput = actualCollateralOutput !== null ? actualCollateralOutput : BigInt(routeData.outputs[0].amount);
+    reenterBundle.push({
+      to: destMarketParams.collateralToken,
+      data: encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: 'transfer',
+        args: [ETHER_GENERAL_ADAPTER_1, resolvedCollateralOutput]
+      }),
+      value: 0n,
+      skipRevert: false,
+      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+    });
   }
 
   // Call E: Supply collateral
@@ -733,13 +764,14 @@ export function buildRolloverBundle({
   // Call G & H: Only if loan assets are different
   if (!isSameLoan) {
     const spenders = getSpendersToApprove(loanRouteData);
+    console.log("[DEBUG BUILDERS] Spenders to approve for loan swap:", spenders);
     
     // Gas-optimized approvals: Only approve the swap input token to the active spenders
     for (const spender of spenders) {
       appendApprovals(reenterBundle, destMarketParams.loanToken, spender, encodeFunctionData);
     }
 
-    // Execute Swap (settles directly to MORPHO_BUNDLER_V3)
+    // Execute Swap (settles directly to the Bundler)
     reenterBundle.push({
       to: loanRouteData.tx.to,
       data: loanRouteData.tx.data,
@@ -748,46 +780,28 @@ export function buildRolloverBundle({
       callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
     });
 
-    const minOutAmount = (loanExpectedOutput * (10000n - BigInt(Math.round(slippage * 100)))) / 10000n;
-
-    // Transfer the guaranteed swap output (minOutAmount) from the Bundler to the Adapter
+    const resolvedOutput = actualLoanOutput !== null ? actualLoanOutput : BigInt(loanRouteData.outputs[0].amount);
+    
+    // Transfer actual/expected swap output from the Bundler to the Adapter
     reenterBundle.push({
       to: sourceMarketParams.loanToken,
       data: encodeFunctionData({
         abi: ERC20_ABI,
         functionName: 'transfer',
-        args: [ETHER_GENERAL_ADAPTER_1, minOutAmount]
+        args: [ETHER_GENERAL_ADAPTER_1, resolvedOutput]
       }),
       value: 0n,
       skipRevert: false,
       callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
     });
-
-    // Only generate Permit2 pull if the minimum swap output is below the repayment threshold
-    if (minOutAmount < flashLoanAmount) {
-      const shortfall = flashLoanAmount - minOutAmount;
+    const shortfall = flashLoanAmount > resolvedOutput ? flashLoanAmount - resolvedOutput : 0n;
+    if (shortfall > 0n) {
       reenterBundle.push({
         to: ETHER_GENERAL_ADAPTER_1,
         data: encodeFunctionData({
           abi: ADAPTER_ABI,
           functionName: 'permit2TransferFrom',
           args: [sourceMarketParams.loanToken, ETHER_GENERAL_ADAPTER_1, shortfall]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
-    }
-
-    // Refund excess swap output from Adapter back to the user's wallet
-    if (minOutAmount > flashLoanAmount) {
-      const surplus = minOutAmount - flashLoanAmount;
-      reenterBundle.push({
-        to: ETHER_GENERAL_ADAPTER_1,
-        data: encodeFunctionData({
-          abi: ADAPTER_ABI,
-          functionName: 'erc20Transfer',
-          args: [sourceMarketParams.loanToken, userAddress, surplus]
         }),
         value: 0n,
         skipRevert: false,

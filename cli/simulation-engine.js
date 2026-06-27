@@ -83,7 +83,7 @@ export class SimulationEngine {
       "type": "function"
     }];
 
-    const leakCheckCallsCount = tokensToCheck.length * 2;
+    const leakCheckCallsCount = tokensToCheck.length * 3;
     for (const token of tokensToCheck) {
       // Check Adapter balance
       calls.push({
@@ -105,6 +105,17 @@ export class SimulationEngine {
           abi: ERC20_BALANCE_OF_ABI,
           functionName: 'balanceOf',
           args: [BUNDLER_ADDRESS]
+        })
+      });
+      // Check User balance
+      calls.push({
+        from: fromAddress,
+        to: getAddress(token),
+        value: '0x0',
+        data: encodeFunctionData({
+          abi: ERC20_BALANCE_OF_ABI,
+          functionName: 'balanceOf',
+          args: [fromAddress]
         })
       });
     }
@@ -145,8 +156,8 @@ export class SimulationEngine {
     const leaks = [];
     for (let i = 0; i < tokensToCheck.length; i++) {
       const token = tokensToCheck[i];
-      const adapterResult = results[mainCallIndex + 1 + i * 2];
-      const bundlerResult = results[mainCallIndex + 1 + i * 2 + 1];
+      const adapterResult = results[mainCallIndex + 1 + i * 3];
+      const bundlerResult = results[mainCallIndex + 1 + i * 3 + 1];
 
       const adapterBalance = adapterResult.status === '0x1' ? BigInt(adapterResult.returnData || adapterResult.output || '0x0') : 0n;
       const bundlerBalance = bundlerResult.status === '0x1' ? BigInt(bundlerResult.returnData || bundlerResult.output || '0x0') : 0n;
@@ -171,6 +182,7 @@ export class SimulationEngine {
       prependedBundlerAuth: !isBundlerAuth,
       logs,
       leaks,
+      calls: results,
       rawResponse: data
     };
 

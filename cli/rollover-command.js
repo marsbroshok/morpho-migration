@@ -139,7 +139,7 @@ export class RolloverCommand {
          assessment.collateralAmount,
          assessment.destCollateralAddress,
          slippageFrac,
-         ETHER_GENERAL_ADAPTER_1,
+         MORPHO_BUNDLER_V3,
          MORPHO_BUNDLER_V3
        );
       expectedNewCollateral = BigInt(routeData.outputs[0].amount);
@@ -188,8 +188,9 @@ export class RolloverCommand {
     if (!isSameLoan) {
       const decDiff = BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
       
-      // 1. Initial guess using nominal unit amount of destLoan scaled by decimals
-      const nominalInput = 10n ** BigInt(assessment.destMarketParams.loanDecimals);
+      // Use a realistic guess input amount based on debtAmount to avoid low-liquidity / fixed-fee quoting distortions
+      const guessAmount = assessment.debtAmount * (10n ** BigInt(assessment.destMarketParams.loanDecimals)) / (10n ** BigInt(assessment.sourceMarketParams.loanDecimals));
+      const nominalInput = guessAmount > 0n ? guessAmount : (10n ** BigInt(assessment.destMarketParams.loanDecimals));
       
       // 2. Fetch nominal swap route quote to determine conversion rate
       const nominalRoute = await this.routerClient.fetchSwapRoute(
@@ -308,32 +309,163 @@ export class RolloverCommand {
     const newCollateralValue = calculateCollateralValue(swap.expectedNewCollateral, swap.newOraclePrice);
     const maxSafeBorrowAmount = (newCollateralValue * safeLtv) / 10n ** 18n;
 
-    // Call the shared buildRolloverBundle
-    const bundleResult = buildRolloverBundle({
-      encodeFunctionData,
-      encodeAbiParameters,
-      keccak256,
-      sourceMarketParams: assessment.sourceMarketParams,
-      destMarketParams: assessment.destMarketParams,
-      collateralAmount: assessment.collateralAmount,
-      debtAmount: assessment.debtAmount,
-      isFull,
-      sourceCollateralAddress: assessment.sourceCollateralAddress,
-      destCollateralAddress: assessment.destCollateralAddress,
-      routeData: swap.routeData,
-      userAddress: assessment.userAddress,
-      ETHER_GENERAL_ADAPTER_1,
-      MORPHO_BUNDLER_V3,
-      isSameCollateral: swap.isSameCollateral,
-      isSameLoan: swap.isSameLoan,
-      loanRouteData: swap.loanRouteData,
-      loanExpectedInput: swap.loanExpectedInput,
-      loanExpectedOutput: swap.isSameLoan ? 0n : swap.loanExpectedOutput,
-      slippage: Number(strictSlippageBps) / 100,
-      borrowShares: assessment.position.borrowShares,
-      maxSafeBorrowAmount,
-      capBorrow: options.capBorrow
-    });
+    let bundleResult;
+    if (!swap.isSameCollateral || !swap.isSameLoan) {
+      // Compile Phase 1 nominal bundle
+      const nominalResult = buildRolloverBundle({
+        encodeFunctionData,
+        encodeAbiParameters,
+        keccak256,
+        sourceMarketParams: assessment.sourceMarketParams,
+        destMarketParams: assessment.destMarketParams,
+        collateralAmount: assessment.collateralAmount,
+        debtAmount: assessment.debtAmount,
+        isFull,
+        sourceCollateralAddress: assessment.sourceCollateralAddress,
+        destCollateralAddress: assessment.destCollateralAddress,
+        routeData: swap.routeData,
+        userAddress: assessment.userAddress,
+        ETHER_GENERAL_ADAPTER_1,
+        MORPHO_BUNDLER_V3,
+        isSameCollateral: swap.isSameCollateral,
+        isSameLoan: swap.isSameLoan,
+        loanRouteData: swap.loanRouteData,
+        loanExpectedInput: swap.loanExpectedInput,
+        loanExpectedOutput: swap.loanExpectedOutput,
+        slippage: Number(strictSlippageBps) / 100,
+        borrowShares: assessment.position.borrowShares,
+        maxSafeBorrowAmount,
+        capBorrow: options.capBorrow,
+        actualLoanOutput: null,
+        actualCollateralOutput: null
+      });
+
+      // Query user balance BEFORE the transaction
+      const prependCalls = [];
+      let userBalanceBeforeIdx = -1;
+      if (!swap.isSameLoan) {
+        prependCalls.push({
+          from: assessment.userAddress,
+          to: assessment.sourceMarketParams.loanToken,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: ERC20_ABI,
+            functionName: 'balanceOf',
+            args: [assessment.userAddress]
+          })
+        });
+        userBalanceBeforeIdx = prependCalls.length - 1;
+      }
+
+      // Determine tokens to check balance of
+      const tokensToCheck = [];
+      const queryMap = {};
+      if (!swap.isSameCollateral) {
+        tokensToCheck.push(assessment.destMarketParams.collateralToken);
+        queryMap.collateral = tokensToCheck.length - 1;
+      }
+      if (!swap.isSameLoan) {
+        tokensToCheck.push(assessment.sourceMarketParams.loanToken);
+        queryMap.loan = tokensToCheck.length - 1;
+      }
+
+      // Run simulation to resolve the exact output balance
+      const simResult = await this.simulationEngine.simulateTransaction(
+        assessment.userAddress,
+        MORPHO_BUNDLER_V3,
+        nominalResult.finalCalldata,
+        0n,
+        prependCalls,
+        tokensToCheck
+      );
+
+      const leakCheckCallsCount = tokensToCheck.length * 3;
+      // The main execution call is before the balance queries
+      const mainCallIdx = simResult.calls.length - leakCheckCallsCount - 1;
+      const mainCall = simResult.calls[mainCallIdx];
+      if (mainCall.status !== '0x1') {
+        throw new Error(`Nominal simulation reverted: ${mainCall.error || "unknown error"}`);
+      }
+
+      let actualCollateralOutput = null;
+      let actualLoanOutput = null;
+
+      if (!swap.isSameCollateral) {
+        const balanceCall = simResult.calls[simResult.calls.length - leakCheckCallsCount + queryMap.collateral * 3 + 1];
+        if (balanceCall.status !== '0x1') {
+          throw new Error(`Collateral balance query call failed: ${balanceCall.error || "unknown error"}`);
+        }
+        actualCollateralOutput = BigInt(balanceCall.returnData || '0x0');
+        console.log(`[CLI] Resolved actual collateral swap output: ${actualCollateralOutput.toString()}`);
+      }
+
+      if (!swap.isSameLoan) {
+        const balanceCallBefore = simResult.calls[userBalanceBeforeIdx];
+        const balanceCallAfter = simResult.calls[simResult.calls.length - leakCheckCallsCount + queryMap.loan * 3 + 2];
+        if (balanceCallBefore.status !== '0x1' || balanceCallAfter.status !== '0x1') {
+          throw new Error(`Loan balance query call failed: before status=${balanceCallBefore.status}, after status=${balanceCallAfter.status}`);
+        }
+        const balBefore = BigInt(balanceCallBefore.returnData || '0x0');
+        const balAfter = BigInt(balanceCallAfter.returnData || '0x0');
+        actualLoanOutput = nominalResult.flashLoanAmount + (balAfter - balBefore);
+        console.log(`[CLI] Resolved actual loan swap output: ${actualLoanOutput.toString()}`);
+      }
+
+      // Compile Phase 2 final bundle
+      bundleResult = buildRolloverBundle({
+        encodeFunctionData,
+        encodeAbiParameters,
+        keccak256,
+        sourceMarketParams: assessment.sourceMarketParams,
+        destMarketParams: assessment.destMarketParams,
+        collateralAmount: assessment.collateralAmount,
+        debtAmount: assessment.debtAmount,
+        isFull,
+        sourceCollateralAddress: assessment.sourceCollateralAddress,
+        destCollateralAddress: assessment.destCollateralAddress,
+        routeData: swap.routeData,
+        userAddress: assessment.userAddress,
+        ETHER_GENERAL_ADAPTER_1,
+        MORPHO_BUNDLER_V3,
+        isSameCollateral: swap.isSameCollateral,
+        isSameLoan: swap.isSameLoan,
+        loanRouteData: swap.loanRouteData,
+        loanExpectedInput: swap.loanExpectedInput,
+        loanExpectedOutput: swap.loanExpectedOutput,
+        slippage: Number(strictSlippageBps) / 100,
+        borrowShares: assessment.position.borrowShares,
+        maxSafeBorrowAmount,
+        capBorrow: options.capBorrow,
+        actualLoanOutput: actualLoanOutput,
+        actualCollateralOutput: actualCollateralOutput
+      });
+    } else {
+      bundleResult = buildRolloverBundle({
+        encodeFunctionData,
+        encodeAbiParameters,
+        keccak256,
+        sourceMarketParams: assessment.sourceMarketParams,
+        destMarketParams: assessment.destMarketParams,
+        collateralAmount: assessment.collateralAmount,
+        debtAmount: assessment.debtAmount,
+        isFull,
+        sourceCollateralAddress: assessment.sourceCollateralAddress,
+        destCollateralAddress: assessment.destCollateralAddress,
+        routeData: swap.routeData,
+        userAddress: assessment.userAddress,
+        ETHER_GENERAL_ADAPTER_1,
+        MORPHO_BUNDLER_V3,
+        isSameCollateral: swap.isSameCollateral,
+        isSameLoan: swap.isSameLoan,
+        loanRouteData: swap.loanRouteData,
+        loanExpectedInput: swap.loanExpectedInput,
+        loanExpectedOutput: swap.isSameLoan ? 0n : swap.loanExpectedOutput,
+        slippage: Number(strictSlippageBps) / 100,
+        borrowShares: assessment.position.borrowShares,
+        maxSafeBorrowAmount,
+        capBorrow: options.capBorrow
+      });
+    }
 
     const borrowAmount = bundleResult.borrowAmount;
     const flashLoanAmount = bundleResult.flashLoanAmount;

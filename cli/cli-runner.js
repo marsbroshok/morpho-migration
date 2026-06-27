@@ -273,8 +273,13 @@ export class CliRunner {
         };
         view.printDebugData(debugInfo);
       }
+      process.exit(0);
     } catch (err) {
-      console.error(`Error: ${err.message}`);
+      if (process.argv.includes('--debug')) {
+        console.error(err);
+      } else {
+        console.error(`Error: ${err.message}`);
+      }
       process.exit(1);
     }
   }

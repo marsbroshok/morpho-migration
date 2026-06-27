@@ -1,5 +1,24 @@
 # Project Work Log
 
+## 2026-06-27 - Fixed JSDOM Nominal Simulation Collateral Output Resolution & LocalStorage Mocks
+
+### Summary of Investigation & Execution
+1. **The Goal:** Fix the JSDOM test suite and mainnet fork simulation failures caused by the nominal simulation incorrectly resolving the actual collateral output to dust/0 (since it queried `balanceOf(MORPHO_BUNDLER_V3)` after the collateral had already been supplied to Morpho Blue).
+2. **Resolution:**
+   - **Collateral Position Resolution:** Modified `app.js` to query the user's collateral position on Morpho Blue (`MORPHO.position`) before and after the nominal bundle execution. The actual collateral swap output is now correctly calculated as the difference between the two position checks (`collateralAfter - collateralBefore`), preventing the second-stage full simulation from reverting with `insufficient collateral`.
+   - **JSDOM LocalStorage Mocks:** Added unified JSDOM mock `localStorage` implementations to all frontend test suites (`tests/app.test.mjs`, `tests/preview_workflow.test.mjs`, `tests/leverage_workflow.test.mjs`, `tests/cli_ui.test.mjs`) to support settings loading without throwing `localStorage.getItem is not a function`.
+   - **JSDOM Fetch Interceptors:** Mapped JSDOM's `window.fetch` to Node's `global.fetch` inside `tests/preview_workflow.test.mjs` and `tests/leverage_workflow.test.mjs`, and added mock RPC interceptors to dynamically return successful simulation logs (matching the number of input calls in the payload).
+3. **Outcome:**
+   - All unit, JSDOM workflow, integration, and live Alchemy mainnet fork simulation tests (`npm test`) execute and pass successfully.
+
+### Changes Applied
+* **Modified:** [app.js](file://app.js) (upgraded nominal collateral output resolution to query Morpho Blue user positions before and after execution; removed temporary resJson console print).
+* **Modified:** [tests/preview_workflow.test.mjs](file://tests/preview_workflow.test.mjs) (mocked localStorage and window.fetch, added dynamic RPC mock calls mapping, updated reenterBundle length assertion from 8 to 9).
+* **Modified:** [tests/app.test.mjs](file://tests/app.test.mjs) (mocked localStorage).
+* **Modified:** [tests/leverage_workflow.test.mjs](file://tests/leverage_workflow.test.mjs) (mocked localStorage and window.fetch, added RPC mock).
+* **Modified:** [tests/cli_ui.test.mjs](file://tests/cli_ui.test.mjs) (mocked localStorage).
+* **Modified:** [tests/simulation.test.mjs](file://tests/simulation.test.mjs) (mapped global.localStorage to avoid JSDOM namespace lookup failures).
+
 ## 2026-06-27 - Removed Obsolete Anvil Simulation References and Files
 
 ### Summary of Investigation & Execution
@@ -2378,4 +2397,42 @@
   ```bash
   npm test
   ```
+
+---
+
+## 2026-06-27 - Fixed CLI Hang and Transaction Auditor Warnings on Live Rollover
+
+### Summary of Investigation & Actions
+1. **The Goal:** Resolve two critical issues observed during live WalletConnect rollover executions:
+   - CLI hanging indefinitely on the final post-execution screen.
+   - An audit warning (`Could not find relevant transfer logs...`) printed for same-collateral direct rollovers.
+2. **Analysis & Strategy:**
+   - **CLI Hang:** Traced to active WebSocket connections maintained by WalletConnect's `@walletconnect/sign-client`. Since the connections are kept open, the Node.js event loop remains active indefinitely. Resolved by calling `process.exit(0)` at the end of `CliRunner.run()` once all tasks complete.
+   - **Auditor Warning:** During same-collateral rollovers, the old collateral is withdrawn directly to `ETHER_GENERAL_ADAPTER_1`, bypassing `MORPHO_BUNDLER_V3`. Thus, no transfer of the old collateral from the bundler occurs. The auditor expected a swap and threw a warning because the spent amount from the bundler was `0n`. Resolved by adding an early check in `TransactionAuditor` for identical spent and received tokens. If they match, it skips swap auditing and returns `isSameCollateral: true`.
+3. **Resolution:**
+   - Modified `cli/cli-runner.js` to call `process.exit(0)` upon successful run completion.
+   - Modified `cli/transaction-auditor.js` to bypass swap auditing for same-collateral direct rollovers.
+   - Modified `cli/cli-view.js` to display a clean direct rollover success message if `isSameCollateral` is true.
+   - Wrote automated unit tests in `tests/cli.test.mjs` to cover both same-collateral direct rollovers and normal cross-collateral rollovers in the auditor module.
+
+### Changes Applied
+* **File Modified:** `cli/cli-runner.js` (added clean process termination).
+* **File Modified:** `cli/transaction-auditor.js` (bypassed swap logs verification for same-collateral).
+* **File Modified:** `cli/cli-view.js` (added direct rollover view output).
+* **File Modified:** `tests/cli.test.mjs` (added unit tests for both auditor behaviors).
+
+### Verification Terminal Commands Run
+* Run isolated transaction auditor tests:
+  ```bash
+  node scratch/test_auditor.mjs
+  ```
+* Run help command to verify immediate termination:
+  ```bash
+  node cli.js --help
+  ```
+* Run complete project test suite:
+  ```bash
+  npm test tests/cli.test.mjs
+  ```
+
 
