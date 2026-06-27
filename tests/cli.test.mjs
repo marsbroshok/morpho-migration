@@ -614,7 +614,7 @@ async function testCliRunnerAllowanceCheckAndApproval() {
     throw new Error('Unknown market id ' + id);
   };
   BlockchainClient.prototype.fetchMorphoPosition = async () => ({
-    collateral: 9000n * 10n ** 18n, // 9000 PT (more collateral to avoid LTV revert)
+    collateral: 100n * 10n ** 18n, // 100 PT (cap borrow to trigger shortfall)
     debt: 5000n * 10n ** 6n, // 5000 USDC
     borrowShares: 5000n * 10n ** 6n
   });
@@ -652,7 +652,8 @@ async function testCliRunnerAllowanceCheckAndApproval() {
       '--private-key', '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
       '--rpc', 'http://mock-rpc-url',
       '--type', 'partial',
-      '--debt', '100'
+      '--debt', '100',
+      '--cap-borrow'
     ]);
   } finally {
     // Restore originals

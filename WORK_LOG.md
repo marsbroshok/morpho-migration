@@ -1,5 +1,40 @@
 # Project Work Log
 
+## 2026-06-27 - Refactored Cross-Loan Borrow Estimation to Iterative Scaling, Cleaned Prepend Approvals, and Documented Math (TDD)
+
+### Summary of Investigation
+1. **The Goal:** Address steps 2 and 3 of the approved implementation plan: refactor cross-loan borrow estimation to remove collateral oracle price ratio assumptions, clean up pre-execution approvals, synchronize Web UI and CLI logic, and add documentation to `math.js`.
+2. **Investigation Findings & Strategy:**
+   - **Cross-Loan Swap Estimation:** Replaced the incorrect collateral price ratio logic with an iterative scaling method: first query the swap router with a nominal 1:1 guess (scaled by decimals) to fetch the true conversion rate, and then solve the exact borrow input amount needed to cover the flashloan worst-case output under slippage.
+   - **Dynamic Spender Approvals:** Removed the hardcoded tokens and spenders lists used for pre-execution simulation approvals in `cli/rollover-command.js`. Implemented dynamic extraction of active spenders and tokens directly from the swap routes (`routeData` and `loanRouteData`).
+   - **Math Formulas Documentation:** Added detailed JSDoc comments to `math.js` detailing the equations and scaling factors for LTV, collateral value, and leverage adjustment parameters, complying with project rule 2.2.
+   - **Mock Alignment:** Updated `tests/cli.test.mjs` and `tests/cli_ui_different_loan.test.mjs` to dynamically scale mock outputs, and adjusted mock position collateral to trigger the auto-approval check under capped borrow limits.
+3. **Outcome:**
+   - Refactored `cli/rollover-command.js` and `app.js` to use iterative scaling, achieving CLI-UI parity.
+   - Simplified simulation prepend approvals to dynamically resolve spenders.
+   - Documented all mathematical functions in `math.js`.
+   - Verified that all unit tests, integration tests, and live mainnet fork simulation tests (`npm test`) pass successfully.
+
+### Changes Applied
+* **File Modified:** [math.js](file://math.js) (documented mathematical equations and scaling factors).
+* **File Modified:** [cli/rollover-command.js](file://cli/rollover-command.js) (implemented iterative swap scaling for cross-loan borrow estimation, dynamic spender approvals).
+* **File Modified:** [app.js](file://app.js) (implemented iterative swap scaling in different-loan rollover UI workflow, aligned variable naming).
+* **File Modified:** [tests/cli.test.mjs](file://tests/cli.test.mjs) (adjusted mock position and command arguments to verify checkAllowance/approveToken path).
+* **File Modified:** [tests/cli_ui_different_loan.test.mjs](file://tests/cli_ui_different_loan.test.mjs) (made mock swap router output scale dynamically).
+
+### Verification Terminal Commands Run
+* Run CLI unit tests:
+  ```bash
+  node tests/cli.test.mjs
+  ```
+* Run full test suite:
+  ```bash
+  npm test
+  ```
+
+---
+
+
 ## 2026-06-27 - Conducted Comprehensive Technical Audit, Fixed Collateral Math Formula & Expanded Unit Tests (TDD)
 
 ### Summary of Investigation

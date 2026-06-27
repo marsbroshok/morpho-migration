@@ -690,14 +690,30 @@ async function initiateMigration() {
     let loanQuotedRate = 0n;
 
     if (!isSameLoan) {
-      const exp = 18n + BigInt(newScale) - BigInt(oldScale);
-      loanOracleRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
-
       const decDiff = BigInt(destMarketParams.loanDecimals) - BigInt(sourceMarketParams.loanDecimals);
-      const estimatedInput = (debtAmount * 10n ** 18n * 10n ** decDiff) / loanOracleRate;
-      
-      const slippageBuffer = BigInt(Math.max(50, Math.ceil(slippage * 10000)));
-      loanExpectedInput = (estimatedInput * (10000n + slippageBuffer)) / 10000n;
+      const nominalInput = 10n ** BigInt(destMarketParams.loanDecimals);
+      let nominalRoute;
+      try {
+        nominalRoute = await fetchSwapRoute(
+          destLoanAddress,
+          nominalInput,
+          sourceLoanAddress,
+          slippage,
+          ETHER_GENERAL_ADAPTER_1,
+          MORPHO_BUNDLER_V3
+        );
+      } catch (err) {
+        showError(`Swap Router Loan Route Error: ${err.message}. Failed to fetch nominal conversion route for loan asset.`);
+        return;
+      }
+      const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
+      loanOracleRate = (nominalOutput * 10n ** (18n + decDiff)) / nominalInput;
+      console.log("DEBUG UI: nominalInput:", nominalInput, "nominalOutput:", nominalOutput);
+      console.log("DEBUG UI: loanOracleRate:", loanOracleRate);
+
+      const slippageBasisPoints = BigInt(Math.round(slippage * 10000));
+      const desiredOutput = (debtAmount * 10000n) / (10000n - slippageBasisPoints);
+      loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
 
       const targetLltv = destMarketParams.lltv;
       const safeLtv = targetLltv - 5000000000000000n;
@@ -730,7 +746,7 @@ async function initiateMigration() {
         return;
       }
 
-      loanQuotedRate = loanExpectedInput > 0n ? (loanExpectedOutput * 10n ** (18n + decDiff)) / loanExpectedInput : 0n;
+      const loanQuotedRate = loanExpectedInput > 0n ? (loanExpectedOutput * 10n ** (18n + decDiff)) / loanExpectedInput : 0n;
       loanSlippagePct = loanOracleRate > 0n ? Number((loanOracleRate - loanQuotedRate) * 10000n / loanOracleRate) / 100 : 0.0;
     }
 

@@ -109,14 +109,13 @@ global.fetch = async (url, options) => {
         })
       };
     }
-    // Loan swap (apxUSD -> USDC)
     if (inputToken === '0x98a878b1cd98131b271883b390f68d2c90674665') {
       return {
         ok: true,
         json: async () => ({
           routes: [
             {
-              outputs: [{ amount: '6000000000' }], // 6000 USDC output (repaying flashloan)
+              outputs: [{ amount: (BigInt(body.inputs[0].amount) / 10n ** 12n).toString() }],
               tx: { to: '0x0000000000000000000000000000000000000007', data: '0x123456' }
             }
           ]

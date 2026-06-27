@@ -180,18 +180,34 @@ export class RolloverCommand {
     let loanSlippagePct = 0.0;
 
     if (!isSameLoan) {
-      const exp = 18n + BigInt(oldScale) - BigInt(newScale);
-      loanOracleRate = (newOraclePrice * 10n ** exp) / oldOraclePrice;
-      console.log("DEBUG: oldScale:", oldScale, "newScale:", newScale, "exp:", exp);
-      console.log("DEBUG: oldOraclePrice:", oldOraclePrice, "newOraclePrice:", newOraclePrice);
+      const decDiff = BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
+      
+      // 1. Initial guess using nominal unit amount of destLoan scaled by decimals
+      const nominalInput = 10n ** BigInt(assessment.destMarketParams.loanDecimals);
+      
+      // 2. Fetch nominal swap route quote to determine conversion rate
+      const nominalRoute = await this.routerClient.fetchSwapRoute(
+        assessment.destLoanAddress,
+        nominalInput,
+        assessment.sourceLoanAddress,
+        slippageFrac,
+        MORPHO_BUNDLER_V3,
+        MORPHO_BUNDLER_V3
+      );
+      const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
+      
+      // loanOracleRate represents the true conversion rate from the router (scaled to 18 decimals)
+      loanOracleRate = (nominalOutput * 10n ** (18n + decDiff)) / nominalInput;
+      console.log("DEBUG: nominalInput:", nominalInput, "nominalOutput:", nominalOutput);
       console.log("DEBUG: loanOracleRate:", loanOracleRate);
 
-      // Estimate target borrow (which is in loanDecimals of the new market)
-      const decDiff = BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
-      const estimatedInput = (assessment.debtAmount * 10n ** 18n * 10n ** decDiff) / loanOracleRate;
+      // 3. Solve exact borrow input required to cover flashloan worst-case output
+      // Desired Output = flashLoanAmount / (1 - slippage)
+      const slippageBasisPoints = BigInt(Math.round(assessment.slippage * 100));
+      const desiredOutput = (assessment.debtAmount * 10000n) / (10000n - slippageBasisPoints);
       
-      const slippageBuffer = BigInt(Math.max(50, Math.ceil(assessment.slippage * 100)));
-      loanExpectedInput = (estimatedInput * (10000n + slippageBuffer)) / 10000n;
+      // Required Input = (desiredOutput * nominalInput) / nominalOutput
+      loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
 
       // Validate/cap borrow amount based on Target Market LLTV safety threshold
       const targetLltv = assessment.destMarketParams.lltv;
@@ -209,7 +225,7 @@ export class RolloverCommand {
         }
       }
 
-      // Fetch route for swapping the borrowed new loan asset back to the old loan asset
+      // Fetch final route for swapping the borrowed new loan asset back to the old loan asset
       const swapInputAmount = loanExpectedInput - 100000n;
       loanRouteData = await this.routerClient.fetchSwapRoute(
         assessment.destLoanAddress,
@@ -411,24 +427,44 @@ export class RolloverCommand {
         });
       }
 
-      const tokensToApprove = [
-        calldataResult.sourceMarketParams.collateralToken,
-        calldataResult.destMarketParams.collateralToken,
-        calldataResult.sourceMarketParams.loanToken,
-        calldataResult.destMarketParams.loanToken
-      ].map(t => getAddress(t));
+      const tokensToApprove = new Set([
+        getAddress(calldataResult.sourceMarketParams.collateralToken),
+        getAddress(calldataResult.destMarketParams.collateralToken),
+        getAddress(calldataResult.sourceMarketParams.loanToken),
+        getAddress(calldataResult.destMarketParams.loanToken)
+      ]);
 
-      const spendersToApprove = [
-        '0x888888888889758F76e7103c6CbF23ABbF58F946', // PENDLE_ROUTER
-        '0x30544e00cf296b34a9ee59e5540ae2f9cccd55dd', // Reflector
-        '0xc5F938A8ef5F3Bf9e72F5Aa094bAf5e03F4727d3', // Pendle Market
-        '0xd4F480965D2347d421F1bEC7F545682E5Ec2151D', // Kyber Router
-        '0x6131B5fae19EA4f9D964eAc0408E4408b66337b5', // Kyber Helper
-        '0x000000000000c9b3e2c3ec88b1b4c0cd853f4321', // Pendle Limit Router
-        ETHER_GENERAL_ADAPTER_1,
-        MORPHO_BUNDLER_V3,
-        MORPHO_BLUE
-      ].map(s => getAddress(s));
+      const spendersToApprove = new Set([
+        getAddress(ETHER_GENERAL_ADAPTER_1),
+        getAddress(MORPHO_BUNDLER_V3),
+        getAddress(MORPHO_BLUE)
+      ]);
+
+      if (calldataResult.routeData) {
+        spendersToApprove.add(getAddress(calldataResult.routeData.tx.to));
+        if (calldataResult.routeData.limitRouter) {
+          spendersToApprove.add(getAddress(calldataResult.routeData.limitRouter));
+        }
+        if (calldataResult.routeData.inputs) {
+          calldataResult.routeData.inputs.forEach(i => tokensToApprove.add(getAddress(i.token)));
+        }
+        if (calldataResult.routeData.outputs) {
+          calldataResult.routeData.outputs.forEach(o => tokensToApprove.add(getAddress(o.token)));
+        }
+      }
+
+      if (calldataResult.loanRouteData) {
+        spendersToApprove.add(getAddress(calldataResult.loanRouteData.tx.to));
+        if (calldataResult.loanRouteData.limitRouter) {
+          spendersToApprove.add(getAddress(calldataResult.loanRouteData.limitRouter));
+        }
+        if (calldataResult.loanRouteData.inputs) {
+          calldataResult.loanRouteData.inputs.forEach(i => tokensToApprove.add(getAddress(i.token)));
+        }
+        if (calldataResult.loanRouteData.outputs) {
+          calldataResult.loanRouteData.outputs.forEach(o => tokensToApprove.add(getAddress(o.token)));
+        }
+      }
 
       // 1. Approve intermediate and market tokens from the BUNDLER contract
       for (const token of tokensToApprove) {
