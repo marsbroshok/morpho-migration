@@ -1,6 +1,5 @@
 export function calculateCollateralValue(collateralAmount, oraclePrice) {
-  if (oraclePrice === 0n) return 0n;
-  return (collateralAmount * 10n ** 36n) / oraclePrice;
+  return (collateralAmount * oraclePrice) / 10n ** 36n;
 }
 
 export function calculateLtv(debtAmount, collateralValue) {

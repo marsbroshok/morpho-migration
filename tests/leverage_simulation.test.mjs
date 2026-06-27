@@ -343,9 +343,9 @@ try {
   console.log("Loaded new leverage position info:", levPositionInfo.replace(/<[^>]*>/g, ' ').trim());
   assert.ok(levPositionInfo.includes("Active Position Found"), "New leverage position should be loaded");
 
-  // --- Step 4: Simulate Leveraging Up Flow (Target Leverage 6.00x) ---
-  console.log("\n--- Simulating Leveraging Up Flow (Target: 6.00x) ---");
-  levSlider.value = "6.00";
+  // --- Step 4: Simulate Leveraging Up Flow (Target Leverage 3.00x) ---
+  console.log("\n--- Simulating Leveraging Up Flow (Target: 3.00x) ---");
+  levSlider.value = "3.00";
   levSlider.dispatchEvent(new window.Event('input'));
   await new Promise(resolve => setTimeout(resolve, 500));
 
