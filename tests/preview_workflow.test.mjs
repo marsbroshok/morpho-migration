@@ -287,7 +287,7 @@ try {
   );
 
   const reenterBundle = decodedReenterParams[0];
-  assert.strictEqual(reenterBundle.length, 6, "Reenter bundle should contain 6 actions");
+  assert.strictEqual(reenterBundle.length, 8, "Reenter bundle should contain 8 actions");
 
   const repayCall = reenterBundle[0];
   const decodedRepay = decodeFunctionData({

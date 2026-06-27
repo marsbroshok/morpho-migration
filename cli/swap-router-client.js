@@ -51,9 +51,12 @@ export class SwapRouterClient {
 
     if (!response.ok) {
       const errData = await response.json();
+      console.error("Swap Router Request:", JSON.stringify(requestBody, null, 2));
       throw new Error(errData.message || "Failed to fetch routing data from Swap Router.");
     }
     const data = await response.json();
+    console.log("Swap Router Request:", JSON.stringify(requestBody, null, 2));
+    console.log("Swap Router Response Route[0]:", JSON.stringify(data.routes[0], null, 2));
     if (!data.routes || data.routes.length === 0) {
       throw new Error("No swap routes found on Swap Router Convert API.");
     }

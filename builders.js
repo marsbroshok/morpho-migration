@@ -1,4 +1,7 @@
-export const ERC20_ABI = [{ "inputs": [{ "name": "spender", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" }];
+export const ERC20_ABI = [
+  { "inputs": [{ "name": "spender", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" },
+  { "inputs": [{ "name": "recipient", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "transfer", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" }
+];
 
 export const BUNDLER_ABI = [
   {
@@ -28,6 +31,9 @@ function getSpendersToApprove(routeData) {
   try {
     const params = routeData.contractParamInfo?.contractCallParams;
     if (params && Array.isArray(params)) {
+      if (typeof params[0] === 'string' && params[0].startsWith('0x')) {
+        spenders.push(params[0]);
+      }
       for (const param of params) {
         if (Array.isArray(param)) {
           for (const swap of param) {
@@ -41,8 +47,74 @@ function getSpendersToApprove(routeData) {
   } catch (e) {
     // Ignore parsing errors
   }
+
+  const PENDLE_ROUTER = '0x888888888889758F76e7103c6CbF23ABbF58F946';
+  const PENDLE_LIMIT_ROUTER = '0x000000000000c9B3E2C3Ec88B1B4c0cD853f4321';
+  if (spenders.some(s => s.toLowerCase() === PENDLE_ROUTER.toLowerCase())) {
+    spenders.push(PENDLE_LIMIT_ROUTER);
+  }
+
   return spenders;
 }
+
+const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+
+function appendApprovals(bundle, token, spender, encodeFunctionData) {
+  // 1. ERC20 Approve Spender directly
+  bundle.push({
+    to: token,
+    data: encodeFunctionData({
+      abi: ERC20_ABI,
+      functionName: 'approve',
+      args: [spender, 2n ** 256n - 1n]
+    }),
+    value: 0n,
+    skipRevert: false,
+    callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+  });
+
+  if (spender.toLowerCase() === PERMIT2_ADDRESS.toLowerCase()) return;
+
+  // 2. ERC20 Approve Permit2
+  bundle.push({
+    to: token,
+    data: encodeFunctionData({
+      abi: ERC20_ABI,
+      functionName: 'approve',
+      args: [PERMIT2_ADDRESS, 2n ** 256n - 1n]
+    }),
+    value: 0n,
+    skipRevert: false,
+    callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+  });
+
+  // 3. Permit2 Approve Spender
+  bundle.push({
+    to: PERMIT2_ADDRESS,
+    data: encodeFunctionData({
+      abi: [
+        {
+          "inputs": [
+            { "name": "token", "type": "address" },
+            { "name": "spender", "type": "address" },
+            { "name": "amount", "type": "uint160" },
+            { "name": "expiration", "type": "uint48" }
+          ],
+          "name": "approve",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ],
+      functionName: 'approve',
+      args: [token, spender, 2n ** 160n - 1n, 2n ** 48n - 1n]
+    }),
+    value: 0n,
+    skipRevert: false,
+    callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+  });
+}
+
 
 export const ADAPTER_ABI = [
   {
@@ -156,6 +228,17 @@ export const ADAPTER_ABI = [
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
+  },
+  {
+    "inputs": [
+      { "name": "token", "type": "address" },
+      { "name": "receiver", "type": "address" },
+      { "name": "amount", "type": "uint256" }
+    ],
+    "name": "permit2TransferFrom",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
   }
 ];
 
@@ -204,48 +287,15 @@ export function buildDeleveragingBundle({
     callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
   });
 
-  // Call C: Approve the Swap Router and aggregators to spend collateral from Bundler3
   const spenders = getSpendersToApprove(routeData);
   for (const spender of spenders) {
-    bundle.push({
-      to: collateralAddress,
-      data: encodeFunctionData({
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [spender, 2n ** 256n - 1n]
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
+    appendApprovals(bundle, collateralAddress, spender, encodeFunctionData);
   }
 
   // Call D: Execute Swap (collateral -> loan) via direct Router call
   bundle.push({
     to: routeData.tx.to,
     data: routeData.tx.data,
-    value: 0n,
-    skipRevert: false,
-    callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-  });
-
-  // Call E: Transfer swapped USDC from Bundler to Adapter
-  bundle.push({
-    to: loanAddress,
-    data: encodeFunctionData({
-      abi: [{
-        "inputs": [
-          { "name": "recipient", "type": "address" },
-          { "name": "amount", "type": "uint256" }
-        ],
-        "name": "transfer",
-        "outputs": [{ "name": "", "type": "bool" }],
-        "stateMutability": "nonpayable",
-        "type": "function"
-      }],
-      functionName: 'transfer',
-      args: [ETHER_GENERAL_ADAPTER_1, flashLoanAmount]
-    }),
     value: 0n,
     skipRevert: false,
     callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
@@ -281,20 +331,9 @@ export function buildLeveragingUpBundle({
     callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
   });
 
-  // Call B: Approve Swap Router and aggregators to spend loan tokens from Bundler3
   const spenders = getSpendersToApprove(routeData);
   for (const spender of spenders) {
-    bundle.push({
-      to: loanAddress,
-      data: encodeFunctionData({
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [spender, 2n ** 256n - 1n]
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
+    appendApprovals(bundle, loanAddress, spender, encodeFunctionData);
   }
 
   // Call C: Execute Swap (loan -> collateral) via direct Router call
@@ -553,17 +592,7 @@ export function buildRolloverBundle({
     if (!isSameCollateral) {
       const spenders = getSpendersToApprove(routeData);
       for (const spender of spenders) {
-        bundle.push({
-          to: sourceCollateralAddress,
-          data: encodeFunctionData({
-            abi: ERC20_ABI,
-            functionName: 'approve',
-            args: [spender, 2n ** 256n - 1n]
-          }),
-          value: 0n,
-          skipRevert: false,
-          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-        });
+        appendApprovals(bundle, sourceCollateralAddress, spender, encodeFunctionData);
       }
 
       bundle.push({
@@ -646,17 +675,7 @@ export function buildRolloverBundle({
   if (!isSameCollateral) {
     const spenders = getSpendersToApprove(routeData);
     for (const spender of spenders) {
-      reenterBundle.push({
-        to: sourceCollateralAddress,
-        data: encodeFunctionData({
-          abi: ERC20_ABI,
-          functionName: 'approve',
-          args: [spender, 2n ** 256n - 1n]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
+      appendApprovals(reenterBundle, sourceCollateralAddress, spender, encodeFunctionData);
     }
 
     reenterBundle.push({
@@ -702,117 +721,102 @@ export function buildRolloverBundle({
 
   // Call G & H: Only if loan assets are different
   if (!isSameLoan) {
-    if (loanRouteData?.isCurveDirect) {
-      const CurvePool = loanRouteData.poolAddress;
-      
-      // 1. Approve Curve Pool to spend the borrowed loan token from BUNDLER3
-      reenterBundle.push({
-        to: destMarketParams.loanToken,
-        data: encodeFunctionData({
-          abi: ERC20_ABI,
-          functionName: 'approve',
-          args: [CurvePool, 2n ** 256n - 1n]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
+    const spenders = getSpendersToApprove(loanRouteData);
+    const tokensToApprove = [
+      destMarketParams.loanToken,
+      sourceMarketParams.loanToken,
+      destMarketParams.collateralToken,
+      '0x04F8DCa7bcCD8997ac57ca6feF7c705E17d6bcB6', // SY-5NOV
+      '0xa166323f03cd0dae70487d551d3b457c3151bee4', // SY-18JUN
+      '0xb5be35d8ff83d431899b95851cb17a2b4bcef150'  // PT-5NOV
+    ];
+    for (const token of tokensToApprove) {
+      for (const spender of spenders) {
+        appendApprovals(reenterBundle, token, spender, encodeFunctionData);
+      }
+    }
 
-      // 2. Call exchange on Curve Pool
-      const CURVE_POOL_ABI = [
-        {
-          "inputs": [
-            { "name": "i", "type": loanRouteData.indexType },
-            { "name": "j", "type": loanRouteData.indexType },
-            { "name": "dx", "type": "uint256" },
-            { "name": "min_dy", "type": "uint256" }
-          ],
-          "name": "exchange",
-          "outputs": [{ "name": "", "type": "uint256" }],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        }
-      ];
-      
-      const minSwapOutput = (loanExpectedOutput * BigInt(Math.floor((100 - slippage) * 100))) / 10000n;
+    // Execute Swap
+    reenterBundle.push({
+      to: loanRouteData.tx.to,
+      data: loanRouteData.tx.data,
+      value: 0n,
+      skipRevert: false,
+      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+    });
 
-      reenterBundle.push({
-        to: CurvePool,
-        data: encodeFunctionData({
-          abi: CURVE_POOL_ABI,
-          functionName: 'exchange',
-          args: [loanRouteData.i, loanRouteData.j, loanExpectedInput, minSwapOutput]
-        }),
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
+    const minOutAmount = (loanExpectedOutput * (10000n - BigInt(Math.round(slippage * 100)))) / 10000n;
 
-      // 3. Transfer swapped old loan token from BUNDLER3 to Adapter
+    if (minOutAmount < flashLoanAmount) {
+      // 1. Transfer all guaranteed swap output to Adapter
       reenterBundle.push({
         to: sourceMarketParams.loanToken,
         data: encodeFunctionData({
-          abi: [{
-            "inputs": [
-              { "name": "recipient", "type": "address" },
-              { "name": "amount", "type": "uint256" }
-            ],
-            "name": "transfer",
-            "outputs": [{ "name": "", "type": "bool" }],
-            "stateMutability": "nonpayable",
-            "type": "function"
-          }],
+          abi: ERC20_ABI,
           functionName: 'transfer',
-          args: [ETHER_GENERAL_ADAPTER_1, minSwapOutput]
+          args: [ETHER_GENERAL_ADAPTER_1, minOutAmount]
         }),
         value: 0n,
         skipRevert: false,
         callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
       });
-    } else {
-      const spenders = getSpendersToApprove(loanRouteData);
-      for (const spender of spenders) {
+
+      // 2. Pull the shortfall from user to Adapter using Permit2
+      const shortfall = flashLoanAmount - minOutAmount;
+      reenterBundle.push({
+        to: ETHER_GENERAL_ADAPTER_1,
+        data: encodeFunctionData({
+          abi: ADAPTER_ABI,
+          functionName: 'permit2TransferFrom',
+          args: [sourceMarketParams.loanToken, ETHER_GENERAL_ADAPTER_1, shortfall]
+        }),
+        value: 0n,
+        skipRevert: false,
+        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+      });
+
+      // 3. Transfer the expected surplus (loanExpectedOutput - minOutAmount) to user wallet
+      if (loanExpectedOutput > minOutAmount) {
         reenterBundle.push({
-          to: destMarketParams.loanToken,
+          to: sourceMarketParams.loanToken,
           data: encodeFunctionData({
             abi: ERC20_ABI,
-            functionName: 'approve',
-            args: [spender, 2n ** 256n - 1n]
+            functionName: 'transfer',
+            args: [userAddress, loanExpectedOutput - minOutAmount]
           }),
           value: 0n,
           skipRevert: false,
           callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
         });
       }
-
-      reenterBundle.push({
-        to: loanRouteData.tx.to,
-        data: loanRouteData.tx.data,
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
-
+    } else {
+      // Transfer flashLoanAmount back to General Adapter for repayment
       reenterBundle.push({
         to: sourceMarketParams.loanToken,
         data: encodeFunctionData({
-          abi: [{
-            "inputs": [
-              { "name": "recipient", "type": "address" },
-              { "name": "amount", "type": "uint256" }
-            ],
-            "name": "transfer",
-            "outputs": [{ "name": "", "type": "bool" }],
-            "stateMutability": "nonpayable",
-            "type": "function"
-          }],
+          abi: ERC20_ABI,
           functionName: 'transfer',
-          args: [ETHER_GENERAL_ADAPTER_1, loanExpectedOutput]
+          args: [ETHER_GENERAL_ADAPTER_1, flashLoanAmount]
         }),
         value: 0n,
         skipRevert: false,
         callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
       });
+
+      // Transfer surplus (minOutAmount - flashLoanAmount) to user wallet
+      if (minOutAmount > flashLoanAmount) {
+        reenterBundle.push({
+          to: sourceMarketParams.loanToken,
+          data: encodeFunctionData({
+            abi: ERC20_ABI,
+            functionName: 'transfer',
+            args: [userAddress, minOutAmount - flashLoanAmount]
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+        });
+      }
     }
   }
 
@@ -851,19 +855,17 @@ export function buildRolloverBundle({
     }
   ];
 
-  if (isFull) {
-    outerBundle.push({
-      to: ETHER_GENERAL_ADAPTER_1,
-      data: encodeFunctionData({
-        abi: ADAPTER_ABI,
-        functionName: 'erc20Transfer',
-        args: [sourceMarketParams.loanToken, userAddress, 2n ** 256n - 1n]
-      }),
-      value: 0n,
-      skipRevert: false,
-      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-    });
-  }
+  outerBundle.push({
+    to: ETHER_GENERAL_ADAPTER_1,
+    data: encodeFunctionData({
+      abi: ADAPTER_ABI,
+      functionName: 'erc20Transfer',
+      args: [sourceMarketParams.loanToken, userAddress, 2n ** 256n - 1n]
+    }),
+    value: 0n,
+    skipRevert: false,
+    callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+  });
 
   const finalCalldata = encodeFunctionData({
     abi: BUNDLER_ABI,

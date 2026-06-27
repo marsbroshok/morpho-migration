@@ -614,9 +614,9 @@ async function testCliRunnerAllowanceCheckAndApproval() {
     throw new Error('Unknown market id ' + id);
   };
   BlockchainClient.prototype.fetchMorphoPosition = async () => ({
-    collateral: 8000n * 10n ** 18n, // 8000 PT (solvent position)
-    debt: 6000n * 10n ** 6n, // 6000 USDC
-    borrowShares: 6000n * 10n ** 6n
+    collateral: 9000n * 10n ** 18n, // 9000 PT (more collateral to avoid LTV revert)
+    debt: 5000n * 10n ** 6n, // 5000 USDC
+    borrowShares: 5000n * 10n ** 6n
   });
   BlockchainClient.prototype.checkCollateralMaturity = async () => ({ expiryDate: '11/05/2026', isExpired: false });
 

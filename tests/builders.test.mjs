@@ -47,13 +47,8 @@ const bundle1 = buildDeleveragingBundle({
   flashLoanAmount: debtAmount
 });
 
-// We expect 5 calls in the reenter bundle:
-// 0: Repay Morpho debt
-// 1: Withdraw collateral PT (receiver should be MORPHO_BUNDLER_V3)
-// 2: Approve Pendle Swap Router to spend PT
-// 3: Execute Swap
-// 4: Transfer swapped USDC from Bundler to Adapter
-assert.strictEqual(bundle1.length, 5);
+// We expect 6 calls in the reenter bundle due to Permit2 approvals:
+assert.strictEqual(bundle1.length, 6);
 assert.strictEqual(bundle1[1].to, ETHER_GENERAL_ADAPTER_1);
 console.log('Test 1: Deleveraging bundle recipient check');
 // Decode and verify the PT withdraw recipient is MORPHO_BUNDLER_V3
@@ -102,13 +97,8 @@ const bundle2 = buildLeveragingUpBundle({
   MORPHO_BUNDLER_V3
 });
 
-// We expect 5 calls:
-// 0: Transfer USDC from Adapter to Bundler (New step!)
-// 1: Approve Router to spend USDC
-// 2: Execute Swap
-// 3: Supply PT collateral (amount should be type(uint256).max)
-// 4: Borrow USDC
-assert.strictEqual(bundle2.length, 5);
+// We expect 7 calls due to Permit2 approvals:
+assert.strictEqual(bundle2.length, 7);
 
 // Let's decode Call 0 (Transfer USDC from Adapter to Bundler)
 const decodedTransfer = viemDecode({
@@ -131,7 +121,7 @@ assert.strictEqual(decodedTransfer.args[0], usdcAddress);
 assert.strictEqual(decodedTransfer.args[1], MORPHO_BUNDLER_V3);
 assert.strictEqual(decodedTransfer.args[2], debtAmount);
 
-// Let's decode Call 3 (Supply PT collateral)
+// Let's decode Call 5 (Supply PT collateral)
 const decodedSupply = viemDecode({
   abi: [
     {
@@ -157,7 +147,7 @@ const decodedSupply = viemDecode({
       "type": "function"
     }
   ],
-  data: bundle2[3].data
+  data: bundle2[5].data
 });
 assert.strictEqual(decodedSupply.args[1], 2n ** 256n - 1n);
 

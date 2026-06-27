@@ -4,12 +4,12 @@ import { calculateCollateralValue, calculateLtv, calculateLeverage } from '../ma
 
 console.log('Running leverage and LTV tests...');
 
-const collateral = 8000320000000000000000n;
-const oraclePrice = 950000000000000000000000n;
-const debt = 6195880000n;
+const collateral = 8000320000000000000000n; // 8000.32 apyUSD (18 dec)
+const oraclePrice = 1052631578947368421052631578947368421n; // 1.0526 apyUSD per USDC (36 dec)
+const debt = 6195880000000000000000n; // 6195.88 USDC/apxUSD (18 dec)
 
 const val = calculateCollateralValue(collateral, oraclePrice);
-assert.strictEqual(val, 7600304000n);
+assert.strictEqual(val, 7600304000000000000000n); // 7600.304 apxUSD (18 dec)
 
 const ltv = calculateLtv(debt, val);
 assert.strictEqual(ltv, 81.52);

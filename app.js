@@ -715,39 +715,19 @@ async function initiateMigration() {
         }
       }
 
-      // Try direct Curve pool
-      const curvePool = await findCurvePoolAndIndices(
-        publicClient,
-        destLoanAddress,
-        sourceLoanAddress,
-        loanExpectedInput,
-        getAddress
-      );
-
-      if (curvePool) {
-        loanRouteData = {
-          isCurveDirect: true,
-          poolAddress: curvePool.poolAddress,
-          i: curvePool.i,
-          j: curvePool.j,
-          indexType: curvePool.indexType
-        };
-        loanExpectedOutput = curvePool.expectedOutput;
-      } else {
-        try {
-          loanRouteData = await fetchSwapRoute(
-            destLoanAddress,
-            loanExpectedInput,
-            sourceLoanAddress,
-            slippage,
-            MORPHO_BUNDLER_V3,
-            MORPHO_BUNDLER_V3
-          );
-          loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
-        } catch (err) {
-          showError(`Swap Router Loan Route Error: ${err.message}. Failed to fetch conversion route for loan asset.`);
-          return;
-        }
+      try {
+        loanRouteData = await fetchSwapRoute(
+          destLoanAddress,
+          loanExpectedInput,
+          sourceLoanAddress,
+          slippage,
+          ETHER_GENERAL_ADAPTER_1,
+          MORPHO_BUNDLER_V3
+        );
+        loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
+      } catch (err) {
+        showError(`Swap Router Loan Route Error: ${err.message}. Failed to fetch conversion route for loan asset.`);
+        return;
       }
 
       loanQuotedRate = loanExpectedInput > 0n ? (loanExpectedOutput * 10n ** (18n + decDiff)) / loanExpectedInput : 0n;
@@ -1091,7 +1071,7 @@ async function executeLeverageAdjustment() {
       // --- DELEVERAGING SWAP PATH: PT -> USDC ---
       statusEl.innerText = `Connected Wallet: ${userAddress}\nFetching routing data for deleverage swap...`;
       
-      routeData = await fetchSwapRoute(ptAddress, params.collateralAmount, usdcAddress, Number(slippage) / 10000, MORPHO_BUNDLER_V3, MORPHO_BUNDLER_V3);
+      routeData = await fetchSwapRoute(ptAddress, params.collateralAmount, usdcAddress, Number(slippage) / 10000, ETHER_GENERAL_ADAPTER_1, MORPHO_BUNDLER_V3);
       const expectedUsdcOutput = BigInt(routeData.outputs[0].amount);
       
       statusEl.innerText = `Swap path resolved! Expected Output: ${(Number(expectedUsdcOutput)/1e6).toFixed(2)} loan tokens.\nGenerating atomic flashloan bundle...`;

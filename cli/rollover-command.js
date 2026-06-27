@@ -180,8 +180,11 @@ export class RolloverCommand {
     let loanSlippagePct = 0.0;
 
     if (!isSameLoan) {
-      const exp = 18n + BigInt(newScale) - BigInt(oldScale);
-      loanOracleRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
+      const exp = 18n + BigInt(oldScale) - BigInt(newScale);
+      loanOracleRate = (newOraclePrice * 10n ** exp) / oldOraclePrice;
+      console.log("DEBUG: oldScale:", oldScale, "newScale:", newScale, "exp:", exp);
+      console.log("DEBUG: oldOraclePrice:", oldOraclePrice, "newOraclePrice:", newOraclePrice);
+      console.log("DEBUG: loanOracleRate:", loanOracleRate);
 
       // Estimate target borrow (which is in loanDecimals of the new market)
       const decDiff = BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
@@ -206,34 +209,17 @@ export class RolloverCommand {
         }
       }
 
-      // Try to find a direct Curve pool for dynamic exchange
-      const curvePool = await this.findCurvePoolAndIndices(
+      // Fetch route for swapping the borrowed new loan asset back to the old loan asset
+      const swapInputAmount = loanExpectedInput - 100000n;
+      loanRouteData = await this.routerClient.fetchSwapRoute(
         assessment.destLoanAddress,
+        swapInputAmount,
         assessment.sourceLoanAddress,
-        loanExpectedInput
+        slippageFrac,
+        MORPHO_BUNDLER_V3,
+        MORPHO_BUNDLER_V3
       );
-
-      if (curvePool) {
-        loanRouteData = {
-          isCurveDirect: true,
-          poolAddress: curvePool.poolAddress,
-          i: curvePool.i,
-          j: curvePool.j,
-          indexType: curvePool.indexType
-        };
-        loanExpectedOutput = curvePool.expectedOutput;
-      } else {
-        // Fetch route for swapping the borrowed new loan asset back to the old loan asset
-        loanRouteData = await this.routerClient.fetchSwapRoute(
-          assessment.destLoanAddress,
-          loanExpectedInput,
-          assessment.sourceLoanAddress,
-          slippageFrac,
-          MORPHO_BUNDLER_V3,
-          MORPHO_BUNDLER_V3
-        );
-        loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
-      }
+      loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
 
       const loanQuotedRate = (loanExpectedOutput * 10n ** (18n + decDiff)) / loanExpectedInput;
       loanSlippagePct = loanOracleRate > 0n ? Number((loanOracleRate - loanQuotedRate) * 10000n / loanOracleRate) / 100 : 0.0;
@@ -293,8 +279,8 @@ export class RolloverCommand {
       isSameLoan: swap.isSameLoan,
       loanRouteData: swap.loanRouteData,
       loanExpectedInput: swap.loanExpectedInput,
-      loanExpectedOutput: swap.loanExpectedOutput,
-      slippage: assessment.slippage,
+      loanExpectedOutput: swap.isSameLoan ? 0n : (swap.loanExpectedOutput * (10000n - BigInt(Math.round(assessment.slippage * 100)))) / 10000n,
+      slippage: 0,
       borrowShares: assessment.position.borrowShares,
       maxSafeBorrowAmount,
       capBorrow: options.capBorrow
@@ -349,12 +335,11 @@ export class RolloverCommand {
       loanFairMarketValue = (swap.loanExpectedInput * swap.loanOracleRate) / 10n ** exp;
       loanFairValueLoss = loanFairMarketValue - swap.loanExpectedOutput;
       
-      if (swap.loanRouteData?.isCurveDirect) {
-        const minSwapOutput = (swap.loanExpectedOutput * BigInt(Math.floor((100 - assessment.slippage) * 100))) / 10000n;
-        loanWalletShortfall = flashLoanAmount - minSwapOutput;
-      } else {
-        loanWalletShortfall = flashLoanAmount - swap.loanExpectedOutput;
-      }
+      // Calculate worst-case minimum swap output based on slippage (matching builders.js)
+      const slippageBasisPoints = BigInt(Math.round(assessment.slippage * 100));
+      const minSwapOutput = (swap.loanExpectedOutput * (10000n - slippageBasisPoints)) / 10000n;
+      
+      loanWalletShortfall = flashLoanAmount - minSwapOutput;
     } else {
       loanWalletShortfall = flashLoanAmount - borrowAmount;
     }
@@ -383,6 +368,7 @@ export class RolloverCommand {
       
       const poolWhale = await this.findUniswapV3Pool(loanToken);
       if (poolWhale) {
+        // Fund General Adapter
         prependCalls.push({
           from: poolWhale,
           to: loanToken,
@@ -402,33 +388,54 @@ export class RolloverCommand {
             args: [ETHER_GENERAL_ADAPTER_1, 1000n * 10n ** BigInt(loanDecimals)]
           })
         });
+
+        // Fund User Wallet (to cover shortfall Permit2 pulls)
+        prependCalls.push({
+          from: poolWhale,
+          to: loanToken,
+          value: '0x0',
+          data: encodeFunctionData({
+            abi: [{
+              "inputs": [
+                { "name": "recipient", "type": "address" },
+                { "name": "amount", "type": "uint256" }
+              ],
+              "name": "transfer",
+              "outputs": [{ "name": "", "type": "bool" }],
+              "stateMutability": "nonpayable",
+              "type": "function"
+            }],
+            functionName: 'transfer',
+            args: [getAddress(calldataResult.userAddress), 1000n * 10n ** BigInt(loanDecimals)]
+          })
+        });
       }
 
       const tokensToApprove = [
         calldataResult.sourceMarketParams.collateralToken,
         calldataResult.destMarketParams.collateralToken,
         calldataResult.sourceMarketParams.loanToken,
-        calldataResult.destMarketParams.loanToken,
-        '0x38eeb52f0771140d10c4e9a9a72349a329fe8a6a', // apyUSD
-        '0x04F8DCa7bcCD8997ac57ca6feF7c705E17d6bcB6', // SY-5NOV
-        '0xa166323f03cd0dae70487d551d3b457c3151bee4'  // SY-18JUN
-      ];
+        calldataResult.destMarketParams.loanToken
+      ].map(t => getAddress(t));
 
       const spendersToApprove = [
         '0x888888888889758F76e7103c6CbF23ABbF58F946', // PENDLE_ROUTER
         '0x30544e00cf296b34a9ee59e5540ae2f9cccd55dd', // Reflector
         '0xc5F938A8ef5F3Bf9e72F5Aa094bAf5e03F4727d3', // Pendle Market
+        '0xd4F480965D2347d421F1bEC7F545682E5Ec2151D', // Kyber Router
+        '0x6131B5fae19EA4f9D964eAc0408E4408b66337b5', // Kyber Helper
+        '0x000000000000c9b3e2c3ec88b1b4c0cd853f4321', // Pendle Limit Router
         ETHER_GENERAL_ADAPTER_1,
         MORPHO_BUNDLER_V3,
         MORPHO_BLUE
-      ];
+      ].map(s => getAddress(s));
 
+      // 1. Approve intermediate and market tokens from the BUNDLER contract
       for (const token of tokensToApprove) {
         for (const spender of spendersToApprove) {
-          // Approve from BUNDLER
           prependCalls.push({
             from: MORPHO_BUNDLER_V3,
-            to: getAddress(token),
+            to: token,
             value: '0x0',
             data: encodeFunctionData({
               abi: [{
@@ -442,32 +449,62 @@ export class RolloverCommand {
                 "type": "function"
               }],
               functionName: 'approve',
-              args: [getAddress(spender), 2n ** 256n - 1n]
-            })
-          });
-          
-          // Approve from user
-          prependCalls.push({
-            from: calldataResult.userAddress,
-            to: getAddress(token),
-            value: '0x0',
-            data: encodeFunctionData({
-              abi: [{
-                "inputs": [
-                  { "name": "spender", "type": "address" },
-                  { "name": "amount", "type": "uint256" }
-                ],
-                "name": "approve",
-                "outputs": [{ "name": "", "type": "bool" }],
-                "stateMutability": "nonpayable",
-                "type": "function"
-              }],
-              functionName: 'approve',
-              args: [getAddress(spender), 2n ** 256n - 1n]
+              args: [spender, 2n ** 256n - 1n]
             })
           });
         }
       }
+
+      // 2. Approve Permit2 and Adapter authorization from the USER for the loan token only (shortfall funding)
+      const PERMIT2_ADDRESS = getAddress('0x000000000022D473030F116dDEE9F6B43aC78BA3');
+      const userAddress = getAddress(calldataResult.userAddress);
+      const loanTokenAddr = getAddress(loanToken);
+
+      // Approve standard ERC20 spend to Permit2 from user
+      prependCalls.push({
+        from: userAddress,
+        to: loanTokenAddr,
+        value: '0x0',
+        data: encodeFunctionData({
+          abi: [{
+            "inputs": [
+              { "name": "spender", "type": "address" },
+              { "name": "amount", "type": "uint256" }
+            ],
+            "name": "approve",
+            "outputs": [{ "name": "", "type": "bool" }],
+            "stateMutability": "nonpayable",
+            "type": "function"
+          }],
+          functionName: 'approve',
+          args: [PERMIT2_ADDRESS, 2n ** 256n - 1n]
+        })
+      });
+
+      // Authorize ETHER_GENERAL_ADAPTER_1 inside Permit2 from user
+      prependCalls.push({
+        from: userAddress,
+        to: PERMIT2_ADDRESS,
+        value: '0x0',
+        data: encodeFunctionData({
+          abi: [
+            {
+              "inputs": [
+                { "name": "token", "type": "address" },
+                { "name": "spender", "type": "address" },
+                { "name": "amount", "type": "uint160" },
+                { "name": "expiration", "type": "uint48" }
+              ],
+              "name": "approve",
+              "outputs": [],
+              "stateMutability": "nonpayable",
+              "type": "function"
+            }
+          ],
+          functionName: 'approve',
+          args: [loanTokenAddr, getAddress(ETHER_GENERAL_ADAPTER_1), 2n ** 160n - 1n, 2n ** 48n - 1n]
+        })
+      });
 
       // Check user's live position and borrow debt if they have less on-chain than we want to simulate
       const livePosition = await this.blockchainClient.fetchMorphoPosition(calldataResult.sourceMarketId, calldataResult.userAddress, true);

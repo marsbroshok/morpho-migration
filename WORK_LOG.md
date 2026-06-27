@@ -1,5 +1,38 @@
 # Project Work Log
 
+## 2026-06-27 - Fixed Inverted Oracle Rate Math, Corrected LTV Formulas, and Resolved Permit2 Reverts (TDD)
+
+### Summary of Investigation
+1. **The Goal:** Investigate why different-loan-asset rollovers and leverage adjustment simulations reverted on mainnet fork execution (e.g. `execution reverted` or `transfer reverted`).
+2. **Investigation Findings & Strategy:**
+   - **Inverted Oracle Rate Math:** Identified that `loanOracleRate` inside `cli/rollover-command.js` was inverted (calculating `apxUSD per USDC` instead of `USDC per apxUSD`), leading to a massive overestimation of the required borrow amount. Fixed this by correcting the oracle price ratio.
+   - **Inverted LTV Formula:** Discovered that `math.js` used an incorrect LTV direction (`collateral * price` instead of `collateral / price`), hiding LTV violations in the CLI and causing on-chain reverts. Corrected `calculateCollateralValue` to divide by the oracle price.
+   - **Simulation Spend Approvals:** Added KyberSwap Router & Helper and Pendle Limit Router to the simulation spenders list to prevent ERC20/Permit2 allowance reverts during Pendle routing.
+   - **Test Alignment:** Aligned `tests/leverage.test.mjs` assertions and `tests/cli.test.mjs` mock positions to match the corrected 18-decimal price direction, ensuring the entire test suite passes.
+3. **Outcome:** Full project test suite `npm test` runs and passes successfully.
+
+### Changes Applied
+* **File Modified:** [cli/rollover-command.js](file://cli/rollover-command.js) (corrected `loanOracleRate` price ratio and added Kyber/Pendle spenders to simulation list).
+* **File Modified:** [math.js](file://math.js) (corrected `calculateCollateralValue` price division).
+* **File Modified:** [tests/leverage.test.mjs](file://tests/leverage.test.mjs) (updated test inputs/assertions to correct price direction).
+* **File Modified:** [tests/cli.test.mjs](file://tests/cli.test.mjs) (updated mock position parameters).
+
+---
+
+## 2026-06-27 - Summarized Simulation Trace Comparison (Success vs. Failure)
+
+### Summary of Investigation
+1. **The Goal:** Analyze the differences between successful and failed Morpho Blue rollover simulations using provided execution trace files (`scratch/stack_debug_successful.txt` and `scratch/stack_debug_failed.txt`).
+2. **Investigation Findings:**
+   - Identified that the successful simulation pre-funded the General Adapter with `50,015,546` USDC, allowing it to fulfill the subsequent `50,000,000` USDC transfer to Morpho.
+   - Identified that the failed simulation only pre-funded the General Adapter with `49,655,707` USDC, causing the subsequent `50,000,000` USDC transfer to Morpho to revert with an underflow/insufficient balance check error.
+3. **Outcome:** Documented the full analysis in a comparison report saved at `scratch/simulation_comparison_report.md`.
+
+### Changes Applied
+* **File New:** [scratch/simulation_comparison_report.md](file://scratch/simulation_comparison_report.md) (detailed simulation traces comparison report).
+
+---
+
 ## 2026-06-26 - Resolved Missing Pre-Approval Prompt and Implemented Double-Layered Permit2 Checks (TDD)
 
 ### Summary of Investigation
@@ -2066,3 +2099,31 @@
   ```bash
   node tests/cli.test.mjs
   ```
+
+---
+
+## 2026-06-26 - Implemented Dynamic Shortfall-Pulling and Intermediate Spender Approvals for Different Loan Assets
+
+### Summary of Investigation & Fixes
+1. **The Bug:** Rollover transactions involving different loan assets (e.g., migrating debt from an `apxUSD` market to a `USDC` market) reverted on-chain and in simulations during the loan swap/repayment step with `ERC20: transfer amount exceeds balance` or `execution reverted: transfer reverted`.
+2. **Analysis:**
+   - **Shortfall:** The output of the loan asset swap route (`apxUSD` -> `USDC`) is slightly lower than the required flashloan repayment amount due to price impact and slippage. Previously, the contract attempted to transfer the full flashloan amount from the swap output, resulting in balance reverts.
+   - **Spender Approvals:** During the swap callback, intermediate tokens such as Pendle's `SY-apyUSD` (`0x04F8DCa7bcCD8997ac57ca6feF7c705E17d6bcB6`), `SY-18JUN` (`0xa166323f03cd0dae70487d551d3b457c3151bee4`), and `PT-apyUSD-5NOV2026` (`0xb5be35d8ff83d431899b95851cb17a2b4bcef150`) are wrapped/unwrapped by the Pendle Router. Because `MORPHO_BUNDLER_V3` executes the swap on behalf of the user, the Bundler itself must approve these intermediate tokens for the swap spenders.
+3. **Resolution:**
+   - **Dynamic Shortfall Pulling:** Modified `buildRolloverBundle` in `builders.js` to compute the guaranteed minimum swap output (`minOutAmount`) based on user slippage. If the minimum output is less than the flashloan amount, the bundle transfers the guaranteed output to the adapter, and invokes `permit2TransferFrom` on the adapter to pull the difference from the user's wallet. If it is greater, the surplus is routed to the user.
+   - **Intermediate Approvals:** Expanded the `tokensToApprove` array inside the swap callback loop to approve `SY-apyUSD`, `SY-18JUN`, and `PT-apyUSD-5NOV2026` tokens.
+   - **Adapter ABI Expansion:** Added the `permit2TransferFrom` signature to `ADAPTER_ABI` in `builders.js` to enable correct serialization.
+
+### Changes Applied
+* **File Modified:** [builders.js](file://builders.js) (implemented dynamic shortfall pulling, intermediate spender approvals, and expanded `ADAPTER_ABI`).
+
+### Verification Terminal Commands Run
+* Run CLI tests:
+  ```bash
+  node tests/cli.test.mjs
+  ```
+* Run integration tests:
+  ```bash
+  node tests/simulation.test.mjs
+  ```
+

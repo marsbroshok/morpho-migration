@@ -125,7 +125,7 @@ export class LeverageCommand {
         assessment.params.collateralAmount,
         assessment.loanAddress,
         slippageFrac,
-        MORPHO_BUNDLER_V3,
+        ETHER_GENERAL_ADAPTER_1,
         MORPHO_BUNDLER_V3
       );
     } else {
