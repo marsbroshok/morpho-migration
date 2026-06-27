@@ -1,5 +1,41 @@
 # Project Work Log
 
+## 2026-06-27 - Resolved Swap Receiver Bug and Upgraded Fork Simulation Integrity & Leak Detection
+
+### Summary of Investigation & Execution
+1. **The Goal:** Resolve the cross-asset loan swap receiver parameter bug in `cli/rollover-command.js`, remove intermediate contract pre-funding from simulations to prevent masking future routing defects, and add post-simulation balance checks (leak detection).
+2. **Implementation Details:**
+   - **Parameter Correction:** Swapped the `receiver` and `sender` parameters in `cli/rollover-command.js` (line 235) to direct swap outputs back to the transient General Adapter contract (`ETHER_GENERAL_ADAPTER_1`) instead of the Morpho Bundler.
+   - **Simulation Integrity Overhaul:** Removed the `ETHER_GENERAL_ADAPTER_1` pre-funding from the `runSimulation` setup in `cli/rollover-command.js`. This forces the transient adapter to run with a realistic 0 balance at start, ensuring routing and balance settlement errors are correctly caught during simulation runs.
+   - **Balance Leak Detection:** Extended the `SimulationEngine` (`cli/simulation-engine.js`) to append read-only `balanceOf` calls for the Adapter and Bundler for all processed tokens at the end of the simulation execution calls array. The engine decodes the results post-simulation and logs warning alerts if any transient infrastructure contract has residual/leaked token balances.
+3. **Outcome:**
+   - Appended a new section of rules to the workspace rules at `.agents/AGENTS.md` (Section 7: Fork Simulation State Integrity & Leak Detection).
+   - Executed and validated all changes against the integration test suite (`tests/simulation.test.mjs`) and the full project tests (`npm test`), all passing successfully.
+
+### Changes Applied
+* **Modified:** `cli/rollover-command.js` (fixed swap receiver, removed adapter pre-funding, passed checked tokens list to engine).
+* **Modified:** `cli/simulation-engine.js` (appended balance queries to simulation calls payload, parsed return data to output leak warning logs).
+* **Modified:** `.agents/AGENTS.md` (added Section 7: Fork Simulation State Integrity & Leak Detection).
+
+---
+
+## 2026-06-27 - Analyzed Rollover Transaction Logs and Identified Cross-Asset Swap Receiver Address Bug
+
+### Summary of Investigation
+1. **The Goal:** Analyze and compare logs from a rollover transaction in simulation mode (`scratch/cli_debug_run_sim.log`) versus live wallet execution mode (`scratch/cli_debug_run_live.log`) to identify commonalities, differences, and the root cause of the live execution failure.
+2. **Investigation Findings & Bug Discovery:**
+   - **Root Cause of Reversion:** The live wallet transaction failed with `ERC20: transfer amount exceeds balance` on the Morpho repayment step (`USDC.transferFrom(Adapter -> Morpho, 50,000,000)`). This happened because the Adapter's USDC balance was only `0.28 USDC` (the shortfall pulled from the user), and it was missing the rest of the 50.00 USDC flashloan repayment amount.
+   - **Swap Receiver Parameter Bug:** Traced the missing balance to `cli/rollover-command.js` (line 235), where the parameters for `fetchSwapRoute` were swapped: the receiver was set to `MORPHO_BUNDLER_V3` (the Bundler contract) instead of `ETHER_GENERAL_ADAPTER_1` (the Adapter contract). Because of this, the Kyber/OKX swap output of `49.968 USDC` was sent to the Bundler instead of the Adapter.
+   - **Simulation Discrepancy:** The simulation run succeeded because the simulation engine's pre-execution setup calls (`prependCalls`) pre-funded the Adapter contract with `1,000 USDC` to bypass allowance checks, masking the fact that the Adapter was not receiving the swap output.
+3. **Outcome & Resolution Strategy:**
+   - Saved the full comparison report to the artifact directory as `rollover_logs_comparison.md`.
+   - Identified that the fix requires swapping `sender` and `receiver` parameters in `cli/rollover-command.js` to ensure the Adapter receives the swap outputs.
+
+### Changes Applied
+* **File Created:** `rollover_logs_comparison.md` in local artifact directory (comprehensive transaction log comparison report).
+
+---
+
 ## 2026-06-27 - Resolved Morpho Rollover Simulation Reverts and Overhauled MEV Routing and Slippage (TDD)
 
 ### Summary of Investigation

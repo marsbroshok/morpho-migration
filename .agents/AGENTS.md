@@ -55,3 +55,10 @@ These rules apply to all development, styling, calculations, simulations, testin
 - **Mainnet Fork Block Pinning:** All mainnet fork simulation tests must run against a pinned block number to prevent flakiness due to sliding live states, accrued interest, or market fluctuations.
 - **Block Pinning Sequence:** Set the `process.env.FORK_BLOCK_NUMBER` environment variable *before* instantiating any viem or custom blockchain client that relies on it. Respect and preserve pre-defined environment values without overwriting them.
 - **Mainnet Fork Test Resilience:** If a fork simulation test relies on a live mainnet position, the test setup must dynamically check the position state and, if needed, programmatically modify the state (e.g., prepending debt repayments or collateral deposits) before executing the simulation, preventing LLTV or margin-based flakiness.
+
+---
+
+## 7. Fork Simulation State Integrity & Leak Detection
+- **Zero-Funding Intermediate Contracts**: During mainnet-fork simulations (in both integration tests and CLI dry-runs), state-altering cheat codes (such as `anvil_setBalance` or whale transfers) must only be applied to the target end-user address to simulate wallet depth. Do not pre-fund intermediate contracts, adapters, or bundlers. They must start the transaction cycle with exactly a 0 balance to ensure routing, parameter alignment, and balance checks are accurately validated.
+- **Transient Contract Leak Detection**: Simulation assertions should verify that all transient intermediate contracts are swept clean (0 balance) of all transaction tokens (collateral and loan assets) upon successful completion. Any residual balance must be reported as a routing leak.
+

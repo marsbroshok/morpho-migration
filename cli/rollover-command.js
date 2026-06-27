@@ -237,8 +237,8 @@ export class RolloverCommand {
         swapInputAmount,
         assessment.sourceLoanAddress,
         slippageFrac,
-        MORPHO_BUNDLER_V3,
-        ETHER_GENERAL_ADAPTER_1
+        ETHER_GENERAL_ADAPTER_1,
+        MORPHO_BUNDLER_V3
       );
       loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
 
@@ -391,27 +391,6 @@ export class RolloverCommand {
       
       const poolWhale = await this.findUniswapV3Pool(loanToken);
       if (poolWhale) {
-        // Fund General Adapter
-        prependCalls.push({
-          from: poolWhale,
-          to: loanToken,
-          value: '0x0',
-          data: encodeFunctionData({
-            abi: [{
-              "inputs": [
-                { "name": "recipient", "type": "address" },
-                { "name": "amount", "type": "uint256" }
-              ],
-              "name": "transfer",
-              "outputs": [{ "name": "", "type": "bool" }],
-              "stateMutability": "nonpayable",
-              "type": "function"
-            }],
-            functionName: 'transfer',
-            args: [ETHER_GENERAL_ADAPTER_1, 1000n * 10n ** BigInt(loanDecimals)]
-          })
-        });
-
         // Fund User Wallet (to cover shortfall Permit2 pulls)
         prependCalls.push({
           from: poolWhale,
@@ -655,12 +634,20 @@ export class RolloverCommand {
       // Ignore funding error and attempt simulation anyway
     }
 
+    const tokensToCheck = [
+      calldataResult.sourceMarketParams.loanToken,
+      calldataResult.destMarketParams.loanToken,
+      calldataResult.sourceMarketParams.collateralToken,
+      calldataResult.destMarketParams.collateralToken
+    ];
+
     return this.simulationEngine.simulateTransaction(
       calldataResult.userAddress,
       MORPHO_BUNDLER_V3,
       calldataResult.finalCalldata,
       0n,
-      prependCalls
+      prependCalls,
+      tokensToCheck
     );
   }
 

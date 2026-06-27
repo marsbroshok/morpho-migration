@@ -21,7 +21,7 @@ export class SimulationEngine {
    * @param {string} calldata 
    * @param {bigint} value 
    */
-  async simulateTransaction(fromAddress, toAddress, calldata, value, prependCalls = []) {
+  async simulateTransaction(fromAddress, toAddress, calldata, value, prependCalls = [], tokensToCheck = []) {
     const apiKey = this.alchemyKey || process.env.ALCHEMY_API_KEY;
     if (!apiKey) {
       throw new Error("Alchemy API Key is required for running on-chain simulations. Please set ALCHEMY_API_KEY.");
@@ -75,6 +75,40 @@ export class SimulationEngine {
       data: calldata
     });
 
+    const ERC20_BALANCE_OF_ABI = [{
+      "inputs": [{ "name": "account", "type": "address" }],
+      "name": "balanceOf",
+      "outputs": [{ "name": "", "type": "uint256" }],
+      "stateMutability": "view",
+      "type": "function"
+    }];
+
+    const leakCheckCallsCount = tokensToCheck.length * 2;
+    for (const token of tokensToCheck) {
+      // Check Adapter balance
+      calls.push({
+        from: fromAddress,
+        to: getAddress(token),
+        value: '0x0',
+        data: encodeFunctionData({
+          abi: ERC20_BALANCE_OF_ABI,
+          functionName: 'balanceOf',
+          args: [ADAPTER_ADDRESS]
+        })
+      });
+      // Check Bundler balance
+      calls.push({
+        from: fromAddress,
+        to: getAddress(token),
+        value: '0x0',
+        data: encodeFunctionData({
+          abi: ERC20_BALANCE_OF_ABI,
+          functionName: 'balanceOf',
+          args: [BUNDLER_ADDRESS]
+        })
+      });
+    }
+
     const payload = {
       id: 1,
       jsonrpc: "2.0",
@@ -103,11 +137,32 @@ export class SimulationEngine {
     }
 
     const results = data.result[0].calls;
-    const mainCallResult = results[results.length - 1];
+    const mainCallIndex = results.length - 1 - leakCheckCallsCount;
+    const mainCallResult = results[mainCallIndex];
     if (mainCallResult.status !== '0x1') {
       console.error("DEBUG SIMULATION FAILED. Full Alchemy response:", JSON.stringify(data, null, 2));
     }
     mainCallResult.to = toAddress;
+
+    // Check for balance leaks
+    const leaks = [];
+    for (let i = 0; i < tokensToCheck.length; i++) {
+      const token = tokensToCheck[i];
+      const adapterResult = results[mainCallIndex + 1 + i * 2];
+      const bundlerResult = results[mainCallIndex + 1 + i * 2 + 1];
+
+      const adapterBalance = adapterResult.status === '0x1' ? BigInt(adapterResult.returnData || adapterResult.output || '0x0') : 0n;
+      const bundlerBalance = bundlerResult.status === '0x1' ? BigInt(bundlerResult.returnData || bundlerResult.output || '0x0') : 0n;
+
+      if (adapterBalance > 0n) {
+        leaks.push({ token, contract: 'Adapter', balance: adapterBalance });
+        console.warn(`\x1b[33m[Leak Warning]\x1b[0m Contract ETHER_GENERAL_ADAPTER_1 holds residual balance of token ${token}: ${adapterBalance.toString()}`);
+      }
+      if (bundlerBalance > 0n) {
+        leaks.push({ token, contract: 'Bundler', balance: bundlerBalance });
+        console.warn(`\x1b[33m[Leak Warning]\x1b[0m Contract MORPHO_BUNDLER_V3 holds residual balance of token ${token}: ${bundlerBalance.toString()}`);
+      }
+    }
 
     const logs = this.collectAllLogs(mainCallResult);
     return {
@@ -117,7 +172,8 @@ export class SimulationEngine {
       error: mainCallResult.error,
       prependedAdapterAuth: !isAdapterAuth,
       prependedBundlerAuth: !isBundlerAuth,
-      logs
+      logs,
+      leaks
     };
   }
 
