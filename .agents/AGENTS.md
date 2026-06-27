@@ -60,6 +60,6 @@ These rules apply to all development, styling, calculations, simulations, testin
 ---
 
 ## 7. Fork Simulation State Integrity & Leak Detection
-- **Zero-Funding Intermediate Contracts**: During mainnet-fork simulations (in both integration tests and CLI dry-runs), state-altering cheat codes (such as `anvil_setBalance` or whale transfers) must only be applied to the target end-user address to simulate wallet depth. Do not pre-fund intermediate contracts, adapters, or bundlers. They must start the transaction cycle with exactly a 0 balance to ensure routing, parameter alignment, and balance checks are accurately validated.
+- **Zero-Funding Intermediate Contracts**: During mainnet-fork simulations (in both integration tests and CLI dry-runs), state-altering cheat codes (such as setting wallet balances or whale transfers) must only be applied to the target end-user address to simulate wallet depth. Do not pre-fund intermediate contracts, adapters, or bundlers. They must start the transaction cycle with exactly a 0 balance to ensure routing, parameter alignment, and balance checks are accurately validated.
 - **Transient Contract Leak Detection**: Simulation assertions should verify that all transient intermediate contracts are swept clean (0 balance) of all transaction tokens (collateral and loan assets) upon successful completion. Any residual balance must be reported as a routing leak.
 
