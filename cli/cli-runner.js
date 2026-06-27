@@ -137,7 +137,7 @@ export class CliRunner {
                 alchemyResponse: commandResult.simulationResult?.rawResponse || null
               };
             }
-            fs.writeFileSync(options.saveSimulation, JSON.stringify(rawTx, null, 2), 'utf8');
+            fs.writeFileSync(options.saveSimulation, JSON.stringify(rawTx, (key, val) => typeof val === 'bigint' ? `0x${val.toString(16)}` : val, 2), 'utf8');
             console.log(`Saved raw simulation payload to ${options.saveSimulation}`);
           }
         } else {
@@ -223,7 +223,7 @@ export class CliRunner {
                 alchemyResponse: commandResult.simulationResult?.rawResponse || null
               };
             }
-            fs.writeFileSync(options.saveSimulation, JSON.stringify(rawTx, null, 2), 'utf8');
+            fs.writeFileSync(options.saveSimulation, JSON.stringify(rawTx, (key, val) => typeof val === 'bigint' ? `0x${val.toString(16)}` : val, 2), 'utf8');
             console.log(`Saved raw simulation payload to ${options.saveSimulation}`);
           }
         } else {

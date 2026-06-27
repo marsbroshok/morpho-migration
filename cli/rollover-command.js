@@ -347,7 +347,7 @@ export class RolloverCommand {
         prependCalls.push({
           from: assessment.userAddress,
           to: assessment.sourceMarketParams.loanToken,
-          value: 0n,
+          value: '0x0',
           data: encodeFunctionData({
             abi: ERC20_ABI,
             functionName: 'balanceOf',
@@ -384,7 +384,8 @@ export class RolloverCommand {
       const mainCallIdx = simResult.calls.length - leakCheckCallsCount - 1;
       const mainCall = simResult.calls[mainCallIdx];
       if (mainCall.status !== '0x1') {
-        throw new Error(`Nominal simulation reverted: ${mainCall.error || "unknown error"}`);
+        const errStr = mainCall.error && typeof mainCall.error === 'object' ? JSON.stringify(mainCall.error) : (mainCall.error || "unknown error");
+        throw new Error(`Nominal simulation reverted: ${errStr}`);
       }
 
       let actualCollateralOutput = null;

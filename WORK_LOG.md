@@ -1,5 +1,27 @@
 # Project Work Log
 
+## 2026-06-27 - Fixed BigInt Serialization Bug in CLI Simulations (TDD)
+
+### Summary of Investigation & Execution
+1. **The Goal:** Fix the `TypeError: Do not know how to serialize a BigInt` error encountered when running the `rollover` command in simulation mode.
+2. **Investigation Findings & Architecture Upgrades:**
+   - **Serialization Error:** The error was thrown by `JSON.stringify(payload)` inside `SimulationEngine.simulateTransaction` because the `prependCalls` list contained a BigInt (`value: 0n`) for the user's loan token balance check, which standard JSON does not support.
+   - **BigInt Safe Replacer:** Modified `SimulationEngine.simulateTransaction` to supply a custom replacer function to `JSON.stringify`, which dynamically intercepts all BigInt values in the JSON-RPC request payload and converts them to standard hex-encoded strings (`0x...`). This ensures safe and spec-compliant serialization of blockStateCalls.
+   - **Prepend Value Standard:** Standardized the `value` field in the user balance prepend call inside `RolloverCommand.compileCalldata` to use `'0x0'` string instead of `0n`, aligning with all other prepend calls.
+   - **Safe Simulation JSON Saving:** Updated `JSON.stringify` calls in `CliRunner` for saving simulation transaction records (`--save-simulation`) to similarly use the BigInt-to-hex replacer function.
+   - **Offline Unit Test Protection:** Mocked `SwapRouterClient` and `SimulationEngine` inside the `testCliRunnerAllowanceCheckAndApproval` unit test in `tests/cli.test.mjs` to keep the test environment entirely isolated and offline (preventing on-chain reverts like `market not created` when running with mock market IDs).
+3. **Outcome:**
+   - All CLI unit, integration, browser JSDOM fork simulations, and live Alchemy mainnet fork simulations (`npm test`) execute and pass successfully.
+   - Verified that the rollover command handles both nonexistent markets and debt limit checks cleanly.
+
+### Changes Applied
+* **Modified:** [cli/rollover-command.js](file://cli/rollover-command.js) (standardized prepend balance check call to use '0x0' value; formatted revert error stringify print).
+* **Modified:** [cli/simulation-engine.js](file://cli/simulation-engine.js) (implemented BigInt-to-hex replacer function in JSON.stringify of the simulation payload).
+* **Modified:** [cli/cli-runner.js](file://cli/cli-runner.js) (implemented BigInt-to-hex replacer function in JSON.stringify when saving raw transaction files).
+* **Modified:** [tests/cli.test.mjs](file://tests/cli.test.mjs) (added dynamic stubs for SwapRouterClient and SimulationEngine in the CliRunner allowance and auto-approval test, and restored them in finally block).
+
+---
+
 ## 2026-06-27 - Fixed JSDOM Nominal Simulation Collateral Output Resolution & LocalStorage Mocks
 
 ### Summary of Investigation & Execution

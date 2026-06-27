@@ -602,12 +602,38 @@ async function testCliRunnerAllowanceCheckAndApproval() {
     configurable: true
   });
 
+  const { SwapRouterClient } = await import('../cli/swap-router-client.js');
+  const { SimulationEngine } = await import('../cli/simulation-engine.js');
+
   const originalCheckAllowance = BlockchainClient.prototype.checkAllowance;
   const originalApproveToken = BlockchainClient.prototype.approveToken;
   const originalExecuteTransaction = BlockchainClient.prototype.executeTransaction;
   const originalFetchMarketParams = BlockchainClient.prototype.fetchMarketParams;
   const originalFetchMorphoPosition = BlockchainClient.prototype.fetchMorphoPosition;
   const originalCheckCollateralMaturity = BlockchainClient.prototype.checkCollateralMaturity;
+  const originalFetchSwapRoute = SwapRouterClient.prototype.fetchSwapRoute;
+  const originalSimulateTransaction = SimulationEngine.prototype.simulateTransaction;
+
+  SwapRouterClient.prototype.fetchSwapRoute = async () => ({
+    outputs: [{ amount: '7800000000000000000' }],
+    tx: { to: '0x0000000000000000000000000000000000000004', data: '0x00' }
+  });
+
+  SimulationEngine.prototype.simulateTransaction = async (from, to, data, value, prependCalls) => {
+    return {
+      success: true,
+      gasUsed: 120000n,
+      logs: [],
+      traceTree: { to: to || '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', status: '0x1', gasUsed: '0x1d4c0' },
+      calls: [
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' },
+        { status: '0x1', returnData: '0x0' },
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' },
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' },
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' }
+      ]
+    };
+  };
 
   BlockchainClient.prototype.fetchMarketParams = async (id) => {
     if (id === 'old') return mockMarketParams;
@@ -672,6 +698,8 @@ async function testCliRunnerAllowanceCheckAndApproval() {
     BlockchainClient.prototype.fetchMarketParams = originalFetchMarketParams;
     BlockchainClient.prototype.fetchMorphoPosition = originalFetchMorphoPosition;
     BlockchainClient.prototype.checkCollateralMaturity = originalCheckCollateralMaturity;
+    SwapRouterClient.prototype.fetchSwapRoute = originalFetchSwapRoute;
+    SimulationEngine.prototype.simulateTransaction = originalSimulateTransaction;
   }
 
   assert.strictEqual(checkAllowanceCalled, 1, 'checkAllowance should be called exactly once');

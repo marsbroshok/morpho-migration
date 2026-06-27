@@ -139,7 +139,7 @@ export class SimulationEngine {
     const response = await fetch(rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload, (key, val) => typeof val === 'bigint' ? `0x${val.toString(16)}` : val)
     });
     
     const data = await response.json();
