@@ -62,6 +62,14 @@ global.window.ethereum = {
 global.fetch = async (url, options) => {
   const urlStr = typeof url === 'string' ? url : url.toString();
   
+  if (urlStr.endsWith('config.json')) {
+    const configPath = path.resolve(__dirname, '../config.json');
+    return {
+      ok: true,
+      json: async () => JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    };
+  }
+
   if (urlStr.includes('blue-api.morpho.org/graphql')) {
     const body = JSON.parse(options.body);
     if (body.query.includes('GetMarket')) {
@@ -123,10 +131,10 @@ let appCode = fs.readFileSync(appPath, 'utf8');
 appCode = appCode.replace(/from\s+['"]https:\/\/esm\.sh\/viem['"]/g, "from 'viem'");
 appCode = appCode.replace(/from\s+['"]https:\/\/esm\.sh\/viem\/chains['"]/g, "from 'viem/chains'");
 
-// Adjust local imports to point one level up since shadow file is in tests/
 appCode = appCode.replace(/from\s+['"]\.\/math\.js['"]/g, "from '../math.js'");
 appCode = appCode.replace(/from\s+['"]\.\/labels\.js['"]/g, "from '../labels.js'");
 appCode = appCode.replace(/from\s+['"]\.\/builders\.js['"]/g, "from '../builders.js'");
+appCode = appCode.replace(/from\s+['"]\.\/config\.js['"]/g, "from '../config.js'");
 
 // Save the shadow test file
 const shadowPath = path.resolve(__dirname, './app.shadow.mjs');

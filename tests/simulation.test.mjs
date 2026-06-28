@@ -6,6 +6,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { getAddress, encodeFunctionData } from 'viem';
 import { BlockchainClient } from '../cli/blockchain-client.js';
 import { findUniswapV3Pool, ERC20_ABI } from '../builders.js';
+import config from '../config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,6 +76,18 @@ global.localStorage = mockLocalStorage;
 global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
+const originalFetch = global.fetch;
+global.fetch = async (url, options) => {
+  const urlStr = typeof url === 'string' ? url : url.toString();
+  if (urlStr.endsWith('config.json')) {
+    const configPath = path.resolve(__dirname, '../config.json');
+    return new Response(fs.readFileSync(configPath, 'utf8'), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  return originalFetch(url, options);
+};
 global.window.fetch = global.fetch; // map fetch to Node fetch
 
 // 4. Mock window.ethereum to act as a custom forwarding provider connected to Alchemy RPC
@@ -198,13 +211,13 @@ async function getPrependRepayCalls() {
         data: encodeFunctionData({
           abi: ERC20_ABI,
           functionName: 'approve',
-          args: ['0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb', targetPosition.debt]
+          args: [config.MORPHO_BLUE, targetPosition.debt]
         })
       });
 
       prependCalls.push({
         from: TEST_USER_ADDRESS,
-        to: '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb',
+        to: config.MORPHO_BLUE,
         value: '0x0',
         data: encodeFunctionData({
           abi: [
@@ -305,6 +318,7 @@ appCode = appCode.replace(/from\s+['"]https:\/\/esm\.sh\/viem\/chains['"]/g, "fr
 appCode = appCode.replace(/from\s+['"]\.\/math\.js['"]/g, "from '../math.js'");
 appCode = appCode.replace(/from\s+['"]\.\/labels\.js['"]/g, "from '../labels.js'");
 appCode = appCode.replace(/from\s+['"]\.\/builders\.js['"]/g, "from '../builders.js'");
+appCode = appCode.replace(/from\s+['"]\.\/config\.js['"]/g, "from '../config.js'");
 
 const shadowPath = path.resolve(__dirname, './simulation.shadow.mjs');
 fs.writeFileSync(shadowPath, appCode, 'utf8');

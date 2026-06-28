@@ -1,8 +1,9 @@
 import { getAddress, encodeFunctionData } from 'viem';
+import config from '../config.js';
 
-const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
-const BUNDLER_ADDRESS = '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245';
-const ADAPTER_ADDRESS = '0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0';
+const MORPHO_BLUE = config.MORPHO_BLUE;
+const BUNDLER_ADDRESS = config.MORPHO_BUNDLER_V3;
+const ADAPTER_ADDRESS = config.ETHER_GENERAL_ADAPTER_1;
 
 export class SimulationEngine {
   /**

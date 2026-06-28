@@ -42,6 +42,15 @@ global.window.ethereum = {
 global.fetch = async (url, options) => {
   const urlStr = typeof url === 'string' ? url : url.toString();
   console.log("[Mock Fetch] URL:", urlStr);
+  
+  if (urlStr.endsWith('config.json')) {
+    const configPath = path.resolve(__dirname, '../config.json');
+    return {
+      ok: true,
+      json: async () => JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    };
+  }
+
   if (urlStr.includes('blue-api.morpho.org/graphql')) {
     const body = JSON.parse(options.body);
     console.log("[Mock Fetch] GQL Variables:", body.variables);
@@ -136,6 +145,7 @@ appCode = appCode.replace(/from\s+['"]https:\/\/esm\.sh\/viem\/chains['"]/g, "fr
 appCode = appCode.replace(/from\s+['"]\.\/math\.js['"]/g, "from '../math.js'");
 appCode = appCode.replace(/from\s+['"]\.\/labels\.js['"]/g, "from '../labels.js'");
 appCode = appCode.replace(/from\s+['"]\.\/builders\.js['"]/g, "from '../builders.js'");
+appCode = appCode.replace(/from\s+['"]\.\/config\.js['"]/g, "from '../config.js'");
 
 appCode = "\nconst createPublicClient = () => global.mockPublicClient;\n" + appCode;
 

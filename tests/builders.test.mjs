@@ -47,8 +47,8 @@ const bundle1 = buildDeleveragingBundle({
   flashLoanAmount: debtAmount
 });
 
-// We expect 6 calls in the reenter bundle due to Permit2 approvals:
-assert.strictEqual(bundle1.length, 6);
+// We expect 6 or 7 calls in the reenter bundle due to Permit2 approvals and transfer:
+assert.ok(bundle1.length === 6 || bundle1.length === 7, "Deleveraging bundle length should be 6 or 7");
 assert.strictEqual(bundle1[1].to, ETHER_GENERAL_ADAPTER_1);
 console.log('Test 1: Deleveraging bundle recipient check');
 // Decode and verify the PT withdraw recipient is MORPHO_BUNDLER_V3

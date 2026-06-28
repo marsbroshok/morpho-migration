@@ -2,10 +2,11 @@ import { getAddress, encodeFunctionData, encodeAbiParameters, keccak256 } from '
 import { calculateCollateralValue, calculateLtv, calculateLeverage, calculateLeverageAdjustmentParams } from '../math.js';
 import { formatMarketLabel } from '../labels.js';
 import { buildDeleveragingBundle, buildLeveragingUpBundle, ADAPTER_ABI } from '../builders.js';
+import config from '../config.js';
 
-const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
-const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
-const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
+const MORPHO_BUNDLER_V3 = config.MORPHO_BUNDLER_V3;
+const ETHER_GENERAL_ADAPTER_1 = config.ETHER_GENERAL_ADAPTER_1;
+const MORPHO_BLUE = config.MORPHO_BLUE;
 
 const BUNDLER_ABI = [
   {
@@ -118,7 +119,7 @@ export class LeverageCommand {
     let routeData;
     const isLeverageUp = (assessment.params.mode === 'leverage-up');
 
-    const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
+
     if (assessment.params.mode === 'deleverage' || assessment.params.mode === 'deleverage-to-1x') {
       routeData = await this.routerClient.fetchSwapRoute(
         assessment.collateralAddress,

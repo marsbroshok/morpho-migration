@@ -1,8 +1,9 @@
 import { createPublicClient, createWalletClient, http, getAddress } from 'viem';
 import { mainnet } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
+import config from '../config.js';
 
-const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
+const MORPHO_BLUE = config.MORPHO_BLUE;
 
 const MORPHO_BLUE_ABI = [
   {
@@ -246,7 +247,7 @@ export class BlockchainClient {
    * Check internal Permit2 allowance of a spender for a specific token and user.
    */
   async checkPermit2Allowance(tokenAddress, ownerAddress, spenderAddress) {
-    const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+    const PERMIT2_ADDRESS = config.PERMIT2_ADDRESS;
     const [amount, expiration, nonce] = await this.publicClient.readContract({
       address: PERMIT2_ADDRESS,
       abi: [
@@ -283,7 +284,7 @@ export class BlockchainClient {
    * Execute Permit2 token approval.
    */
   async approvePermit2(tokenAddress, spenderAddress, amount) {
-    const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+    const PERMIT2_ADDRESS = config.PERMIT2_ADDRESS;
     const { encodeFunctionData } = await import('viem');
     
     // Default expiration to max uint48 (approx 8900 years)

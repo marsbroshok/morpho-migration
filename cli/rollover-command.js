@@ -2,10 +2,11 @@ import { getAddress, encodeFunctionData, encodeAbiParameters, keccak256 } from '
 import { calculateCollateralValue, calculateLtv, calculateLeverage } from '../math.js';
 import { formatMarketLabel } from '../labels.js';
 import { ERC20_ABI, ADAPTER_ABI, BUNDLER_ABI, buildRolloverBundle, findCurvePoolAndIndices, findUniswapV3Pool } from '../builders.js';
+import config from '../config.js';
 
-const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
-const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
-const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
+const MORPHO_BUNDLER_V3 = config.MORPHO_BUNDLER_V3;
+const ETHER_GENERAL_ADAPTER_1 = config.ETHER_GENERAL_ADAPTER_1;
+const MORPHO_BLUE = config.MORPHO_BLUE;
 
 export class RolloverCommand {
   /**
@@ -636,7 +637,7 @@ export class RolloverCommand {
       }
 
       // 2. Approve Permit2 and Adapter authorization from the USER for the loan token only (shortfall funding)
-      const PERMIT2_ADDRESS = getAddress('0x000000000022D473030F116dDEE9F6B43aC78BA3');
+      const PERMIT2_ADDRESS = getAddress(config.PERMIT2_ADDRESS);
       const userAddress = getAddress(calldataResult.userAddress);
       const loanTokenAddr = getAddress(loanToken);
 

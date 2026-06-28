@@ -1,7 +1,8 @@
 import { getAddress } from 'viem';
+import config from '../config.js';
 
-const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
-const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
+const MORPHO_BUNDLER_V3 = config.MORPHO_BUNDLER_V3;
+const ETHER_GENERAL_ADAPTER_1 = config.ETHER_GENERAL_ADAPTER_1;
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 export class TransactionAuditor {

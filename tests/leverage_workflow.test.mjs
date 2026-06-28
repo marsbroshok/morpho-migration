@@ -60,6 +60,15 @@ global.window.ethereum = {
 // Mock fetch
 global.fetch = async (url, options) => {
   const urlStr = typeof url === 'string' ? url : url.toString();
+  
+  if (urlStr.endsWith('config.json')) {
+    const configPath = path.resolve(__dirname, '../config.json');
+    return {
+      ok: true,
+      json: async () => JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    };
+  }
+
   if (urlStr.includes('blue-api.morpho.org/graphql')) {
     return {
       ok: true,
@@ -107,7 +116,8 @@ global.fetch = async (url, options) => {
             calls: [
               {
                 status: "0x1",
-                returnData: "0x"
+                returnData: "0x",
+                gasUsed: "0x1234"
               }
             ]
           }
@@ -128,6 +138,7 @@ appCode = appCode.replace(/from\s+['"]https:\/\/esm\.sh\/viem\/chains['"]/g, "fr
 appCode = appCode.replace(/from\s+['"]\.\/math\.js['"]/g, "from '../math.js'");
 appCode = appCode.replace(/from\s+['"]\.\/labels\.js['"]/g, "from '../labels.js'");
 appCode = appCode.replace(/from\s+['"]\.\/builders\.js['"]/g, "from '../builders.js'");
+appCode = appCode.replace(/from\s+['"]\.\/config\.js['"]/g, "from '../config.js'");
 
 // Intercept createPublicClient and inject a customized mock client
 appCode = appCode.replace(/createPublicClient\s*\(\s*\{[^}]*\}\s*\)/g, `(() => {

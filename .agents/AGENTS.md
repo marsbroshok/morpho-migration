@@ -21,7 +21,9 @@ These rules apply to all development, styling, calculations, simulations, testin
 ---
 
 ## 3. Dynamic Asset Resolution & Exchange Rate Estimation
-- **No Hardcoded Asset Addresses or Wrapper Tokens:** Do not hardcode specific token contract addresses, market IDs, or intermediate token wrapper assets (e.g., Pendle's `SY` wrappers or specific AMM pool addresses) in production calculations or routing functions. All parameters must be resolved dynamically from the Morpho GraphQL API, user inputs, or swap route parameters.
+- **Zero Hardcoded Asset & Token Addresses:** Do not hardcode specific token contract addresses, market IDs, intermediate token wrapper assets (such as Pendle's `SY` wrappers), or pool addresses anywhere in the codebase. This restriction applies universally across all modules, including calculation engines, transaction builders, display formatters, UI controllers, and testing scripts.
+  - **Dynamic Resolution:** All token symbols, decimals, and metadata must be resolved dynamically using on-chain queries (e.g., querying `symbol()`, `decimals()`, `name()`), Morpho GraphQL API responses, or parameters returned directly from active swap route payloads.
+  - **System Core Contracts Configuration:** If fixed system-level contracts (such as the Morpho Blue Core, Morpho Bundler, or Permit2 endpoints) must be referenced, they must be loaded from external configuration files (e.g., `config.json`), environment variables, or contract registries rather than being inline hardcoded in the codebase.
 - **Minimal/Base Asset Routing:** Swap queries and operations must target the base underlying assets (e.g. `apyUSD` or `USDC`), allowing the swap router client or external API (e.g., Pendle Convert API) to resolve intermediate wrapper tokens (like `SY` tokens or LP tokens) under the hood rather than manually hardcoding wrappers in the transaction builder.
 - **Dynamic Swap Quotes:** Never estimate swap rates, exchange rates, or input amounts for cross-asset swaps based on collateral oracle prices or static assumptions. Always utilize official router clients or quoter APIs (e.g., Uniswap Quoter, Pendle Convert API) to fetch actual execution quotes.
 - **Iterative Scaling for Swap Inputs:** When estimating exact input amounts needed to yield a target output amount under slippage:
@@ -43,6 +45,7 @@ These rules apply to all development, styling, calculations, simulations, testin
 
 ## 5. Simulation & Transaction Calldata
 - **Dynamic Spender Resolution:** To prevent simulation reverts due to allowance limits, extract active spenders and tokens dynamically from the generated swap routes (`routeData.tx.to`, `limitRouter`, etc.) rather than relying on statically hardcoded lists.
+  - **Safe Spender Extraction:** When parsing dynamic swap routes for spenders to approve, do not perform loose regex matching or substring extraction on raw hex calldata (such as `tx.data`). Spenders must only be extracted from structured JSON properties by matching exact 42-character address strings starting with `0x` to avoid generating false-positive spender approvals.
 - **CLI & UI Parity:** Ensure that mathematical estimation, route fetching, and calldata generation logic remain perfectly synchronized between CLI modules (e.g., `cli/rollover-command.js`) and UI controllers (e.g., `app.js`).
 
 ---

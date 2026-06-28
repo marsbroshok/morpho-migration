@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { encodeFunctionData, createPublicClient, http } from 'viem';
 import { mainnet } from 'viem/chains';
+import config from '../config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,6 +56,18 @@ const dom = new JSDOM(html, {
 global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
+const originalFetch = global.fetch;
+global.fetch = async (url, options) => {
+  const urlStr = typeof url === 'string' ? url : url.toString();
+  if (urlStr.endsWith('config.json')) {
+    const configPath = path.resolve(__dirname, '../config.json');
+    return new Response(fs.readFileSync(configPath, 'utf8'), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  return originalFetch(url, options);
+};
 global.window.fetch = global.fetch; // map fetch to Node fetch
 
 // Mock localStorage
@@ -77,9 +90,9 @@ global.localStorage = mockLocalStorage;
 
 // Constants & mutable test state
 let TEST_USER_ADDRESS = '0xF0A6e66B4396a70eE0620064da847821BeE70731'; // Old market user (for deleveraging)
-const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
-const BUNDLER_ADDRESS = '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245';
-const ADAPTER_ADDRESS = '0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0';
+const MORPHO_BLUE = config.MORPHO_BLUE;
+const BUNDLER_ADDRESS = config.MORPHO_BUNDLER_V3;
+const ADAPTER_ADDRESS = config.ETHER_GENERAL_ADAPTER_1;
 const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48';
 const PT_ADDRESS_OLD = '0x3365554a61CeFF74A76528f9e86C1E87946d16a5';
 const PT_ADDRESS_NEW = '0xb5Be35D8fF83D431899b95851CB17a2B4bcEF150';
@@ -95,6 +108,20 @@ global.window.ethereum = {
     }
     // Forward to Alchemy RPC
     try {
+      let params = requestObj.params ? [...requestObj.params] : [];
+      if (process.env.FORK_BLOCK_NUMBER) {
+        const forkBlockHex = `0x${BigInt(process.env.FORK_BLOCK_NUMBER).toString(16)}`;
+        if (['eth_call', 'eth_getBalance', 'eth_getTransactionCount', 'eth_getCode'].includes(requestObj.method)) {
+          if (!params[1] || params[1] === 'latest') {
+            params[1] = forkBlockHex;
+          }
+        } else if (requestObj.method === 'eth_getStorageAt') {
+          if (!params[2] || params[2] === 'latest') {
+            params[2] = forkBlockHex;
+          }
+        }
+      }
+
       const response = await fetch(ALCHEMY_RPC_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -102,7 +129,7 @@ global.window.ethereum = {
           jsonrpc: "2.0",
           id: 1,
           method: requestObj.method,
-          params: requestObj.params || []
+          params
         })
       });
       const resData = await response.json();
@@ -261,6 +288,7 @@ appCode = appCode.replace(/from\s+['"]https:\/\/esm\.sh\/viem\/chains['"]/g, "fr
 appCode = appCode.replace(/from\s+['"]\.\/math\.js['"]/g, "from '../math.js'");
 appCode = appCode.replace(/from\s+['"]\.\/labels\.js['"]/g, "from '../labels.js'");
 appCode = appCode.replace(/from\s+['"]\.\/builders\.js['"]/g, "from '../builders.js'");
+appCode = appCode.replace(/from\s+['"]\.\/config\.js['"]/g, "from '../config.js'");
 
 const shadowPath = path.resolve(__dirname, './leverage_simulation.shadow.mjs');
 fs.writeFileSync(shadowPath, appCode, 'utf8');
@@ -388,6 +416,7 @@ try {
   console.log("Leveraging-up main call execution status:", levUpMainCallResult.status, "Gas Used:", levUpMainCallResult.gasUsed);
   if (levUpMainCallResult.status === '0x0') {
     console.error("Main call error details:", JSON.stringify(levUpMainCallResult.error));
+    console.error("Leveraging-up simulation calls:", JSON.stringify(simResult.calls, null, 2));
   }
   assert.ok(levUpMainCallResult.status === '0x1', "Leveraging-up simulation main call failed or reverted");
 

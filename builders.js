@@ -1,4 +1,5 @@
 import { getAddress } from 'viem';
+import config from './config.js';
 
 export const ERC20_ABI = [
   { "inputs": [{ "name": "spender", "type": "address" }, { "name": "amount", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "nonpayable", "type": "function" },
@@ -56,8 +57,8 @@ function getSpendersToApprove(routeData) {
   walk(routeData);
 
   // Add Pendle Limit Router if Pendle Router is present
-  const PENDLE_ROUTER = getAddress('0x888888888889758F76e7103c6CbF23ABbF58F946');
-  const PENDLE_LIMIT_ROUTER = getAddress('0x000000000000c9B3E2C3Ec88B1B4c0cD853f4321');
+  const PENDLE_ROUTER = getAddress(config.PENDLE_ROUTER);
+  const PENDLE_LIMIT_ROUTER = getAddress(config.PENDLE_LIMIT_ROUTER);
   if (spenders.has(PENDLE_ROUTER)) {
     spenders.add(PENDLE_LIMIT_ROUTER);
   }
@@ -69,7 +70,7 @@ function getSpendersToApprove(routeData) {
   return Array.from(spenders);
 }
 
-const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+const PERMIT2_ADDRESS = getAddress(config.PERMIT2_ADDRESS);
 
 function appendApprovals(bundle, token, spender, encodeFunctionData) {
   // 1. ERC20 Approve Spender directly
@@ -312,6 +313,45 @@ export function buildDeleveragingBundle({
     skipRevert: false,
     callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
   });
+
+  // Call E: Transfer swap output from Bundler to Adapter (only if not received directly by Adapter)
+  const receiverIsAdapter = routeData.contractParamInfo && 
+    routeData.contractParamInfo.contractCallParamsName &&
+    routeData.contractParamInfo.contractCallParamsName.includes('receiver') &&
+    routeData.contractParamInfo.contractCallParams[routeData.contractParamInfo.contractCallParamsName.indexOf('receiver')].toLowerCase() === ETHER_GENERAL_ADAPTER_1.toLowerCase();
+
+  const txOutput = routeData.tx && routeData.tx.outputs && routeData.tx.outputs[0] ? BigInt(routeData.tx.outputs[0].amount) : null;
+  const expectedOutput = txOutput !== null ? txOutput : BigInt(routeData.outputs[0].amount);
+  
+  if (!receiverIsAdapter) {
+    bundle.push({
+      to: loanAddress,
+      data: encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: 'transfer',
+        args: [ETHER_GENERAL_ADAPTER_1, expectedOutput]
+      }),
+      value: 0n,
+      skipRevert: false,
+      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+    });
+  }
+
+  // Call F: Pull deficit/shortfall if flashLoanAmount > expectedOutput
+  const shortfall = flashLoanAmount > expectedOutput ? flashLoanAmount - expectedOutput : 0n;
+  if (shortfall > 0n) {
+    bundle.push({
+      to: ETHER_GENERAL_ADAPTER_1,
+      data: encodeFunctionData({
+        abi: ADAPTER_ABI,
+        functionName: 'permit2TransferFrom',
+        args: [loanAddress, ETHER_GENERAL_ADAPTER_1, shortfall]
+      }),
+      value: 0n,
+      skipRevert: false,
+      callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+    });
+  }
 
   return bundle;
 }

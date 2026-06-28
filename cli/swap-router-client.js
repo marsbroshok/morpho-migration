@@ -1,5 +1,3 @@
-const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
-
 export class SwapRouterClient {
   constructor() {
     this.requests = [];

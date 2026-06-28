@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getAddress } from 'viem';
+import config from '../config.js';
 import { RolloverCommand } from './rollover-command.js';
 import { LeverageCommand } from './leverage-command.js';
 import { SimulateRawCommand } from './simulate-raw-command.js';
@@ -90,8 +91,8 @@ export class CliRunner {
       const labelResolver = new AddressLabelResolver(blockchainClient.publicClient);
       const view = new CliView(labelResolver);
 
-      const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
-      const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
+      const MORPHO_BUNDLER_V3 = config.MORPHO_BUNDLER_V3;
+      const ETHER_GENERAL_ADAPTER_1 = config.ETHER_GENERAL_ADAPTER_1;
       let commandResult = {
         simulationResult: null,
         txHash: null,
@@ -147,7 +148,7 @@ export class CliRunner {
             const token = assessment.sourceMarketParams.loanToken;
             const owner = blockchainClient.userAddress || (await blockchainClient.walletClient.getAddresses())[0];
             const spender = ETHER_GENERAL_ADAPTER_1;
-            const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+            const PERMIT2_ADDRESS = config.PERMIT2_ADDRESS;
             
             const decimals = assessment.sourceMarketParams.loanDecimals;
             const shortfallDisplay = Number(shortfall) / (10 ** decimals);
@@ -227,6 +228,37 @@ export class CliRunner {
             console.log(`Saved raw simulation payload to ${options.saveSimulation}`);
           }
         } else {
+          // Check allowances if there is shortfall
+          const shortfall = calldataResult.walletShortfall || 0n;
+          if (shortfall > 0n) {
+            const token = assessment.loanAddress;
+            const owner = blockchainClient.userAddress || (await blockchainClient.walletClient.getAddresses())[0];
+            const spender = ETHER_GENERAL_ADAPTER_1;
+            const PERMIT2_ADDRESS = config.PERMIT2_ADDRESS;
+            
+            const decimals = assessment.market.loanDecimals;
+            const shortfallDisplay = Number(shortfall) / (10 ** decimals);
+            const symbol = assessment.market.loanSymbol;
+
+            // 1. Check standard ERC20 allowance of the Permit2 contract
+            const erc20Allowance = await blockchainClient.checkAllowance(token, owner, PERMIT2_ADDRESS);
+            if (erc20Allowance < shortfall) {
+              console.log(`\n⚠️  ${symbol} allowance for Permit2 is insufficient (Current: ${Number(erc20Allowance) / (10 ** decimals)} ${symbol}, Needed: ${shortfallDisplay} ${symbol}).`);
+              console.log(`🔑 Triggering standard ERC20 approval to Permit2 contract...`);
+              const approveTxHash = await blockchainClient.approveToken(token, PERMIT2_ADDRESS, 2n ** 256n - 1n);
+              console.log(`✅ Approved Permit2. Transaction Hash: ${approveTxHash}`);
+            }
+
+            // 2. Check Permit2 internal allowance for the Adapter
+            const permit2Allowance = await blockchainClient.checkPermit2Allowance(token, owner, spender);
+            if (permit2Allowance < shortfall) {
+              console.log(`\n⚠️  Permit2 allowance for Morpho General Adapter is insufficient (Current: ${Number(permit2Allowance) / (10 ** decimals)} ${symbol}, Needed: ${shortfallDisplay} ${symbol}).`);
+              console.log(`🔑 Triggering Permit2 approval to authorize the Adapter contract...`);
+              const approveTxHash = await blockchainClient.approvePermit2(token, spender, 2n ** 160n - 1n);
+              console.log(`✅ Authorized General Adapter inside Permit2. Transaction Hash: ${approveTxHash}`);
+            }
+          }
+
           commandResult.txHash = await blockchainClient.executeTransaction({
             to: MORPHO_BUNDLER_V3,
             data: calldataResult.finalCalldata,

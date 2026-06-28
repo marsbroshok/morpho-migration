@@ -1,8 +1,9 @@
 import { createPublicClient, http } from 'viem';
 import { mainnet } from 'viem/chains';
+import config from '../config.js';
 
-const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
-const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
+const MORPHO_BLUE = config.MORPHO_BLUE;
+const MORPHO_BUNDLER_V3 = config.MORPHO_BUNDLER_V3;
 
 async function runSanityCheck() {
   console.log("Running mainnet contract address sanity checks...");

@@ -1,9 +1,10 @@
 import { getAddress } from 'viem';
+import config from '../config.js';
 
 const KNOWN_CONTRACTS = {
-  "0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb": "Morpho Blue Core",
-  "0x6566194141eefa99af43bb5aa71460ca2dc90245": "Morpho Bundler V3",
-  "0x4a6c312ec70e8747a587ee860a0353cd42be0ae0": "Ether General Adapter V1"
+  [config.MORPHO_BLUE.toLowerCase()]: "Morpho Blue Core",
+  [config.MORPHO_BUNDLER_V3.toLowerCase()]: "Morpho Bundler V3",
+  [config.ETHER_GENERAL_ADAPTER_1.toLowerCase()]: "Ether General Adapter V1"
 };
 
 export class AddressLabelResolver {

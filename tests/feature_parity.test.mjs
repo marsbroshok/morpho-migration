@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { JSDOM } from 'jsdom';
 import { encodeFunctionData, getAddress } from 'viem';
+import config from '../config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,6 +56,14 @@ global.fetch = async (url, options) => {
   const urlStr = typeof url === 'string' ? url : url.toString();
   fetchedUrls.push(urlStr);
 
+  if (urlStr.endsWith('config.json')) {
+    const configPath = path.resolve(__dirname, '../config.json');
+    return new Response(fs.readFileSync(configPath, 'utf8'), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   if (urlStr.endsWith('.env')) {
     return new Response(`
       ALCHEMY_API_KEY=mock-alchemy-key-123
@@ -95,7 +104,7 @@ global.fetch = async (url, options) => {
                 calls: [
                   {
                     from: requestTo,
-                    to: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+                    to: config.MORPHO_BLUE,
                     status: "0x1",
                     gasUsed: "0x1234",
                     value: "0x0"
@@ -149,6 +158,7 @@ appCode = appCode.replace(/from\s+['"]https:\/\/esm\.sh\/viem\/chains['"]/g, "fr
 appCode = appCode.replace(/from\s+['"]\.\/math\.js['"]/g, "from '../math.js'");
 appCode = appCode.replace(/from\s+['"]\.\/labels\.js['"]/g, "from '../labels.js'");
 appCode = appCode.replace(/from\s+['"]\.\/builders\.js['"]/g, "from '../builders.js'");
+appCode = appCode.replace(/from\s+['"]\.\/config\.js['"]/g, "from '../config.js'");
 
 const shadowPath = path.resolve(__dirname, './feature_parity.shadow.mjs');
 fs.writeFileSync(shadowPath, appCode, 'utf8');

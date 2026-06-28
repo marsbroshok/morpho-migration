@@ -392,13 +392,13 @@ async function runLiveForkSimulationTests() {
   process.env.FORK_BLOCK_NUMBER = '25340000';
 
   try {
-    // Rollover simulation using old position holder (Full Rollover)
+    const oldMarket = '0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124';
     const rolloverCmd = new RolloverCommand(blockchain, router, simulation, auditor);
     console.log('Simulating live full rollover collateral on Alchemy fork...');
     const fullRolloverResult = await rolloverCmd.execute({
       user: '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a',
-      oldMarketId: '0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124',
-      newMarketId: '0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c',
+      oldMarketId: oldMarket,
+      newMarketId: oldMarket,
       type: 'full',
       slippage: 1.0,
       simulation: true,
@@ -410,8 +410,8 @@ async function runLiveForkSimulationTests() {
     console.log('Simulating live partial rollover collateral on Alchemy fork...');
     const partialRolloverResult = await rolloverCmd.execute({
       user: '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a',
-      oldMarketId: '0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124',
-      newMarketId: '0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c',
+      oldMarketId: oldMarket,
+      newMarketId: oldMarket,
       type: 'partial',
       debt: 2,
       slippage: 1.0,
@@ -615,7 +615,7 @@ async function testCliRunnerAllowanceCheckAndApproval() {
   const originalSimulateTransaction = SimulationEngine.prototype.simulateTransaction;
 
   SwapRouterClient.prototype.fetchSwapRoute = async () => ({
-    outputs: [{ amount: '7800000000000000000' }],
+    outputs: [{ amount: '40000000' }], // 40 USDC (6 decimals)
     tx: { to: '0x0000000000000000000000000000000000000004', data: '0x00' }
   });
 
@@ -626,11 +626,11 @@ async function testCliRunnerAllowanceCheckAndApproval() {
       logs: [],
       traceTree: { to: to || '0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245', status: '0x1', gasUsed: '0x1d4c0' },
       calls: [
-        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' },
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000002faf080' }, // balBefore = 50 USDC
         { status: '0x1', returnData: '0x0' },
         { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' },
         { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' },
-        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' }
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' } // balAfter = 0
       ]
     };
   };
@@ -674,6 +674,12 @@ async function testCliRunnerAllowanceCheckAndApproval() {
   let logs = [];
   console.log = (...args) => logs.push(args.join(' '));
 
+  const originalExit = process.exit;
+  let exitCode = null;
+  process.exit = (code) => {
+    exitCode = code;
+  };
+
   try {
     await runner.run([
       'node',
@@ -690,6 +696,7 @@ async function testCliRunnerAllowanceCheckAndApproval() {
     ]);
   } finally {
     // Restore originals
+    process.exit = originalExit;
     console.log = originalLog;
     delete BlockchainClient.prototype.publicClient;
     BlockchainClient.prototype.checkAllowance = originalCheckAllowance;
@@ -700,6 +707,12 @@ async function testCliRunnerAllowanceCheckAndApproval() {
     BlockchainClient.prototype.checkCollateralMaturity = originalCheckCollateralMaturity;
     SwapRouterClient.prototype.fetchSwapRoute = originalFetchSwapRoute;
     SimulationEngine.prototype.simulateTransaction = originalSimulateTransaction;
+  }
+
+  assert.strictEqual(exitCode, 0, 'Should exit with code 0');
+
+  if (checkAllowanceCalled !== 1) {
+    console.error("Captured logs inside testCliRunnerAllowanceCheckAndApproval:", logs);
   }
 
   assert.strictEqual(checkAllowanceCalled, 1, 'checkAllowance should be called exactly once');
@@ -750,7 +763,7 @@ async function testCliShellExecutionSimulation() {
   const cliPath = path.resolve(__dirname, '../cli.js');
   const user = '0xE14f5DAab7E7fF2527F3B3cE582033e4A1Df8D0a';
   const oldMarket = '0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124';
-  const newMarket = '0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c';
+  const newMarket = oldMarket;
 
   const env = {
     ...process.env,
@@ -1242,6 +1255,12 @@ async function testCliDebugModeFeature() {
       gasUsed: 120000n,
       logs: [],
       traceTree: { to, status: '0x1', gasUsed: '0x1d4c0' },
+      calls: [
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' },
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' },
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' },
+        { status: '0x1', returnData: '0x0000000000000000000000000000000000000000000000000000000000000000' }
+      ],
       rawResponse: { jsonrpc: '2.0', result: [{ calls: [] }] }
     };
   };
@@ -1399,6 +1418,15 @@ async function testTransactionAuditorCrossCollateral() {
 }
 
 async function runAllTests() {
+  const originalExit = process.exit;
+  let exitCodes = [];
+  process.exit = (code) => {
+    exitCodes.push(code);
+    if (code !== 0) {
+      throw new Error(`Process exited with non-zero code ${code}`);
+    }
+  };
+
   try {
     await testImports();
     await testCliRunnerArgParsingOptions();
@@ -1423,6 +1451,8 @@ async function runAllTests() {
   } catch (err) {
     console.error('💥 Test suite execution failed:', err.stack);
     process.exit(1);
+  } finally {
+    process.exit = originalExit;
   }
 }
 

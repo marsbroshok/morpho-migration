@@ -3,11 +3,12 @@ import { mainnet } from 'https://esm.sh/viem/chains';
 import { calculateCollateralValue, calculateLtv, calculateLeverage, calculateLeverageAdjustmentParams } from './math.js';
 import { formatMarketLabel } from './labels.js';
 import { buildDeleveragingBundle, buildLeveragingUpBundle, buildRolloverBundle, ERC20_ABI, ADAPTER_ABI, findCurvePoolAndIndices, findUniswapV3Pool } from './builders.js';
+import config, { initializeConfig } from './config.js';
 
 // --- CONSTANTS & ABIs ---
-const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
-const MORPHO_BUNDLER_V3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
-const ETHER_GENERAL_ADAPTER_1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
+let MORPHO_BLUE = config.MORPHO_BLUE;
+let MORPHO_BUNDLER_V3 = config.MORPHO_BUNDLER_V3;
+let ETHER_GENERAL_ADAPTER_1 = config.ETHER_GENERAL_ADAPTER_1;
 
 const BUNDLER_ABI = [
   {
@@ -1957,11 +1958,15 @@ async function runSimulation(fromAddress, toAddress, calldata, value) {
   };
 }
 
-const KNOWN_CONTRACTS = {
-  "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb": "Morpho Blue Core",
-  "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245": "Morpho Bundler V3",
-  "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0": "Ether General Adapter V1"
-};
+let KNOWN_CONTRACTS = {};
+
+function initKnownContracts() {
+  KNOWN_CONTRACTS = {
+    [config.MORPHO_BLUE]: "Morpho Blue Core",
+    [config.MORPHO_BUNDLER_V3]: "Morpho Bundler V3",
+    [config.ETHER_GENERAL_ADAPTER_1]: "Ether General Adapter V1"
+  };
+}
 
 class BrowserLabelResolver {
   constructor(rpcUrl) {
@@ -2265,93 +2270,104 @@ async function copyToClipboard(text) {
   }
 }
 
-// Programmatic Event Listener Bindings & Initializations
-try {
-  // Tab Selection Navigation
-  document.getElementById('tabHeaderRollover').addEventListener('click', () => switchTab('rollover'));
-  document.getElementById('tabHeaderLeverage').addEventListener('click', () => switchTab('leverage'));
-  document.getElementById('tabHeaderSimulateRaw').addEventListener('click', () => switchTab('simulate_raw'));
+async function init() {
+  try {
+    // Load config.json first
+    await initializeConfig();
+    MORPHO_BLUE = config.MORPHO_BLUE;
+    MORPHO_BUNDLER_V3 = config.MORPHO_BUNDLER_V3;
+    ETHER_GENERAL_ADAPTER_1 = config.ETHER_GENERAL_ADAPTER_1;
+    initKnownContracts();
 
-  // Settings
-  document.getElementById('settingsAlchemyKey').addEventListener('input', saveSettings);
-  document.getElementById('settingsRpcUrl').addEventListener('input', saveSettings);
-  document.getElementById('settingsAutoSimulate').addEventListener('change', saveSettings);
+    // Tab Selection Navigation
+    document.getElementById('tabHeaderRollover').addEventListener('click', () => switchTab('rollover'));
+    document.getElementById('tabHeaderLeverage').addEventListener('click', () => switchTab('leverage'));
+    document.getElementById('tabHeaderSimulateRaw').addEventListener('click', () => switchTab('simulate_raw'));
 
-  // Tab 1 (Rollover) Inputs & Buttons
-  document.getElementById('oldCollateralAddress').addEventListener('input', () => { onTokenAddressInput('oldCollateralAddress', 'oldCollateralBadge'); updateCliCommand(); });
-  document.getElementById('newCollateralAddress').addEventListener('input', () => { onTokenAddressInput('newCollateralAddress', 'newCollateralBadge'); updateCliCommand(); });
-  document.getElementById('sourceLoanAddress').addEventListener('input', () => { onTokenAddressInput('sourceLoanAddress', 'sourceLoanBadge'); updateCliCommand(); });
-  document.getElementById('newLoanAddress').addEventListener('input', () => { onTokenAddressInput('newLoanAddress', 'destLoanBadge'); updateCliCommand(); });
-  document.getElementById('oldMarketId').addEventListener('input', () => { onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldCollateralAddress', 'oldCollateralBadge', 'sourceLoanAddress', 'sourceLoanBadge'); updateCliCommand(); });
-  document.getElementById('newMarketId').addEventListener('input', () => { onMarketIdInput('newMarketId', 'newMarketLabel', 'newCollateralAddress', 'newCollateralBadge', 'newLoanAddress', 'destLoanBadge'); updateCliCommand(); });
-  document.getElementById('loadPositionBtn').addEventListener('click', connectAndLoadPosition);
-  document.getElementById('toggleFull').addEventListener('click', () => selectMigrationType('full'));
-  document.getElementById('togglePartial').addEventListener('click', () => selectMigrationType('partial'));
-  document.getElementById('debtAmount').addEventListener('input', onDebtInputChange);
-  document.getElementById('migrateBtn').addEventListener('click', initiateMigration);
-  document.getElementById('slippage').addEventListener('input', updateCliCommand);
-  document.getElementById('userAddress').addEventListener('input', updateCliCommand);
+    // Settings
+    document.getElementById('settingsAlchemyKey').addEventListener('input', saveSettings);
+    document.getElementById('settingsRpcUrl').addEventListener('input', saveSettings);
+    document.getElementById('settingsAutoSimulate').addEventListener('change', saveSettings);
 
-  // Tab 2 (Leverage) Inputs & Buttons
-  document.getElementById('levMarketId').addEventListener('input', () => { onMarketIdInput('levMarketId', 'levMarketLabel', 'levCollateralAddress', 'levCollateralBadge'); updateCliCommand(); });
-  document.getElementById('levCollateralAddress').addEventListener('input', () => { onTokenAddressInput('levCollateralAddress', 'levCollateralBadge'); updateCliCommand(); });
-  document.getElementById('levLoadBtn').addEventListener('click', levConnectAndLoadPosition);
-  document.getElementById('levSlider').addEventListener('input', onLevSliderChange);
-  document.getElementById('levExecuteBtn').addEventListener('click', executeLeverageAdjustment);
-  document.getElementById('confirmExecuteBtn').addEventListener('click', confirmAndSubmitTransaction);
-  document.getElementById('levLoanAddress').addEventListener('input', updateCliCommand);
-  document.getElementById('levSlippage').addEventListener('input', updateCliCommand);
-  document.getElementById('levUserAddress').addEventListener('input', updateCliCommand);
+    // Tab 1 (Rollover) Inputs & Buttons
+    document.getElementById('oldCollateralAddress').addEventListener('input', () => { onTokenAddressInput('oldCollateralAddress', 'oldCollateralBadge'); updateCliCommand(); });
+    document.getElementById('newCollateralAddress').addEventListener('input', () => { onTokenAddressInput('newCollateralAddress', 'newCollateralBadge'); updateCliCommand(); });
+    document.getElementById('sourceLoanAddress').addEventListener('input', () => { onTokenAddressInput('sourceLoanAddress', 'sourceLoanBadge'); updateCliCommand(); });
+    document.getElementById('newLoanAddress').addEventListener('input', () => { onTokenAddressInput('newLoanAddress', 'destLoanBadge'); updateCliCommand(); });
+    document.getElementById('oldMarketId').addEventListener('input', () => { onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldCollateralAddress', 'oldCollateralBadge', 'sourceLoanAddress', 'sourceLoanBadge'); updateCliCommand(); });
+    document.getElementById('newMarketId').addEventListener('input', () => { onMarketIdInput('newMarketId', 'newMarketLabel', 'newCollateralAddress', 'newCollateralBadge', 'newLoanAddress', 'destLoanBadge'); updateCliCommand(); });
+    document.getElementById('loadPositionBtn').addEventListener('click', connectAndLoadPosition);
+    document.getElementById('toggleFull').addEventListener('click', () => selectMigrationType('full'));
+    document.getElementById('togglePartial').addEventListener('click', () => selectMigrationType('partial'));
+    document.getElementById('debtAmount').addEventListener('input', onDebtInputChange);
+    document.getElementById('migrateBtn').addEventListener('click', initiateMigration);
+    document.getElementById('slippage').addEventListener('input', updateCliCommand);
+    document.getElementById('userAddress').addEventListener('input', updateCliCommand);
 
-  // Tab 3 (Simulate Raw) Inputs & Buttons
-  document.getElementById('rawTxFileInput').addEventListener('change', onRawTxFileSelected);
-  document.getElementById('rawTxDataTextarea').addEventListener('input', onRawTxTextChanged);
-  document.getElementById('simulateRawBtn').addEventListener('click', executeRawSimulation);
+    // Tab 2 (Leverage Adjust) Inputs & Buttons
+    document.getElementById('levMarketId').addEventListener('input', () => { onMarketIdInput('levMarketId', 'levMarketLabel', 'levCollateralAddress', 'levCollateralBadge'); updateCliCommand(); });
+    document.getElementById('levCollateralAddress').addEventListener('input', () => { onTokenAddressInput('levCollateralAddress', 'levCollateralBadge'); updateCliCommand(); });
+    document.getElementById('levLoadBtn').addEventListener('click', levConnectAndLoadPosition);
+    document.getElementById('levSlider').addEventListener('input', onLevSliderChange);
+    document.getElementById('levExecuteBtn').addEventListener('click', executeLeverageAdjustment);
+    document.getElementById('confirmExecuteBtn').addEventListener('click', confirmAndSubmitTransaction);
+    document.getElementById('levLoanAddress').addEventListener('input', updateCliCommand);
+    document.getElementById('levSlippage').addEventListener('input', updateCliCommand);
+    document.getElementById('levUserAddress').addEventListener('input', updateCliCommand);
 
-  // CLI Collapsible Header & Copy to Clipboard listeners
-  const cliCard = document.getElementById('cliCard');
-  const cliHeader = document.getElementById('cliHeader');
-  const cliToggleText = document.getElementById('cliToggleText');
-  cliHeader.addEventListener('click', () => {
-    const isExpanded = cliCard.classList.toggle('expanded');
-    cliToggleText.textContent = isExpanded ? 'Click to collapse' : 'Click to expand';
-  });
+    // Tab 3 (Simulate Raw) Inputs & Buttons
+    document.getElementById('rawTxFileInput').addEventListener('change', onRawTxFileSelected);
+    document.getElementById('rawTxDataTextarea').addEventListener('input', onRawTxTextChanged);
+    document.getElementById('simulateRawBtn').addEventListener('click', executeRawSimulation);
 
-  const copyCliBtn = document.getElementById('copyCliBtn');
-  const cliCommandCode = document.getElementById('cliCommandCode');
-  copyCliBtn.addEventListener('click', async () => {
-    try {
-      await copyToClipboard(cliCommandCode.textContent);
-      const originalHtml = copyCliBtn.innerHTML;
-      copyCliBtn.innerHTML = `
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-        <span>Copied!</span>
-      `;
-      copyCliBtn.classList.add('copied');
-      setTimeout(() => {
-        copyCliBtn.innerHTML = originalHtml;
-        copyCliBtn.classList.remove('copied');
-      }, 2000);
-    } catch (err) {
-      console.warn("Failed to copy CLI command:", err);
-    }
-  });
+    // CLI Collapsible Header & Copy to Clipboard listeners
+    const cliCard = document.getElementById('cliCard');
+    const cliHeader = document.getElementById('cliHeader');
+    const cliToggleText = document.getElementById('cliToggleText');
+    cliHeader.addEventListener('click', () => {
+      const isExpanded = cliCard.classList.toggle('expanded');
+      cliToggleText.textContent = isExpanded ? 'Click to collapse' : 'Click to expand';
+    });
 
-  // Run Initial dynamic setups
-  onTokenAddressInput('sourceLoanAddress', 'sourceLoanBadge');
-  onTokenAddressInput('newLoanAddress', 'destLoanBadge');
-  onTokenAddressInput('oldCollateralAddress', 'oldCollateralBadge');
-  onTokenAddressInput('newCollateralAddress', 'newCollateralBadge');
-  onTokenAddressInput('levCollateralAddress', 'levCollateralBadge');
-  onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldCollateralAddress', 'oldCollateralBadge', 'sourceLoanAddress', 'sourceLoanBadge');
-  onMarketIdInput('newMarketId', 'newMarketLabel', 'newCollateralAddress', 'newCollateralBadge', 'newLoanAddress', 'destLoanBadge');
-  onMarketIdInput('levMarketId', 'levMarketLabel', 'levCollateralAddress', 'levCollateralBadge');
+    const copyCliBtn = document.getElementById('copyCliBtn');
+    const cliCommandCode = document.getElementById('cliCommandCode');
+    copyCliBtn.addEventListener('click', async () => {
+      try {
+        await copyToClipboard(cliCommandCode.textContent);
+        const originalHtml = copyCliBtn.innerHTML;
+        copyCliBtn.innerHTML = `
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          <span>Copied!</span>
+        `;
+        copyCliBtn.classList.add('copied');
+        setTimeout(() => {
+          copyCliBtn.innerHTML = originalHtml;
+          copyCliBtn.classList.remove('copied');
+        }, 2000);
+      } catch (err) {
+        console.warn("Failed to copy CLI command:", err);
+      }
+    });
 
-  loadSettings();
-  tryAutoloadFromEnv();
-  
-  updateCliCommand();
-} catch (err) {
-  console.error("Failed to bind event listeners:", err);
-  showError("Initialization Error: " + err.message);
+    // Run Initial dynamic setups
+    onTokenAddressInput('sourceLoanAddress', 'sourceLoanBadge');
+    onTokenAddressInput('newLoanAddress', 'destLoanBadge');
+    onTokenAddressInput('oldCollateralAddress', 'oldCollateralBadge');
+    onTokenAddressInput('newCollateralAddress', 'newCollateralBadge');
+    onTokenAddressInput('levCollateralAddress', 'levCollateralBadge');
+    onMarketIdInput('oldMarketId', 'oldMarketLabel', 'oldCollateralAddress', 'oldCollateralBadge', 'sourceLoanAddress', 'sourceLoanBadge');
+    onMarketIdInput('newMarketId', 'newMarketLabel', 'newCollateralAddress', 'newCollateralBadge', 'newLoanAddress', 'destLoanBadge');
+    onMarketIdInput('levMarketId', 'levMarketLabel', 'levCollateralAddress', 'levCollateralBadge');
+
+    loadSettings();
+    tryAutoloadFromEnv();
+    
+    updateCliCommand();
+  } catch (err) {
+    console.error("Failed to bind event listeners:", err);
+    showError("Initialization Error: " + err.message);
+  }
 }
+
+// Start initialization
+init();

@@ -1,5 +1,49 @@
 # Project Work Log
 
+## 2026-06-28 - Unified Configuration in config.json as Single Source of Truth
+
+### Summary of Investigation & Execution
+1. **The Goal:** Adhere to the System Core Contracts Configuration rule in `AGENTS.md` by moving all hardcoded system-level contract addresses (Morpho Blue Core, Morpho Bundler V3, General Adapter, Permit2, Pendle routers) to an external `config.json` configuration file, loading them dynamically via a `config.js` utility in both browser and CLI environments.
+2. **Resolution:**
+   - **Centralized Configuration:** Created `config.json` in the root of the repository containing mainnet system contract addresses.
+   - **Eliminated Data Duplication Antipattern:** Refactored `config.js` to remove duplicate hardcoded defaults, making `config.json` the absolute single source of truth. If `config.json` is missing or corrupt, a clear initialization error is thrown at startup.
+   - **JSDOM Test Suite Mock Fetch Interception:** Updated the mock `fetch` implementations in all JSDOM test suites (`tests/app.test.mjs`, `tests/cli_ui_different_loan.test.mjs`, `tests/cli_ui.test.mjs`, `tests/leverage_workflow.test.mjs`, `tests/preview_workflow.test.mjs`, `tests/feature_parity.test.mjs`, `tests/cli_ui_signer_mismatch.test.mjs`) to intercept requests to `config.json` and return its contents from the filesystem.
+   - **Fork Simulation fetch Wrapper Interception:** Updated `tests/simulation.test.mjs`, `tests/leverage_simulation.test.mjs`, and `tests/simulation_cross_loan.test.mjs` to wrap `global.fetch` in Node.js to intercept relative requests to `config.json` and resolve them against the filesystem before mapping to JSDOM's window fetch.
+   - **Refactored Codebase:** Replaced all hardcoded system-level contract address strings in `app.js`, `builders.js`, and the CLI scripts (`blockchain-client.js`, `simulation-engine.js`, `transaction-auditor.js`, `cli-runner.js`, `leverage-command.js`, `rollover-command.js`, `address-label-resolver.js`, and `swap-router-client.js`).
+   - **Refactored Test Suite:** Refactored the test scripts (`integration.test.mjs`, `leverage_simulation.test.mjs`, `simulation.test.mjs`, `feature_parity.test.mjs`, `test_pendle_swap_direct.mjs`, `test_permit2_transfer.mjs`, `check_market_details.mjs`, `test_borrow_balance.mjs`, and `trace_simulation.mjs`) to load contract addresses from `config.js`.
+   - **Shadow Compiler Path Adjustments:** Updated the shadow compilation pre-processing blocks in all 10 frontend test files to map `./config.js` to `../config.js` when generating temporary shadow files in the `tests/` directory.
+   - **Mocked gasUsed Fields:** Added missing `gasUsed: "0x1234"` to JSDOM simulation mocks to ensure `app.js` runs simulated previews without throwing auto-simulation parse warnings.
+3. **Outcome:**
+   - Run `npm test` successfully. All unit tests, JSDOM workflow integration tests, and live mainnet-fork simulations pass cleanly.
+
+### Changes Applied
+* **New:** `config.json` (centralized system contract addresses for mainnet).
+* **New:** `config.js` (dual Node.js/Browser configuration loader utility).
+* **Modified:** `app.js` (imported and initialized config at boot; resolved known contracts dynamically).
+* **Modified:** `builders.js` (imported config; replaced hardcoded Pendle and Permit2 addresses).
+* **Modified:** `cli/blockchain-client.js` (imported config; resolved Morpho Blue and Permit2 dynamically).
+* **Modified:** `cli/simulation-engine.js` (imported config; resolved Morpho Blue, Bundler, and Adapter dynamically).
+* **Modified:** `cli/transaction-auditor.js` (imported config; resolved Bundler and Adapter dynamically).
+* **Modified:** `cli/cli-runner.js` (imported config; resolved Bundler, Adapter, and Permit2 dynamically).
+* **Modified:** `cli/leverage-command.js` (imported config; resolved Morpho Blue, Bundler, and Adapter dynamically; removed redundant local Bundler redefinition).
+* **Modified:** `cli/rollover-command.js` (imported config; resolved Morpho Blue, Bundler, Adapter, and Permit2 dynamically).
+* **Modified:** `cli/swap-router-client.js` (removed unused Adapter address declaration).
+* **Modified:** `cli/address-label-resolver.js` (imported config; dynamically constructed known contracts mapping).
+* **Modified:** `tests/integration.test.mjs` (imported config; resolved Morpho Blue and Bundler dynamically).
+* **Modified:** `tests/leverage_simulation.test.mjs` (imported config; resolved Morpho Blue, Bundler, and Adapter dynamically; intercepted config.json fetch).
+* **Modified:** `tests/simulation.test.mjs` (imported config; resolved Morpho Blue dynamically; intercepted config.json fetch).
+* **Modified:** `tests/simulation_cross_loan.test.mjs` (intercepted config.json fetch).
+* **Modified:** `tests/feature_parity.test.mjs` (imported config; resolved Morpho Blue dynamically; mocked config.json fetch).
+* **Modified:** `tests/test_pendle_swap_direct.mjs` (imported config; resolved Permit2, Morpho Blue, and Pendle Router dynamically).
+* **Modified:** `tests/test_permit2_transfer.mjs` (imported config; resolved Bundler, Adapter, Morpho Blue, and Permit2 dynamically).
+* **Modified:** `tests/check_market_details.mjs` (imported config; resolved Morpho Blue dynamically).
+* **Modified:** `tests/test_borrow_balance.mjs` (imported config; resolved Bundler, Adapter, and Morpho Blue dynamically).
+* **Modified:** `tests/trace_simulation.mjs` (imported config; resolved Bundler, Adapter, Morpho Blue, and Permit2 dynamically).
+* **Modified:** All 10 shadow pre-processing blocks inside `tests/` to support relative imports for `config.js`.
+* **Modified:** All JSDOM mock fetch implementations to intercept `config.json` requests.
+
+---
+
 ## 2026-06-27 - Fixed BigInt Serialization Bug in CLI Simulations (TDD)
 
 ### Summary of Investigation & Execution
@@ -2487,6 +2531,32 @@
   ```bash
   npm test
   ```
+
+---
+
+## 2026-06-28 - Fixed Leverage-Up Simulation Revert by Cleaning Up Spender Approvals
+
+### Summary of Investigation & Fixes
+1. **The Bug:** During leveraging-up simulation in `tests/leverage_simulation.test.mjs`, the multicall transaction reverted with a generic `execution reverted` error during simulated execution.
+2. **Analysis:**
+   - Traced the transaction multicall calldata size and found it was extremely large (933,130 characters, ~1MB) and approved 442 spender addresses.
+   - This massive list of spenders resulted from `getSpendersToApprove` recursively scanning the entire hex calldata string (`routeData.tx.data`, which is 23,498 characters long) using a loose regex `/[a-fA-F0-9]{40}/g`. This matched hundreds of false-positive spenders (like function selector patterns, padded integers, offset parameters, etc.) and generated redundant approvals (direct ERC20, Permit2, and Permit2 delegated approvals) for each one.
+   - The huge calldata size led to a massive intrinsic gas cost (~16M gas), causing some nodes to throw `intrinsic gas too high` immediately or revert during execution due to gas limits or other constraints.
+3. **Resolution:**
+   - Modified `getSpendersToApprove` in `builders.js` to ONLY extract valid 42-character address strings starting with `0x` from the JSON parameters in `routeData`, removing the loose hex regex match on calldata.
+   - This dropped the spenders to approve count from 442 to 12 (reducing the calldata size to 49k characters/approx 27KB and reducing gas usage significantly).
+   - Confirmed that the leveraging-up multicall now simulates successfully on a mainnet fork (returns `status: 0x1`).
+   - Ran `npm test` and verified that all CLI unit, JSDOM, integration, and live fork simulation tests pass successfully.
+
+### Changes Applied
+* **File Modified:** [builders.js](builders.js) (fixed `getSpendersToApprove` to avoid regex parsing of hex calldata strings, only matching exact length-42 address strings).
+
+### Verification Terminal Commands Run
+* Run complete project test suite:
+  ```bash
+  npm test
+  ```
+
 
 
 
