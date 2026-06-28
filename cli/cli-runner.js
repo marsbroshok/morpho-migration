@@ -269,6 +269,10 @@ export class CliRunner {
           commandResult.auditDetails = {
             spentToken: isLeverageUp ? assessment.loanAddress : assessment.collateralAddress,
             receivedToken: isLeverageUp ? assessment.collateralAddress : assessment.loanAddress,
+            spentDecimals: isLeverageUp ? assessment.marketParams.loanDecimals : assessment.marketParams.collateralDecimals,
+            receivedDecimals: isLeverageUp ? assessment.marketParams.collateralDecimals : assessment.marketParams.loanDecimals,
+            spentSymbol: isLeverageUp ? assessment.market.loanSymbol : assessment.market.collateralSymbol,
+            receivedSymbol: isLeverageUp ? assessment.market.collateralSymbol : assessment.market.loanSymbol,
             oracleRate: swap.oracleRate,
             estimatedRate: swap.expectedRate,
             estimatedPriceImpact: swap.priceImpact,

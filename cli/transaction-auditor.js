@@ -37,6 +37,7 @@ export class TransactionAuditor {
     let realizedRate = 0;
     let spentAmount = 0n;
     let receivedAmount = 0n;
+    let hasSeenSpentTokenTransfer = false;
 
     for (const log of receipt.logs) {
       if (log.topics[0] === TRANSFER_TOPIC && log.topics.length >= 3) {
@@ -47,9 +48,12 @@ export class TransactionAuditor {
 
         if (tokenAddr === spentToken && fromAddr === getAddress(MORPHO_BUNDLER_V3)) {
           spentAmount += value;
+          hasSeenSpentTokenTransfer = true;
         }
         if (tokenAddr === receivedToken && toAddr === getAddress(ETHER_GENERAL_ADAPTER_1)) {
-          receivedAmount += value;
+          if (hasSeenSpentTokenTransfer) {
+            receivedAmount += value;
+          }
         }
       }
     }
