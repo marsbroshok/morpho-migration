@@ -155,6 +155,13 @@ async function confirmAndSubmitTransaction() {
       transport: custom(window.ethereum)
     });
     
+    const [addr] = await walletClient.requestAddresses();
+    const signerAddress = getAddress(addr);
+    
+    if (signerAddress.toLowerCase() !== userAddress.toLowerCase()) {
+      throw new Error(`Connected wallet address (${signerAddress}) does not match the target position user address (${userAddress}). Transactions must be signed by the position owner due to Morpho Blue Bundler calldata requirements.`);
+    }
+    
     const hash = await walletClient.sendTransaction({
       account: userAddress,
       to: pendingTx.to,
@@ -341,34 +348,67 @@ async function fetchSwapRoute(inputToken, inputAmount, outputToken, slippage, re
   return data.routes[0];
 }
 
+async function resolveUserAndClients(userAddressInputId, statusEl) {
+  const inputEl = document.getElementById(userAddressInputId);
+  let resolvedAddress = inputEl.value.trim();
+
+  const apiKey = document.getElementById('settingsAlchemyKey').value.trim();
+  const customRpcUrl = document.getElementById('settingsRpcUrl').value.trim();
+  let rpcUrl = customRpcUrl;
+  if (!rpcUrl && apiKey) {
+    rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`;
+  }
+
+  if (rpcUrl) {
+    publicClient = createPublicClient({
+      chain: mainnet,
+      transport: http(rpcUrl)
+    });
+  } else if (window.ethereum) {
+    publicClient = createPublicClient({
+      chain: mainnet,
+      transport: custom(window.ethereum)
+    });
+  } else {
+    publicClient = createPublicClient({
+      chain: mainnet,
+      transport: http()
+    });
+  }
+
+  if (resolvedAddress) {
+    if (resolvedAddress.length !== 42 || !resolvedAddress.startsWith('0x')) {
+      throw new Error("Invalid address format. Must be a 42-character hex address starting with 0x.");
+    }
+    userAddress = getAddress(resolvedAddress);
+  } else {
+    statusEl.innerText = "Connecting to wallet...";
+    if (!window.ethereum) {
+      throw new Error("No wallet connected. Please enter a User Wallet Address or connect your wallet.");
+    }
+    const walletClient = createWalletClient({
+      chain: mainnet,
+      transport: custom(window.ethereum)
+    });
+    const [address] = await walletClient.requestAddresses();
+    userAddress = getAddress(address);
+    inputEl.value = userAddress;
+  }
+  return userAddress;
+}
+
 async function connectAndLoadPosition() {
   const loadBtn = document.getElementById('loadPositionBtn');
   const statusEl = document.getElementById('status');
   
   statusEl.style.display = 'block';
   statusEl.className = 'info';
-  statusEl.innerText = "Connecting to wallet...";
+  statusEl.innerText = "Loading position...";
   document.getElementById('payloadContainer').style.display = 'none';
 
-  if (!window.ethereum) {
-    showError("No injected wallet found. Please make sure Rabby Wallet is unlocked.");
-    return;
-  }
-
   try {
-    const walletClient = createWalletClient({
-      chain: mainnet,
-      transport: custom(window.ethereum)
-    });
-
-    publicClient = createPublicClient({
-      chain: mainnet,
-      transport: custom(window.ethereum)
-    });
-
-    const [address] = await walletClient.requestAddresses();
-    userAddress = getAddress(address);
-    statusEl.innerText = `Connected Wallet: ${userAddress}\nLoading position data from Morpho Blue...`;
+    const resolvedUser = await resolveUserAndClients('userAddress', statusEl);
+    statusEl.innerText = `User Address: ${resolvedUser}\nLoading position data from Morpho Blue...`;
     updateCliCommand();
 
     const oldMarketId = document.getElementById('oldMarketId').value.trim();
@@ -1189,30 +1229,12 @@ async function levConnectAndLoadPosition() {
 
   statusEl.style.display = 'block';
   statusEl.className = 'info';
-  statusEl.innerText = "Connecting to wallet...";
+  statusEl.innerText = "Loading position...";
   document.getElementById('payloadContainer').style.display = 'none';
 
-  if (!window.ethereum) {
-    showError("No injected wallet found. Please make sure Rabby Wallet is unlocked.");
-    return;
-  }
-
   try {
-    const walletClient = createWalletClient({
-      chain: mainnet,
-      transport: custom(window.ethereum)
-    });
-
-    if (!publicClient) {
-      publicClient = createPublicClient({
-        chain: mainnet,
-        transport: custom(window.ethereum)
-      });
-    }
-
-    const [address] = await walletClient.requestAddresses();
-    userAddress = getAddress(address);
-    statusEl.innerText = `Connected Wallet: ${userAddress}\nLoading position data from Morpho Blue...`;
+    const resolvedUser = await resolveUserAndClients('levUserAddress', statusEl);
+    statusEl.innerText = `User Address: ${resolvedUser}\nLoading position data from Morpho Blue...`;
     updateCliCommand();
 
     const marketId = document.getElementById('levMarketId').value.trim();
@@ -2117,7 +2139,7 @@ async function executeRawSimulation() {
 function generateRolloverCommand() {
   const sourceMarketId = document.getElementById('oldMarketId').value.trim() || '<old-market-id>';
   const destMarketId = document.getElementById('newMarketId').value.trim() || '<new-market-id>';
-  const user = userAddress || '<user-address>';
+  const user = document.getElementById('userAddress').value.trim() || userAddress || '<user-address>';
   const type = migrationType; // 'full' or 'partial'
   const debt = document.getElementById('debtAmount').value.trim() || '0';
   const sourceCollateral = document.getElementById('oldCollateralAddress').value.trim();
@@ -2175,7 +2197,7 @@ function generateRolloverCommand() {
 function generateLeverageCommand() {
   const marketId = document.getElementById('levMarketId').value.trim() || '<market-id>';
   const targetLeverage = parseFloat(document.getElementById('levSlider').value).toFixed(2);
-  const user = userAddress || '<user-address>';
+  const user = document.getElementById('levUserAddress').value.trim() || userAddress || '<user-address>';
   const pt = document.getElementById('levCollateralAddress').value.trim();
   const slippage = document.getElementById('levSlippage').value.trim() || '1.0';
   const usdc = document.getElementById('levLoanAddress').value.trim();
@@ -2268,6 +2290,7 @@ try {
   document.getElementById('debtAmount').addEventListener('input', onDebtInputChange);
   document.getElementById('migrateBtn').addEventListener('click', initiateMigration);
   document.getElementById('slippage').addEventListener('input', updateCliCommand);
+  document.getElementById('userAddress').addEventListener('input', updateCliCommand);
 
   // Tab 2 (Leverage) Inputs & Buttons
   document.getElementById('levMarketId').addEventListener('input', () => { onMarketIdInput('levMarketId', 'levMarketLabel', 'levCollateralAddress', 'levCollateralBadge'); updateCliCommand(); });
@@ -2278,6 +2301,7 @@ try {
   document.getElementById('confirmExecuteBtn').addEventListener('click', confirmAndSubmitTransaction);
   document.getElementById('levLoanAddress').addEventListener('input', updateCliCommand);
   document.getElementById('levSlippage').addEventListener('input', updateCliCommand);
+  document.getElementById('levUserAddress').addEventListener('input', updateCliCommand);
 
   // Tab 3 (Simulate Raw) Inputs & Buttons
   document.getElementById('rawTxFileInput').addEventListener('change', onRawTxFileSelected);

@@ -108,12 +108,16 @@ try {
   const cliCommandCode = document.getElementById('cliCommandCode');
   const copyCliBtn = document.getElementById('copyCliBtn');
   const cliToggleText = document.getElementById('cliToggleText');
+  const userAddressInput = document.getElementById('userAddress');
+  const levUserAddressInput = document.getElementById('levUserAddress');
 
   assert.ok(cliCard, "cliCard element should exist in DOM");
   assert.ok(cliHeader, "cliHeader element should exist in DOM");
   assert.ok(cliCommandCode, "cliCommandCode element should exist in DOM");
   assert.ok(copyCliBtn, "copyCliBtn element should exist in DOM");
   assert.ok(cliToggleText, "cliToggleText element should exist in DOM");
+  assert.ok(userAddressInput, "userAddress input element should exist in DOM");
+  assert.ok(levUserAddressInput, "levUserAddress input element should exist in DOM");
 
   // --- Test Case 2: Expand/Collapse click toggle ---
   assert.strictEqual(cliCard.classList.contains('expanded'), false, "CLI card should be collapsed by default");
@@ -143,6 +147,12 @@ try {
   command = cliCommandCode.textContent;
   assert.ok(command.includes("--old-market-id 0x1111111111111111111111111111111111111111111111111111111111111111"), "Command old-market-id should change when input field is changed");
 
+  // Set custom user address
+  userAddressInput.value = "0x9999999999999999999999999999999999999999";
+  userAddressInput.dispatchEvent(new window.Event('input'));
+  command = cliCommandCode.textContent;
+  assert.ok(command.includes("--user 0x9999999999999999999999999999999999999999"), "Command user address should update dynamically");
+
   // Toggle migration type to partial
   document.getElementById('togglePartial').click();
   command = cliCommandCode.textContent;
@@ -166,19 +176,35 @@ try {
   assert.ok(command.includes("--target-leverage 3.00"), "Should use default target leverage slider value (3.00)");
   assert.ok(command.includes("--simulation"), "Should contain --simulation flag");
 
+  // Change custom levUserAddress
+  levUserAddressInput.value = "0x8888888888888888888888888888888888888888";
+  levUserAddressInput.dispatchEvent(new window.Event('input'));
+  command = cliCommandCode.textContent;
+  assert.ok(command.includes("--user 0x8888888888888888888888888888888888888888"), "Command user address in adjust-leverage should update dynamically");
+
   // Change slider value
   document.getElementById('levSlider').value = "4.55";
   document.getElementById('levSlider').dispatchEvent(new window.Event('input'));
   command = cliCommandCode.textContent;
   assert.ok(command.includes("--target-leverage 4.55"), "Target leverage should change to 4.55 when slider moves");
 
-  // Connect wallet changes user address in command
+  // Connect wallet changes user address in command (autofills input field)
+  userAddressInput.value = "";
   document.getElementById('loadPositionBtn').click();
   await new Promise(resolve => setTimeout(resolve, 50));
   command = cliCommandCode.textContent;
+  // Connecting wallet fills userAddressInput which updates command (since we are on leverage tab, wait, loadPositionBtn is for rollover tab, which updates rollover command, let's switch tab or test on rollover command)
+  const tabRollover = document.getElementById('tabHeaderRollover');
+  tabRollover.click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  command = cliCommandCode.textContent;
   assert.ok(command.includes("--user 0x0000000000000000000000000000000000000005"), "Command should reflect connected wallet address");
+  assert.strictEqual(userAddressInput.value.toLowerCase(), "0x0000000000000000000000000000000000000005", "userAddressInput should be filled by wallet connection");
 
   console.log("All JSDOM CLI UI Component Tests passed successfully!");
+  // Reset fields to avoid leakage to next JSDOM test imports if cached
+  userAddressInput.value = "";
+  levUserAddressInput.value = "";
 } finally {
   if (fs.existsSync(shadowPath)) {
     fs.unlinkSync(shadowPath);

@@ -2457,4 +2457,36 @@
   npm test tests/cli.test.mjs
   ```
 
+---
+
+## 2026-06-28 - Achieved Feature Parity Between Web App UI and CLI Tool
+
+### Summary of Investigation & Actions
+1. **The Goal:** Establish absolute feature parity between the Web App UI and the CLI tool, specifically supporting loading and simulating Morpho Blue positions for arbitrary custom user wallet addresses in read-only mode, and validating the connected signer against the position owner during transaction submission.
+2. **Analysis & Strategy:**
+   - **UI Improvements:** Added `User Wallet Address` input fields (`userAddress` and `levUserAddress`) in `index.html` to both the Rollover and Adjust Leverage tabs.
+   - **Custom Loading Logic:** Implemented `resolveUserAndClients` helper inside `app.js` to dynamically read from the user address input fields or fall back to connected wallet accounts.
+   - **Signer Context Matching:** Updated `confirmAndSubmitTransaction` in `app.js` to verify that the connected wallet account matches the target user address before signing, throwing a descriptive warning to prevent reverts.
+   - **Test Suite Updates:**
+     - Extended `tests/cli_ui.test.mjs` to assert that the input fields exist, change dynamically, and autofill correctly upon wallet connection.
+     - Mocked `localStorage` in `tests/leverage_simulation.test.mjs` and ensured the `levUserAddress` input field is set during live mainnet-fork simulation runs.
+     - Created `tests/cli_ui_signer_mismatch.test.mjs` verifying the mismatch warning in JSDOM environment with mock contract states and RPC responses.
+3. **Resolution:**
+   - All browser JSDOM tests, live Alchemy simulations, and CLI unit tests pass successfully. Feature parity between CLI and UI is fully established.
+
+### Changes Applied
+* **File Modified:** [index.html](index.html) (added custom User Wallet Address text input fields).
+* **File Modified:** [app.js](app.js) (implemented resolve helper, user input listener bindings, and transaction signer validation checks).
+* **File Modified:** [tests/cli_ui.test.mjs](tests/cli_ui.test.mjs) (extended JSDOM assertions for wallet address changes).
+* **File Modified:** [tests/leverage_simulation.test.mjs](tests/leverage_simulation.test.mjs) (added localStorage mock and user inputs setup).
+* **File Created:** [tests/cli_ui_signer_mismatch.test.mjs](tests/cli_ui_signer_mismatch.test.mjs) (unit tests for connected wallet vs position owner verification).
+* **File Modified:** [tests/package.json](tests/package.json) (registered the mismatch validation test in the test suite).
+
+### Verification Terminal Commands Run
+* Run complete test suite (CLI & UI):
+  ```bash
+  npm test
+  ```
+
+
 

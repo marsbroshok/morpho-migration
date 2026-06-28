@@ -57,6 +57,24 @@ global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
 global.window.fetch = global.fetch; // map fetch to Node fetch
 
+// Mock localStorage
+const storage = {
+  morpho_migration_rpc_url: ALCHEMY_RPC_URL,
+  morpho_migration_alchemy_key: apiKey,
+  morpho_migration_auto_simulate: 'true'
+};
+const mockLocalStorage = {
+  getItem: (key) => storage[key] || null,
+  setItem: (key, val) => { storage[key] = val; },
+  removeItem: (key) => { delete storage[key]; },
+  clear: () => { Object.keys(storage).forEach(k => delete storage[k]); }
+};
+Object.defineProperty(dom.window, 'localStorage', {
+  value: mockLocalStorage,
+  writable: true
+});
+global.localStorage = mockLocalStorage;
+
 // Constants & mutable test state
 let TEST_USER_ADDRESS = '0xF0A6e66B4396a70eE0620064da847821BeE70731'; // Old market user (for deleveraging)
 const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
@@ -264,6 +282,7 @@ try {
 
   // --- Step 1: Load Live Leverage Position (Old Market) ---
   console.log("Loading live leverage position from mainnet for user:", TEST_USER_ADDRESS);
+  document.getElementById('levUserAddress').value = TEST_USER_ADDRESS;
   levLoadBtn.click();
   
   // Wait for position to load
@@ -336,6 +355,7 @@ try {
   await new Promise(resolve => setTimeout(resolve, 500));
 
   console.log("Loading live position in new market...");
+  document.getElementById('levUserAddress').value = TEST_USER_ADDRESS;
   levLoadBtn.click();
   await new Promise(resolve => setTimeout(resolve, 5000));
 
