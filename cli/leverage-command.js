@@ -114,30 +114,79 @@ export class LeverageCommand {
   /**
    * Phase 2: Fetch swap route quote from Pendle API.
    */
-  async fetchSwapRoute(assessment, options) {
+  /**
+   * Helper to fetch swap route from Pendle SDK.
+   */
+  async _fetchRawRoute(assessment, params, options) {
     const slippageFrac = assessment.slippage / 100;
-    let routeData;
-    const isLeverageUp = (assessment.params.mode === 'leverage-up');
-
-
-    if (assessment.params.mode === 'deleverage' || assessment.params.mode === 'deleverage-to-1x') {
-      routeData = await this.routerClient.fetchSwapRoute(
+    if (params.mode === 'deleverage' || params.mode === 'deleverage-to-1x') {
+      return this.routerClient.fetchSwapRoute(
         assessment.collateralAddress,
-        assessment.params.collateralAmount,
+        params.collateralAmount,
         assessment.loanAddress,
         slippageFrac,
         ETHER_GENERAL_ADAPTER_1,
         MORPHO_BUNDLER_V3
       );
     } else {
-      routeData = await this.routerClient.fetchSwapRoute(
+      return this.routerClient.fetchSwapRoute(
         assessment.loanAddress,
-        assessment.params.debtAmount,
+        params.debtAmount,
         assessment.collateralAddress,
         slippageFrac,
         ETHER_GENERAL_ADAPTER_1,
         MORPHO_BUNDLER_V3
       );
+    }
+  }
+
+  /**
+   * Phase 2: Fetch swap route quote from Pendle API.
+   * Performs iterative scaling under the hood to align swap prices.
+   */
+  async fetchSwapRoute(assessment, options) {
+    // 1. Fetch nominal swap route using initial parameters (assumed swapPrice = oraclePrice)
+    const nominalRouteData = await this._fetchRawRoute(assessment, assessment.params, options);
+    const nominalExpectedOutput = BigInt(nominalRouteData.outputs[0].amount);
+
+    // 2. Recalculate parameters using actual swap rate from nominal route
+    const liveDebt = assessment.position.debt;
+    const liveCollateral = assessment.position.collateral;
+    const oraclePrice = assessment.oraclePrice;
+
+    let actualSwapPrice = oraclePrice;
+    if (assessment.params.mode === 'deleverage' || assessment.params.mode === 'deleverage-to-1x') {
+      if (assessment.params.collateralAmount > 0n) {
+        actualSwapPrice = (nominalExpectedOutput * 10n ** 36n) / assessment.params.collateralAmount;
+      }
+    } else {
+      if (nominalExpectedOutput > 0n) {
+        actualSwapPrice = (assessment.params.debtAmount * 10n ** 36n) / nominalExpectedOutput;
+      }
+    }
+
+    const finalParams = calculateLeverageAdjustmentParams(
+      liveDebt,
+      liveCollateral,
+      oraclePrice,
+      actualSwapPrice,
+      assessment.targetLeverage
+    );
+
+    // 3. Update assessment state with final solved parameters in-place
+    assessment.params = finalParams;
+    assessment.mode = finalParams.mode;
+    assessment.collateralAdjustment = finalParams.collateralAmount;
+    assessment.debtAdjustment = finalParams.debtAmount;
+
+    // 4. Fetch final swap route using final parameters
+    const routeData = await this._fetchRawRoute(assessment, finalParams, options);
+    const expectedOutputAmount = BigInt(routeData.outputs[0].amount);
+
+    if (finalParams.mode === 'deleverage' || finalParams.mode === 'deleverage-to-1x') {
+      // Overwrite solved debtAmount with actual swap output to achieve perfect 0 deficit
+      finalParams.debtAmount = expectedOutputAmount;
+      assessment.debtAdjustment = expectedOutputAmount;
     }
 
     const collateralDecimals = BigInt(assessment.marketParams.collateralDecimals);
@@ -149,15 +198,14 @@ export class LeverageCommand {
     const oracleRate = assessment.oraclePrice / oracleRateDenominator;
     let quotedRate = 0n;
 
-    if (assessment.params.mode === 'deleverage' || assessment.params.mode === 'deleverage-to-1x') {
-      const expectedUsdcOutput = BigInt(routeData.outputs[0].amount);
-      if (assessment.params.collateralAmount > 0n) {
-        quotedRate = (expectedUsdcOutput * 10n ** quotedRateExponent) / assessment.params.collateralAmount;
+    if (finalParams.mode === 'deleverage' || finalParams.mode === 'deleverage-to-1x') {
+      if (finalParams.collateralAmount > 0n) {
+        quotedRate = (expectedOutputAmount * 10n ** quotedRateExponent) / finalParams.collateralAmount;
       }
     } else {
       const expectedPtOutput = BigInt(routeData.outputs[0].amount);
       if (expectedPtOutput > 0n) {
-        quotedRate = (assessment.params.debtAmount * 10n ** quotedRateExponent) / expectedPtOutput;
+        quotedRate = (finalParams.debtAmount * 10n ** quotedRateExponent) / expectedPtOutput;
       }
     }
 

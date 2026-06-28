@@ -195,10 +195,11 @@ export class CliRunner {
         // Phase 1: Assessment
         const assessment = await cmd.assessPosition(options);
         marketParams = assessment.market;
-        await view.printLeverageAssessment(assessment);
 
-        // Phase 2: Swap Routing Quote
+        // Phase 2: Swap Routing Quote (updates assessment params in-place with final values)
         const swap = await cmd.fetchSwapRoute(assessment, options);
+        
+        await view.printLeverageAssessment(assessment);
         view.printLeverageSwapRouting(swap, assessment.mode === 'leverage-up', assessment.market, assessment.marketParams);
 
         // Phase 3: Calldata Generation

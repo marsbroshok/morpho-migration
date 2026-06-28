@@ -1,5 +1,44 @@
 # Project Work Log
 
+## 2026-06-28 - Aligned CLI Phase Execution & Achieved Perfect Zero Deficit for Leverage Adjustments
+
+### Summary of Investigation & Execution
+1. **The Investigation:** Although we implemented iterative scaling inside the leverage command's `execute` method, the CLI runner (`cli/cli-runner.js`) manually coordinates the execution phases (Assessment, Routing Quote, Calldata compilation) step-by-step instead of calling `execute`. This caused the CLI dashboard to output the old nominal calculations and still flag a swap deficit warning.
+2. **Resolution:**
+   - **Phase-Encapsulated Scaling:** Moved the nominal route query, rate resolution, parameter recalculation, and final route query entirely inside `LeverageCommand.fetchSwapRoute`. This ensures that when the CLI runner or execution triggers Phase 2, the `assessment` object is updated in-place with the correct final parameters.
+   - **Perfect Zero Deficit Alignment:** Overwrote `finalParams.debtAmount` and `assessment.debtAdjustment` with the exact swap output of the final swap route in deleveraging modes. This eliminates any minor price impact deviation between the nominal and final swap sizes, guaranteeing a perfect $0.00$ out-of-pocket deficit and replacing the shortfall warning with an "Expected Swap Surplus" message.
+   - **Chronological Print Alignment:** Reordered the execution block in `cli-runner.js` to trigger Phase 2 (`fetchSwapRoute`) before rendering Phase 1 (`printLeverageAssessment`), ensuring that the printed console solver adjustments are fully synchronized with the final compiled multicall bundle steps.
+3. **Outcome:**
+   - Command simulations now display the `🎉 Expected Swap Surplus: 0.00 apxUSD` confirmation message.
+   - All tests in the test suite (`npm test`) pass successfully.
+
+### Changes Applied
+* **Modified:** [cli/leverage-command.js](file://cli/leverage-command.js) (relocated iterative scaling and added debtAmount overwrite in fetchSwapRoute; simplified execute).
+* **Modified:** [cli/cli-runner.js](file://cli/cli-runner.js) (swapped call order of printLeverageAssessment and fetchSwapRoute).
+* **Modified:** [WORK_LOG.md](file://WORK_LOG.md) (recorded execution outcomes).
+
+---
+
+## 2026-06-28 - Implemented Iterative Scaling for Leverage Adjustment to Eliminate Swap Deficits (TDD)
+
+### Summary of Investigation & Execution
+1. **The Goal:** Resolve the swap deficit issue during leverage adjustments (deleveraging and leveraging up) where differences between the oracle rate and the actual swap rate forced either a less-than-target debt repayment (meaning target leverage was not met) or would require out-of-pocket funding.
+2. **Resolution:**
+   - **Iterative Scaling Flow:** Updated both the CLI command (`cli/leverage-command.js`) and the Web UI controller (`app.js`) to perform iterative scaling. The system now solves nominal adjustment parameters, queries the swap router for a quote, extracts the actual quoted swap price, and recalculates the final adjustment parameters using the actual rate. It then queries the swap router again for the final route.
+   - **Neutral Operation:** This guarantees that the swap output perfectly covers the debt repayment for deleveraging, resulting in a neutral operation (0 out-of-pocket deficit) and achieving the exact target leverage.
+   - **General Decimals scaling:** Removed hardcoded decimals scaling (such as `10n ** 30n`) when calculating display rates in `app.js` and replaced them with dynamic scaling factors derived from `marketParams.collateralDecimals` and `marketParams.loanDecimals` to comply with the DeFi Mathematics rule.
+   - **Expanded Unit & JSDOM Tests:** Added Test Case 1b in `tests/leverage_adjust.test.mjs` verifying parameter calculations under swap slippage. Increased JSDOM timeouts from 5s to 15s in `tests/leverage_simulation.test.mjs` to allow the sequential double-lookup swap routing calls to resolve cleanly.
+3. **Outcome:**
+   - All unit, JSDOM workflow, integration, and live Alchemy mainnet fork simulation tests (`npm test`) execute and pass successfully.
+
+### Changes Applied
+* **Modified:** [cli/leverage-command.js](file://cli/leverage-command.js) (implemented iterative scaling in execute workflow).
+* **Modified:** [app.js](file://app.js) (implemented iterative scaling and dynamic decimal rate scaling in executeLeverageAdjustment).
+* **Modified:** [tests/leverage_adjust.test.mjs](file://tests/leverage_adjust.test.mjs) (added Test Case 1b for leverage adjustment under slippage).
+* **Modified:** [tests/leverage_simulation.test.mjs](file://tests/leverage_simulation.test.mjs) (increased delays to 15s to support double sequential fetch calls).
+
+---
+
 ## 2026-06-28 - Unified Configuration in config.json as Single Source of Truth
 
 ### Summary of Investigation & Execution

@@ -330,7 +330,7 @@ try {
   levExecuteBtn.click();
   
   // Wait for calldata generation (Pendle route lookup and bundle construction)
-  await new Promise(resolve => setTimeout(resolve, 5000));
+  await new Promise(resolve => setTimeout(resolve, 15000));
 
   let calldata = document.getElementById('rawCalldataTextarea').value;
   if (!calldata) {
@@ -401,7 +401,7 @@ try {
   levExecuteBtn.click();
 
   // Wait for calldata generation (Pendle route lookup and bundle construction)
-  await new Promise(resolve => setTimeout(resolve, 5000));
+  await new Promise(resolve => setTimeout(resolve, 15000));
 
   console.log("Leveraging-up status class:", statusEl.className, "text:", statusEl.innerText);
   calldata = document.getElementById('rawCalldataTextarea').value;

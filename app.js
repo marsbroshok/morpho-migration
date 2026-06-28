@@ -1373,9 +1373,31 @@ async function executeLeverageAdjustment() {
       functionName: 'price'
     });
 
-    // 1. Solve parameters for adjustment
-    const swapPrice = oraclePrice; 
-    const params = calculateLeverageAdjustmentParams(levDebt, levCollateral, oraclePrice, swapPrice, targetLeverage);
+    // 1. Solve parameters for nominal adjustment (assuming swap price is oracle price)
+    const initialParams = calculateLeverageAdjustmentParams(levDebt, levCollateral, oraclePrice, oraclePrice, targetLeverage);
+
+    // 2. Fetch nominal swap route
+    let nominalRouteData;
+    if (initialParams.mode === 'deleverage' || initialParams.mode === 'deleverage-to-1x') {
+      nominalRouteData = await fetchSwapRoute(ptAddress, initialParams.collateralAmount, usdcAddress, Number(slippage) / 10000, ETHER_GENERAL_ADAPTER_1, MORPHO_BUNDLER_V3);
+    } else {
+      nominalRouteData = await fetchSwapRoute(usdcAddress, initialParams.debtAmount, ptAddress, Number(slippage) / 10000, ETHER_GENERAL_ADAPTER_1, MORPHO_BUNDLER_V3);
+    }
+    const nominalExpectedOutput = BigInt(nominalRouteData.outputs[0].amount);
+
+    // 3. Recalculate parameters with actual swap price from nominal route
+    let actualSwapPrice = oraclePrice;
+    if (initialParams.mode === 'deleverage' || initialParams.mode === 'deleverage-to-1x') {
+      if (initialParams.collateralAmount > 0n) {
+        actualSwapPrice = (nominalExpectedOutput * 10n ** 36n) / initialParams.collateralAmount;
+      }
+    } else {
+      if (nominalExpectedOutput > 0n) {
+        actualSwapPrice = (initialParams.debtAmount * 10n ** 36n) / nominalExpectedOutput;
+      }
+    }
+
+    const params = calculateLeverageAdjustmentParams(levDebt, levCollateral, oraclePrice, actualSwapPrice, targetLeverage);
 
     let finalCalldata;
     let routeData;
@@ -1525,28 +1547,34 @@ async function executeLeverageAdjustment() {
       });
     }
 
-    // Calculate rates and slippage for preview
-    const oracleRate = oraclePrice / 10n ** 6n; // USDC per PT in 18 decimals
+    // Calculate rates and slippage for preview dynamically (avoiding hardcoded USDC/18-dec decimals scaling)
+    const collateralDecimals = BigInt(marketParams.collateralDecimals);
+    const loanDecimals = BigInt(marketParams.loanDecimals);
+    
+    const oracleRateDenominator = 10n ** (18n + loanDecimals - collateralDecimals);
+    const oracleRate = oraclePrice / oracleRateDenominator;
+    
+    const quotedRateExponent = 18n + collateralDecimals - loanDecimals;
     let quotedRate = 0n;
     let detailsText = "";
 
     if (params.mode === 'deleverage' || params.mode === 'deleverage-to-1x') {
       const expectedUsdcOutput = BigInt(routeData.outputs[0].amount);
       if (params.collateralAmount > 0n) {
-        quotedRate = (expectedUsdcOutput * 10n ** 30n) / params.collateralAmount;
+        quotedRate = (expectedUsdcOutput * 10n ** quotedRateExponent) / params.collateralAmount;
       }
       detailsText = `
-        Expected Output: <span style="font-family: monospace; color: #34d399;">${(Number(expectedUsdcOutput)/1e6).toFixed(2)} USDC</span><br>
-        Collateral to Sell: <span style="font-family: monospace; color: #f8fafc;">${(Number(params.collateralAmount)/1e18).toFixed(4)} PT</span>
+        Expected Output: <span style="font-family: monospace; color: #34d399;">${(Number(expectedUsdcOutput) / 10 ** Number(loanDecimals)).toFixed(2)} ${marketParams.loanSymbol}</span><br>
+        Collateral to Sell: <span style="font-family: monospace; color: #f8fafc;">${(Number(params.collateralAmount) / 10 ** Number(collateralDecimals)).toFixed(4)} ${marketParams.collateralSymbol}</span>
       `;
     } else {
       const expectedPtOutput = BigInt(routeData.outputs[0].amount);
       if (expectedPtOutput > 0n) {
-        quotedRate = (params.debtAmount * 10n ** 30n) / expectedPtOutput;
+        quotedRate = (params.debtAmount * 10n ** quotedRateExponent) / expectedPtOutput;
       }
       detailsText = `
-        Expected Output: <span style="font-family: monospace; color: #38bdf8;">${(Number(expectedPtOutput)/1e18).toFixed(4)} PT</span><br>
-        USDC to Spend: <span style="font-family: monospace; color: #f43f5e;">${(Number(params.debtAmount)/1e6).toFixed(2)} USDC</span>
+        Expected Output: <span style="font-family: monospace; color: #38bdf8;">${(Number(expectedPtOutput) / 10 ** Number(collateralDecimals)).toFixed(4)} ${marketParams.collateralSymbol}</span><br>
+        ${marketParams.loanSymbol} to Spend: <span style="font-family: monospace; color: #f43f5e;">${(Number(params.debtAmount) / 10 ** Number(loanDecimals)).toFixed(2)} ${marketParams.loanSymbol}</span>
       `;
     }
 

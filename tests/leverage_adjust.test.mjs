@@ -24,6 +24,20 @@ assert.strictEqual(result1.mode, 'deleverage');
 assert.strictEqual(result1.collateralAmount, 3199360001052632397983n);
 assert.strictEqual(result1.debtAmount, 3039392001n);
 
+// Test Case 1b: Deleveraging with swap slippage (swapPrice < oraclePrice)
+// Oracle Price: 0.95 USDC per PT
+// Swap Price: 0.90 USDC per PT
+const swapPriceSlipped = 900000000000000000000000n;
+const result1b = calculateLeverageAdjustmentParams(debt1, collateral1, oraclePrice, swapPriceSlipped, targetLeverage1);
+
+assert.strictEqual(result1b.mode, 'deleverage');
+assert.ok(result1b.collateralAmount > result1.collateralAmount, "Slipped swap price must yield higher collateral amount to sell");
+// Exact value check
+const expectedCollateral1b = 3799240001250001154968n;
+const expectedDebt1b = 3419316001n;
+assert.strictEqual(result1b.collateralAmount, expectedCollateral1b);
+assert.strictEqual(result1b.debtAmount, expectedDebt1b);
+
 // Test Case 2: Leveraging Up (3x -> 5x)
 // Collateral: 4800 PT (4800n * 1e18)
 // Current Debt: 3040 USDC (3040n * 1e6) -> Current LTV is 3040 / (4800 * 0.95) = 66.67% (3.00x leverage)
