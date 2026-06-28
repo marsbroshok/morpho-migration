@@ -820,7 +820,7 @@ export function buildRolloverBundle({
       callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
     });
 
-    const resolvedOutput = actualLoanOutput !== null ? actualLoanOutput : BigInt(loanRouteData.outputs[0].amount);
+    const resolvedOutput = actualLoanOutput !== null ? actualLoanOutput : (loanExpectedOutput !== undefined ? BigInt(loanExpectedOutput) : BigInt(loanRouteData.outputs[0].amount));
     
     // Transfer actual/expected swap output from the Bundler to the Adapter
     reenterBundle.push({

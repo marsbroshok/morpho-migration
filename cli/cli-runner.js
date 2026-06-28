@@ -31,6 +31,7 @@ export class CliRunner {
     try {
       this.loadEnv();
       const options = this.parseArgs(argv.slice(2));
+      options.user = options.user || process.env.USER_ADDRESS;
       
       if (options.help) {
         CliView.printHelp(options.helpCommand);

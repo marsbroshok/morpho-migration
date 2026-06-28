@@ -1,6 +1,29 @@
 import assert from 'assert';
 import { getAddress, encodeFunctionData } from 'viem';
 import { buildRolloverBundle, ERC20_ABI, BUNDLER_ABI } from '../builders.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load environment variables manually
+const envPath = path.resolve(__dirname, '../.env');
+if (fs.existsSync(envPath)) {
+  const content = fs.readFileSync(envPath, 'utf8');
+  for (const line of content.split('\n')) {
+    const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+    if (match) {
+      const key = match[1];
+      let val = match[2] || '';
+      if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+      else if (val.startsWith("'") && val.endsWith("'")) val = val.slice(1, -1);
+      process.env[key] = val.trim();
+    }
+  }
+}
+
 
 console.log('Running MEV Best Practices & Reversion Fix unit tests...');
 
@@ -39,7 +62,7 @@ const mockLoanRouteData = {
 };
 
 async function runTest() {
-  const userAddress = getAddress('0xdC382CDF2a25790F535a518EC26958c227e9DCF2');
+  const userAddress = getAddress(process.env.USER_ADDRESS || '0xdC382CDF2a25790F535a518EC26958c227e9DCF2');
   const debtAmount = 50n * 10n ** 6n; // 50 USDC
   const loanExpectedInput = 69n * 10n ** 18n; // 69 apxUSD
   
