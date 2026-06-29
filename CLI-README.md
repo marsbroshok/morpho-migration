@@ -67,10 +67,11 @@ morpho-migration/
 - `--rpc <url>` / `-r`: RPC provider URL (Required if using `--private-key`).
 - `--private-key <hex>` / `-k`: Private key hex string to sign transactions locally (Requires `--rpc`).
 - `--walletconnect` / `-w`: Initiates secure WalletConnect pairing session (requires `WC_PROJECT_ID` configured in `.env`).
-- `--simulation` / `-s`: Simulates the transaction execution on a mainnet fork instead of submitting to the network.
-- `--no-simulation`: Bypasses fork simulation and immediately attempts submission (default when execution signer is connected).
+- `--simulation` / `-s`: Simulates the transaction execution on a mainnet fork instead of submitting to the network (default when no signer key/wallet is specified).
+- `--no-simulation`: Bypasses fork simulation and immediately attempts submission.
 - `--slippage <pct>`: Slippage limit percentage (default: `1.0`).
-- `--old-loan <address>`: Custom source loan asset address (fetched dynamically if omitted; alias: `--usdc`).
+- `--save-simulation <path>` / `-o`: Saves the raw transaction data payload to a JSON file (Only works in simulation mode).
+- `--debug`: Enables verbose debug output including swap routing details, calldata, and full simulator responses.
 
 ---
 
@@ -78,13 +79,12 @@ morpho-migration/
 Migrates user collateral and loan debt from a source Morpho Blue market to a destination market.
 
 #### Options
-- `--old-market-id <id>`: (Required) Source Morpho Blue market ID.
-- `--new-market-id <id>`: (Required) Destination Morpho Blue market ID.
-- `--user <address>`: (Required in simulation mode) Wallet address to fetch position for.
-- `--type <full|partial>`: Migration type (default: `full`).
+- `--old-market-id <id>`: (Required) Source Morpho Blue market hex ID.
+- `--new-market-id <id>`: (Required) Destination Morpho Blue market hex ID.
+- `--user <address>` / `-u`: (Required in simulation mode) Wallet address to fetch position for.
+- `--type <full|partial>`: Migration type: 'full' or 'partial' (default: `full`).
 - `--debt <amount>`: Debt amount to repay (Required if type is `partial`).
-- `--old-collateral <address>`: Source Collateral address (fetched dynamically if omitted; alias: `--old-pt`).
-- `--new-collateral <address>`: Destination Collateral address (fetched dynamically if omitted; alias: `--new-pt`).
+- `--cap-borrow`: Caps new market borrow amount dynamically to keep Projected LTV below LLTV safety threshold.
 
 ---
 
@@ -92,10 +92,19 @@ Migrates user collateral and loan debt from a source Morpho Blue market to a des
 Adjusts leverage ratio on an active Morpho Blue market.
 
 #### Options
-- `--market-id <id>`: (Required) Morpho Blue market ID.
-- `--target-leverage <number>`: (Required) Target leverage level between `1.0` (debt-free) and `6.0`.
-- `--user <address>`: (Required in simulation mode) Wallet address to fetch position for.
-- `--collateral <address>`: Collateral Token address (fetched dynamically if omitted; alias: `--pt`).
+- `--market-id <id>`: (Required) Morpho Blue market hex ID.
+- `--target-leverage <number>` / `-l`: (Required) Target leverage level between `1.0` (debt-free) and `6.0`.
+- `--user <address>` / `-u`: (Required in simulation mode) Wallet address to fetch position for.
+
+---
+
+### Command 3: `simulate-raw`
+Simulates a raw transaction from a JSON file on a mainnet fork using eth_simulateV1.
+
+#### Options
+- `--file <path>` / `-f`: (Required) Path to the JSON file containing transaction details (`from`, `to`, `data`, `value`).
+- `--rpc <url>` / `-r`: RPC provider URL.
+- `--debug`: Enables verbose debug output including full simulator responses.
 
 ---
 
@@ -146,6 +155,15 @@ node cli.js rollover \
   --debt 3000 \
   --rpc https://eth-mainnet.g.alchemy.com/v2/your-key \
   --private-key 0xyourprivatekeyhex...
+```
+
+---
+
+### 4. Raw Transaction Simulation from JSON File
+Simulates a previously saved transaction calldata payload on a mainnet fork:
+
+```bash
+node cli.js simulate-raw --file sample_tx.json
 ```
 
 ---

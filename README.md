@@ -25,7 +25,7 @@ You can serve `index.html` using any of the following standard command-line meth
 First, open your terminal application (e.g., Terminal, iTerm2) and navigate to the project directory:
 
 ```bash
-cd /Users/auv/Documents/Work/vibe-it-now-or-never/morpho-migration
+cd morpho-migration
 ```
 
 Choose **one** of the methods below to start the server:
@@ -70,15 +70,18 @@ ruby -run -e httpd . -p 8000
 2. Open your web browser (with Rabby or MetaMask active) and go to [http://localhost:8000](http://localhost:8000).
 3. Select the appropriate tab for your operation:
     * **Rollover Collateral:** To roll over collateral from an old maturing market to a new market.
-   * **Adjust Leverage:** To leverage up or delever/unleverage your position on the same market.
-4. Click the **"Connect Wallet & Fetch Live Position"** button. This will trigger a wallet approval request.
-5. Once connected, your active position metrics (LTV, Collateral, and Debt) will load automatically.
-6. Set your target parameters:
+    * **Adjust Leverage:** To leverage up or delever/unleverage your position on the same market.
+    * **Simulate Raw Tx:** To dry-run and trace any arbitrary transaction payload from raw JSON calldata.
+4. (Optional) Configure settings: Click the settings (cog) icon in the top right to configure a custom RPC URL, Alchemy API key (for browser-side `eth_simulateV1` simulation traces), or auto-simulation options. If the app is served locally, it will attempt to automatically load settings from your root `.env` file on load.
+5. Click the **"Connect Wallet & Fetch Live Position"** button. This will trigger a wallet approval request.
+6. Once connected, your active position metrics (LTV, Collateral, and Debt) will load automatically.
+7. Set your target parameters:
     * **For Rollover:** Review the target collateral address and select Full or Partial migration.
-   * **For Leverage Adjustment:** Use the slider to set your target LTV/Leverage multiplier.
-7. Click **"Simulate & Migrate Position"** (or **"Simulate & Adjust Leverage"**).
-8. The app will fetch live routes from the swap router and compile the transaction payload.
-9. Review the simulation in your wallet popup (e.g., Rabby's transaction simulation preview) to verify safety before executing on-chain.
+    * **For Leverage Adjustment:** Use the slider to set your target LTV/Leverage multiplier.
+    * **For Simulate Raw Tx:** Paste the raw transaction JSON payload into the text area.
+8. Click **"Simulate & Migrate Position"** (or **"Simulate & Adjust Leverage"** / **"Run Raw Simulation"**).
+9. The app will fetch live routes from the swap router, compile the transaction payload, and display a simulated call trace showing expected status and gas consumption.
+10. Review the simulation in your wallet popup (e.g., Rabby's transaction simulation preview) to verify safety before executing on-chain.
 
 ---
 
