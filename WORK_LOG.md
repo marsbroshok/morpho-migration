@@ -1,5 +1,25 @@
 # Project Work Log
 
+## 2026-06-29 - Purged PII and Wallet Leakage from Codebase and Git History
+
+### Summary of Investigation & Execution
+1. **The Goal:** Identify and redact Personally Identifiable Information (PII) — specifically the user's private mainnet wallet address — from the codebase and the entire git commit history to prepare the codebase for pushing to an external public repository.
+2. **Resolution:**
+   - **Dynamic Environment Configuration:** Replaced the hardcoded address in `tests/mev_best_practices.test.mjs` with a dynamic environment variable `process.env.USER_ADDRESS` and added a default fallback to the public dummy address `0xdC382CDF2a25790F535a518EC26958c227e9DCF2`.
+   - **CLI Fallback Integration:** Enhanced `cli/cli-runner.js` to automatically fall back to `process.env.USER_ADDRESS` if the `--user` flag is omitted, allowing convenient CLI usage without exposing the private address.
+   - **Builder Test Resilience:** Fixed a bug in `builders.js` where offline unit tests would crash with a TypeError due to undefined `outputs` in mock route data, implementing a clean fallback to the destructured `loanExpectedOutput`.
+   - **History Purge:** Created an isolated Git worktree (`agy-worktrees/cleanup-pii`), staged all changes, and ran `git filter-branch` to rewrite the branch history. All historical occurrences of the user's private wallet address have been successfully replaced with the public dummy address `0xdC382CDF...`.
+   - **Verification:** Ran `npm test` and verified all tests pass. Audited both code files and git commit history, confirming zero PII leakage.
+
+### Changes Applied
+* **Modified:** `.env.example` (added `USER_ADDRESS` placeholder).
+* **Modified:** `cli/cli-runner.js` (integrated `USER_ADDRESS` fallback).
+* **Modified:** `builders.js` (implemented `loanExpectedOutput` fallback).
+* **Modified:** `tests/mev_best_practices.test.mjs` (manually loaded `.env` and resolved `USER_ADDRESS` dynamically).
+* **Modified:** `tests/package.json` (integrated MEV best practices test suite into default test script).
+
+---
+
 ## 2026-06-28 - Aligned CLI Phase Execution & Achieved Perfect Zero Deficit for Leverage Adjustments
 
 ### Summary of Investigation & Execution
