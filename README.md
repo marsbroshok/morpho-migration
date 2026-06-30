@@ -2,6 +2,9 @@
 
 A client-side web utility to manage and migrate collateralized debt positions on **Morpho Blue** (Ethereum Mainnet). It allows users to roll over maturing collateral assets, adjust leverage levels (leverage up/down), and simulate transactions.
 
+> [!TIP]
+> **Prefer the command line or need automation?** A fully-featured CLI version of this tool with 100% parity, private key support, and WalletConnect integration is also available. Read the [CLI README](CLI-README.md) to get started.
+
 ---
 
 ## Why a Local Host Server is Required

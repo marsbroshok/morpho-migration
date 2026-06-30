@@ -1,5 +1,73 @@
 # Project Work Log
 
+## 2026-06-30 - Created Global Git Commit and Push Skill
+
+### Summary of Investigation & Execution
+1. **The Goal:** Create a customized global agent skill to handle automatic staging, safety/secrets checks, automated testing, Conventional Commit message generation, and pushing to remote branches.
+2. **Resolution:**
+   - Designed the skill layout, incorporating safety checks (secrets and absolute paths leakage scanning) and dynamic project test execution.
+   - Created the `git-commit-push` skill markdown file under the global customizations directory.
+   - Tested registration and structure compatibility.
+
+### Changes Applied
+* **Created:** `git-commit-push/SKILL.md` (located in the global agent customizations directory).
+
+### Verification Terminal Commands Run
+* Verified skill structure and registration via active customizations directory layout.
+
+---
+
+## 2026-06-30 - Audited and Purged PII Wallet Leakage from Remote GitHub Repository
+
+### Summary of Investigation & Execution
+1. **The Goal:** Verify whether the user's personal wallet address `0x25F5851b0218A6032080436700EA99083DFCa382` exists in the local codebase or remote repository history, and define/execute cleanup steps if found.
+2. **Resolution:**
+   - **Local Workspace Audit:** Confirmed that all tracked files are clean of the address. The address is only present in local gitignored files (`scratch/` logs and `user-wallet-raw-hex.json`).
+   - **Git History Audit:** Confirmed that the local and remote branch histories are completely clean of the address due to a previous history-rewriting purge.
+   - **Remote Cached Commits Investigation:** Identified that an old commit (`49e24f489444d766410542a45d114eca054b6564`) remained cached and visible on GitHub due to its orphaned commit retention policy.
+   - **Automated Remote Purge:** Executed Option 1 using `gh` CLI. Renamed `morpho-migration` on GitHub to `morpho-migration-old`, created a fresh public repository `morpho-migration` on GitHub, and pushed the clean local history.
+   - **Manual Cleanup Setup:** Documented instructions for deleting the old renamed repository (since the CLI token lacks the explicit `delete_repo` scope).
+
+### Changes Applied
+* **Created:** `pii_check_and_cleanup_plan.md` (Artifact file in local artifact directory).
+* **Created:** `walkthrough.md` (Artifact file in local artifact directory).
+* **Modified:** `WORK_LOG.md` (updated with execution log).
+
+### Verification Terminal Commands Run
+* Run full project test suite:
+  ```bash
+  npm test
+  ```
+* Renamed old remote repository and created clean new one:
+  ```bash
+  gh repo rename morpho-migration-old -y
+  git remote rename origin old-origin
+  gh repo create morpho-migration --public
+  git remote add origin https://github.com/marsbroshok/morpho-migration.git
+  git push -u origin main
+  ```
+
+---
+
+## 2026-06-30 - Added CLI Discoverability Link to Main README
+
+### Summary of Investigation & Execution
+1. **The Goal:** Enhance CLI discoverability by adding a direct link from the main repository `README.md` to `CLI-README.md`.
+2. **Resolution:**
+   - Modified `README.md` to introduce a prominent `> [!TIP]` callout note right after the main introductory paragraph, highlighting the CLI tool's 100% parity, private key automation, and WalletConnect integration features, and linking to `CLI-README.md`.
+   - Verified that the link resolves correctly and tests execute cleanly.
+
+### Changes Applied
+* **Modified:** [README.md](README.md) (added discovery callout pointing to [CLI-README.md](CLI-README.md)).
+
+### Verification Terminal Commands Run
+* Run full project test suite:
+  ```bash
+  npm test
+  ```
+
+---
+
 ## 2026-06-29 - Purged PII and Wallet Leakage from Codebase and Git History
 
 ### Summary of Investigation & Execution
