@@ -14,10 +14,10 @@
   - [x] Author `docs/adr/0002-pendle-swap-routing-and-intermediate-wrappers.md` (base asset target routing vs intermediate SY/LP wrappers)
   - [x] Author `docs/adr/0003-iterative-scaling-for-cross-loan-debt.md` (2-step iterative swap quoter solver vs static oracle pricing)
   - [x] Author `docs/adr/0004-transient-contract-leak-detection.md` (zero-balance assertions on intermediate bundlers during simulation)
-- [ ] Task: Triage, Distill & Promote Scratch Files ("Triage, Distill, Promote, Evict")
-  - [ ] Category A (Contracts): Create `docs/contracts/reference/`, move `Bundler3.sol`, `CoreAdapter.sol`, `GeneralAdapter1.sol`, `EthereumGeneralAdapter1.sol`, and append provenance headers
-  - [ ] Category B (Diagnostics): Audit `check_*.js` and `calculate_*.js` against `cli/blockchain-client.js`; promote unique diagnostic tools to `scripts/diagnostics/` and retire duplicates
-  - [ ] Category C & D (Logs & Redundancies): Inspect `cli_debug_run_*.log`, `trace.log`, and `simulation_comparison_report.md` for PII and unrecorded revert patterns; purge raw log files and obsolete scratch items
+- [x] Task: Triage, Distill & Promote Scratch Files ("Triage, Distill, Promote, Evict") [4c68cbf]
+  - [x] Category A (Contracts): Create `docs/contracts/reference/`, move `Bundler3.sol`, `CoreAdapter.sol`, `GeneralAdapter1.sol`, `EthereumGeneralAdapter1.sol`, and append provenance headers
+  - [x] Category B (Diagnostics): Audit `check_*.js` and `calculate_*.js` against `cli/blockchain-client.js`; promote unique diagnostic tools to `scripts/diagnostics/` and retire duplicates
+  - [x] Category C & D (Logs & Redundancies): Inspect `cli_debug_run_*.log`, `trace.log`, and `simulation_comparison_report.md` for PII and unrecorded revert patterns; purge raw log files and obsolete scratch items
 - [ ] Task: Compile Milestone `CHANGELOG.md`
   - [ ] Create `CHANGELOG.md` in repository root adhering to Keep a Changelog and SemVer
   - [ ] Document version `[1.0.0]` capturing Morpho Blue Rollover, Pendle Swap Integration, Leverage Adjustment, Permit2 double-layer approvals, and MEV protection across `### Added`, `### Changed`, `### Fixed`, and `### Security`
