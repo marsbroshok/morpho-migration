@@ -8,12 +8,12 @@
 
 ## Phase 1: Context De-Poisoning & Scratch Knowledge Distillation
 
-- [ ] Task: Distill `WORK_LOG.md` into Architecture Decision Records (ADRs)
-  - [ ] Create `docs/adr/` directory with standard ADR template structure
-  - [ ] Author `docs/adr/0001-permit2-two-layer-allowances.md` (token allowance to Permit2 + Permit2 allowance to Morpho Bundler/Adapter)
-  - [ ] Author `docs/adr/0002-pendle-swap-routing-and-intermediate-wrappers.md` (base asset target routing vs intermediate SY/LP wrappers)
-  - [ ] Author `docs/adr/0003-iterative-scaling-for-cross-loan-debt.md` (2-step iterative swap quoter solver vs static oracle pricing)
-  - [ ] Author `docs/adr/0004-transient-contract-leak-detection.md` (zero-balance assertions on intermediate bundlers during simulation)
+- [x] Task: Distill `WORK_LOG.md` into Architecture Decision Records (ADRs) [5466501]
+  - [x] Create `docs/adr/` directory with standard ADR template structure
+  - [x] Author `docs/adr/0001-permit2-two-layer-allowances.md` (token allowance to Permit2 + Permit2 allowance to Morpho Bundler/Adapter)
+  - [x] Author `docs/adr/0002-pendle-swap-routing-and-intermediate-wrappers.md` (base asset target routing vs intermediate SY/LP wrappers)
+  - [x] Author `docs/adr/0003-iterative-scaling-for-cross-loan-debt.md` (2-step iterative swap quoter solver vs static oracle pricing)
+  - [x] Author `docs/adr/0004-transient-contract-leak-detection.md` (zero-balance assertions on intermediate bundlers during simulation)
 - [ ] Task: Triage, Distill & Promote Scratch Files ("Triage, Distill, Promote, Evict")
   - [ ] Category A (Contracts): Create `docs/contracts/reference/`, move `Bundler3.sol`, `CoreAdapter.sol`, `GeneralAdapter1.sol`, `EthereumGeneralAdapter1.sol`, and append provenance headers
   - [ ] Category B (Diagnostics): Audit `check_*.js` and `calculate_*.js` against `cli/blockchain-client.js`; promote unique diagnostic tools to `scripts/diagnostics/` and retire duplicates
