@@ -1,0 +1,4 @@
+Task: Triage, Distill & Promote Scratch Files
+Summary: Triaged 70+ scratch files into 4 categories. Preserved deployed Morpho Bundler V3 reference contracts under docs/contracts/reference/, and promoted core diagnostic tools (market ID calculation, selector calculation, market liquidity inspection) to scripts/diagnostics/.
+Files created: docs/contracts/reference/*, scripts/diagnostics/*
+Why: Prevents loss of decompiled smart contract specifications and diagnostic queries while enabling clean purge of raw scratch scripts.
