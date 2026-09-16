@@ -1,0 +1,4 @@
+Task: Distill WORK_LOG.md into Architecture Decision Records (ADRs)
+Summary: Extracted core non-obvious architecture decisions from WORK_LOG.md into docs/adr/ (ADR 0001: Permit2 Two-Layer Allowances, ADR 0002: Pendle Swap Routing & Intermediate Wrappers, ADR 0003: Iterative Scaling for Cross-Loan Debt, ADR 0004: Transient Contract Leak Detection).
+Files created: docs/adr/0001-permit2-two-layer-allowances.md, docs/adr/0002-pendle-swap-routing-and-intermediate-wrappers.md, docs/adr/0003-iterative-scaling-for-cross-loan-debt.md, docs/adr/0004-transient-contract-leak-detection.md
+Why: Eliminate monolithic narrative log dependency while preserving vital architectural rationale and invariant rules.
