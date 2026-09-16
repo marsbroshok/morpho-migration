@@ -18,9 +18,9 @@
   - [x] Category A (Contracts): Create `docs/contracts/reference/`, move `Bundler3.sol`, `CoreAdapter.sol`, `GeneralAdapter1.sol`, `EthereumGeneralAdapter1.sol`, and append provenance headers
   - [x] Category B (Diagnostics): Audit `check_*.js` and `calculate_*.js` against `cli/blockchain-client.js`; promote unique diagnostic tools to `scripts/diagnostics/` and retire duplicates
   - [x] Category C & D (Logs & Redundancies): Inspect `cli_debug_run_*.log`, `trace.log`, and `simulation_comparison_report.md` for PII and unrecorded revert patterns; purge raw log files and obsolete scratch items
-- [ ] Task: Compile Milestone `CHANGELOG.md`
-  - [ ] Create `CHANGELOG.md` in repository root adhering to Keep a Changelog and SemVer
-  - [ ] Document version `[1.0.0]` capturing Morpho Blue Rollover, Pendle Swap Integration, Leverage Adjustment, Permit2 double-layer approvals, and MEV protection across `### Added`, `### Changed`, `### Fixed`, and `### Security`
+- [x] Task: Compile Milestone `CHANGELOG.md` [bfb6a03]
+  - [x] Create `CHANGELOG.md` in repository root adhering to Keep a Changelog and SemVer
+  - [x] Document version `[1.0.0]` capturing Morpho Blue Rollover, Pendle Swap Integration, Leverage Adjustment, Permit2 double-layer approvals, and MEV protection across `### Added`, `### Changed`, `### Fixed`, and `### Security`
 - [ ] Task: Evict Ephemeral Artifacts and Update `.gitignore`
   - [ ] Delete tracked `WORK_LOG.md`, `HISTORY_LOG.md`, `trace.log`, and remove `scratch/` directory
   - [ ] Update `.gitignore` with entries for `scratch/`, `*.log`, `.DS_Store`, `user-wallet-raw-hex.json`, `.worktrees/`, `agy-worktrees/`, `.env`, and `.env.local`
