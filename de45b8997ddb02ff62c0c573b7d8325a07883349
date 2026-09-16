@@ -1,0 +1,4 @@
+Task: Evict Ephemeral Artifacts and Update .gitignore
+Summary: Purged tracked WORK_LOG.md and HISTORY_LOG.md after distillation into ADRs 0001-0004 and milestone CHANGELOG.md. Removed untracked trace.log and scratch/ directory. Updated .gitignore with strict patterns for logs, scratch files, OS artifacts, and worktree directories.
+Files modified/deleted: .gitignore, WORK_LOG.md, HISTORY_LOG.md, trace.log, scratch/
+Why: Context de-poisoning and repository hygiene to prevent agent context flooding and ensure reproducible, clean working tree.
