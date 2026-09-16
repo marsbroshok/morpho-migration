@@ -1,5 +1,20 @@
+# Dependencies
 node_modules/
+
+# Environment Variables
 .env
+.env.local
+
+# Logs & Traces
+*.log
+
+# System & OS
+.DS_Store
+
+# Ephemeral & Scratch Files
 scratch/
 user-wallet-raw-hex.json
+
+# Worktrees
+.worktrees/
 agy-worktrees/
