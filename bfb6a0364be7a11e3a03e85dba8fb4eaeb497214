@@ -1,0 +1,4 @@
+Task: Compile Milestone CHANGELOG.md
+Summary: Created root CHANGELOG.md adhering strictly to Keep a Changelog and Semantic Versioning standards. Captured all stabilized 1.0.0 capabilities across Added, Changed, Fixed, and Security categories.
+Files created: CHANGELOG.md
+Why: Establishes a professional, immutable historical record of user-facing changes and replaces continuous raw work logs.
