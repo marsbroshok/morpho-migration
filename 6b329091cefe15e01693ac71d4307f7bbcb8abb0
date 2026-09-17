@@ -1,0 +1,4 @@
+Task: Write Failing Tests for Cross-Loan Debt Quoting (Red Phase)
+- Added tests/cross_loan_routing.test.mjs with testCliRoutingEnforcesTwoStepQuoter and testUiWorkflowEnforcesTwoStepQuoter verifying 2-step iterative solver is invoked even when oracle prices are available
+- Added testCliPartialDebtStringParsing asserting high-precision 18-decimal parsing via ScalingService.parseUnits
+- Verified failure in Red Phase: AssertionError: First call must be a nominal rate probe of 1.0 unit (10^18)
