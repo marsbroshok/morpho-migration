@@ -1,0 +1,8 @@
+{
+  "track_id": "defi_math_realignment_20260917",
+  "type": "bug",
+  "status": "new",
+  "created_at": "2026-09-17T19:26:00+02:00",
+  "updated_at": "2026-09-17T19:26:00+02:00",
+  "description": "DeFi Math & ADR-0003 Realignment (MATH-01, MATH-02, MATH-03, MATH-04, MATH-05, TEST-02)"
+}
