@@ -43,40 +43,41 @@ export class RolloverRoutingHelper {
     let loanOracleRate = 0n;
     let loanExpectedInput = 0n;
 
-    // 1. If oracles are available, compute oracle rate and initial borrow expectation
-    if (oldOraclePrice && newOraclePrice) {
-      loanOracleRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
-      const estimatedInput = (assessment.debtAmount * 10n ** 18n * 10n ** decDiff) / loanOracleRate;
-      const slippageBuffer = BigInt(Math.max(50, Math.ceil(assessment.slippage * 100)));
-      loanExpectedInput = (estimatedInput * (10000n + slippageBuffer)) / 10000n;
-    }
-
-    // 2. Validate/cap borrow amount based on Target Market LLTV safety threshold
+    // 1. Target Market LLTV safety threshold calculation
     const targetLltv = assessment.destMarketParams.lltv;
     const safeLtv = targetLltv - 5000000000000000n;
     const newCollateralValue = ScalingService.calculateCollateralValue(expectedNewCollateral, newOraclePrice);
     const maxSafeBorrowAmount = (newCollateralValue * safeLtv) / 10n ** 18n;
 
-    if (loanExpectedInput > maxSafeBorrowAmount) {
-      if (options.capBorrow) {
-        console.warn(`\n⚠️  Warning: Projected borrow amount exceeds Target Market LLTV limit. Capping borrow amount at safe threshold (${(Number(safeLtv) / 1e16).toFixed(2)}% LTV) to prevent reversion. Shortfall will be funded by user wallet.`);
-        loanExpectedInput = maxSafeBorrowAmount;
-      } else {
-        const projectedLtv = ltvCalculator.calculateLtv(loanExpectedInput, newCollateralValue);
-        throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain. Try again with --cap-borrow flag to automatically cap target leverage.`);
-      }
-    }
-
-    // 3. Try to find a direct Curve pool for dynamic exchange
+    // 2. Try to find a direct Curve pool for dynamic exchange
     let curvePool = null;
     if (poolService && publicClient) {
-      const probeAmount = loanExpectedInput > 0n ? loanExpectedInput : (10n ** BigInt(assessment.destMarketParams.loanDecimals));
+      let probeAmount = 10n ** BigInt(assessment.destMarketParams.loanDecimals);
+      if (oldOraclePrice && newOraclePrice) {
+        const curveRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
+        const estInput = (assessment.debtAmount * 10n ** 18n * 10n ** decDiff) / curveRate;
+        const buf = BigInt(Math.max(50, Math.ceil(assessment.slippage * 100)));
+        probeAmount = (estInput * (10000n + buf)) / 10000n;
+      }
       curvePool = await poolService.findCurvePoolAndIndices(
         publicClient,
         assessment.destLoanAddress,
         assessment.sourceLoanAddress,
         probeAmount
       );
+      if (curvePool) {
+        loanExpectedInput = probeAmount;
+        loanOracleRate = (oldOraclePrice && newOraclePrice) ? (oldOraclePrice * 10n ** exp) / newOraclePrice : 0n;
+        if (loanExpectedInput > maxSafeBorrowAmount) {
+          if (options.capBorrow) {
+            console.warn(`\n⚠️  Warning: Projected borrow amount exceeds Target Market LLTV limit. Capping borrow amount at safe threshold (${(Number(safeLtv) / 1e16).toFixed(2)}% LTV) to prevent reversion. Shortfall will be funded by user wallet.`);
+            loanExpectedInput = maxSafeBorrowAmount;
+          } else {
+            const projectedLtv = ltvCalculator.calculateLtv(loanExpectedInput, newCollateralValue);
+            throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain. Try again with --cap-borrow flag to automatically cap target leverage.`);
+          }
+        }
+      }
     }
 
     let loanRouteData = null;
@@ -92,37 +93,34 @@ export class RolloverRoutingHelper {
       };
       loanExpectedOutput = curvePool.expectedOutput;
     } else {
-      // 4. Fallback to Router Client (e.g. Pendle Convert / DEX aggregators)
-      if (!loanExpectedInput || !loanOracleRate) {
-        const guessAmount = assessment.debtAmount * (10n ** BigInt(assessment.destMarketParams.loanDecimals)) / (10n ** BigInt(assessment.sourceMarketParams.loanDecimals));
-        const nominalInput = guessAmount > 0n ? guessAmount : (10n ** BigInt(assessment.destMarketParams.loanDecimals));
+      // 3. Fallback to Router Client (ADR-0003 Two-Step Iterative Swap Solver)
+      const nominalInput = 10n ** BigInt(assessment.destMarketParams.loanDecimals);
 
-        const nominalRoute = await routerClient.fetchSwapRoute(
-          assessment.destLoanAddress,
-          nominalInput,
-          assessment.sourceLoanAddress,
-          slippageFrac,
-          bundlerAddress,
-          bundlerAddress
-        );
-        const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
-        loanOracleRate = (nominalOutput * 10n ** (18n + decDiff)) / nominalInput;
+      const nominalRoute = await routerClient.fetchSwapRoute(
+        assessment.destLoanAddress,
+        nominalInput,
+        assessment.sourceLoanAddress,
+        slippageFrac,
+        bundlerAddress,
+        bundlerAddress
+      );
+      const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
+      loanOracleRate = (nominalOutput * 10n ** (18n + decDiff)) / nominalInput;
 
-        const desiredOutput = (assessment.debtAmount * 10000n) / (10000n - strictSlippageBps);
-        loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
+      const minOutputNeeded = (assessment.debtAmount * 10000n + (10000n - strictSlippageBps - 1n)) / (10000n - strictSlippageBps);
+      loanExpectedInput = (minOutputNeeded * nominalInput + (nominalOutput - 1n)) / nominalOutput;
 
-        if (loanExpectedInput > maxSafeBorrowAmount) {
-          if (options.capBorrow) {
-            console.warn(`\n⚠️  Warning: Projected borrow amount exceeds Target Market LLTV limit. Capping borrow amount at safe threshold (${(Number(safeLtv) / 1e16).toFixed(2)}% LTV) to prevent reversion. Shortfall will be funded by user wallet.`);
-            loanExpectedInput = maxSafeBorrowAmount;
-          } else {
-            const projectedLtv = ltvCalculator.calculateLtv(loanExpectedInput, newCollateralValue);
-            throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain. Try again with --cap-borrow flag to automatically cap target leverage.`);
-          }
+      if (loanExpectedInput > maxSafeBorrowAmount) {
+        if (options.capBorrow) {
+          console.warn(`\n⚠️  Warning: Projected borrow amount exceeds Target Market LLTV limit. Capping borrow amount at safe threshold (${(Number(safeLtv) / 1e16).toFixed(2)}% LTV) to prevent reversion. Shortfall will be funded by user wallet.`);
+          loanExpectedInput = maxSafeBorrowAmount;
+        } else {
+          const projectedLtv = ltvCalculator.calculateLtv(loanExpectedInput, newCollateralValue);
+          throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain. Try again with --cap-borrow flag to automatically cap target leverage.`);
         }
       }
 
-      let swapInputAmount = loanExpectedInput - 100000n;
+      let swapInputAmount = loanExpectedInput;
       loanRouteData = await routerClient.fetchSwapRoute(
         assessment.destLoanAddress,
         swapInputAmount,
@@ -139,7 +137,7 @@ export class RolloverRoutingHelper {
         loanExpectedInput = adjustedInput > maxSafeBorrowAmount ? maxSafeBorrowAmount : adjustedInput;
 
         if (loanExpectedInput > swapInputAmount) {
-          swapInputAmount = loanExpectedInput - 100000n;
+          swapInputAmount = loanExpectedInput;
           loanRouteData = await routerClient.fetchSwapRoute(
             assessment.destLoanAddress,
             swapInputAmount,

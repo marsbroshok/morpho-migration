@@ -25,8 +25,9 @@ async function testCliRoutingEnforcesTwoStepQuoter() {
         };
       } else {
         // Step 2: Solved execution route for exact debt amount
+        const output = (inputAmount * 839400n) / 10n ** 18n;
         return {
-          outputs: [{ amount: '6030150' }],
+          outputs: [{ amount: output.toString() }],
           tx: { to: '0x0000000000000000000000000000000000000007', data: '0x2222' }
         };
       }
@@ -113,8 +114,9 @@ async function testUiWorkflowEnforcesTwoStepQuoter() {
           };
         } else {
           // Final route
+          const output = (inputAmount * 839400n) / 10n ** 18n;
           return {
-            outputs: [{ amount: '6030150' }],
+            outputs: [{ amount: output.toString() }],
             tx: { to: '0x0000000000000000000000000000000000000007', data: '0x2222' }
           };
         }
@@ -129,10 +131,11 @@ async function testUiWorkflowEnforcesTwoStepQuoter() {
 
   const mockMarketService = {
     fetchOraclePrice: async (publicClient, oracleAddress) => {
-      if (oracleAddress === '0xOldOracle') return 117n * 10n ** 22n;
-      if (oracleAddress === '0xNewOracle') return 138n * 10n ** 34n;
+      if (oracleAddress === '0x0000000000000000000000000000000000000002') return 117n * 10n ** 22n;
+      if (oracleAddress === '0x0000000000000000000000000000000000000004') return 138n * 10n ** 34n;
       return 10n ** 18n;
-    }
+    },
+    checkCollateralMaturity: async () => ({ isExpired: false })
   };
 
   const workflow = new RolloverWorkflow({
@@ -144,17 +147,19 @@ async function testUiWorkflowEnforcesTwoStepQuoter() {
 
   const payload = await workflow.compileRolloverPayload({
     sourceMarketParams: {
-      oracle: '0xOldOracle',
-      loanToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48',
-      collateralToken: '0xCollateral',
+      oracle: '0x0000000000000000000000000000000000000002',
+      irm: '0x0000000000000000000000000000000000000003',
+      loanToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+      collateralToken: '0x3365554a61CeFF74A76528f9e86C1E87946d16a5',
       loanDecimals: 6,
       collateralDecimals: 18,
       lltv: 860000000000000000n
     },
     destMarketParams: {
-      oracle: '0xNewOracle',
+      oracle: '0x0000000000000000000000000000000000000004',
+      irm: '0x0000000000000000000000000000000000000003',
       loanToken: '0x98A878b1Cd98131B271883B390f68D2c90674665',
-      collateralToken: '0xCollateral',
+      collateralToken: '0x3365554a61CeFF74A76528f9e86C1E87946d16a5',
       loanDecimals: 18,
       collateralDecimals: 18,
       lltv: 860000000000000000n
@@ -163,11 +168,11 @@ async function testUiWorkflowEnforcesTwoStepQuoter() {
     debtAmount: 6000n * 10n ** 6n,
     isFull: true,
     slippage: 0.005,
-    sourceCollateralAddress: '0xCollateral',
-    destCollateralAddress: '0xCollateral',
-    sourceLoanAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0CE3606eB48',
+    sourceCollateralAddress: '0x3365554a61CeFF74A76528f9e86C1E87946d16a5',
+    destCollateralAddress: '0x3365554a61CeFF74A76528f9e86C1E87946d16a5',
+    sourceLoanAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     destLoanAddress: '0x98A878b1Cd98131B271883B390f68D2c90674665',
-    userAddress: '0xUser',
+    userAddress: '0x0000000000000000000000000000000000000005',
     liveBorrowShares: 6000n * 10n ** 6n,
     capBorrow: true,
     publicClient: {},
@@ -190,8 +195,8 @@ async function testCliPartialDebtStringParsing() {
 
   const mockBlockchainClient = {
     fetchMarketParams: async (id) => ({
-      loanToken: '0xLoan',
-      collateralToken: '0xCollateral',
+      loanToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+      collateralToken: '0x3365554a61CeFF74A76528f9e86C1E87946d16a5',
       loanDecimals: 18,
       collateralDecimals: 18,
       loanSymbol: 'WETH',
@@ -210,8 +215,8 @@ async function testCliPartialDebtStringParsing() {
   const command = new RolloverCommand(mockBlockchainClient, {}, {}, {});
 
   // High precision fractional debt amount: 1.000000000000000001 WETH (18 decimals)
-  const assessment1 = await command.assessMarkets({
-    user: '0xUser',
+  const assessment1 = await command.assessPosition({
+    user: '0x0000000000000000000000000000000000000005',
     oldMarketId: '0xOld',
     newMarketId: '0xNew',
     type: 'partial',
@@ -225,8 +230,8 @@ async function testCliPartialDebtStringParsing() {
   );
 
   // Multi-digit fractional amount: 5.123456789012345678 WETH
-  const assessment2 = await command.assessMarkets({
-    user: '0xUser',
+  const assessment2 = await command.assessPosition({
+    user: '0x0000000000000000000000000000000000000005',
     oldMarketId: '0xOld',
     newMarketId: '0xNew',
     type: 'partial',

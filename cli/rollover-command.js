@@ -78,7 +78,7 @@ export class RolloverCommand {
       if (!options.debt) {
         throw new Error('Debt amount is required for partial rollover');
       }
-      debtAmount = BigInt(Math.floor(options.debt * 10 ** sourceMarketParams.loanDecimals));
+      debtAmount = ScalingService.parseUnits(options.debt.toString(), sourceMarketParams.loanDecimals);
       if (debtAmount > liveDebt) {
         const formattedLiveDebt = Number(liveDebt) / (10 ** sourceMarketParams.loanDecimals);
         throw new Error(`Requested debt amount ${options.debt} ${sourceMarketParams.loanSymbol} exceeds user debt of ${formattedLiveDebt.toFixed(2)} ${sourceMarketParams.loanSymbol}`);

@@ -99,36 +99,46 @@ export class RolloverWorkflow {
       const exp = 18n + BigInt(destMarketParams.loanDecimals) - BigInt(sourceMarketParams.loanDecimals);
       let loanOracleRate = 0n;
 
-      if (oldOraclePrice && newOraclePrice) {
-        loanOracleRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
-        const estimatedInput = (debtAmount * 10n ** 18n * 10n ** decDiff) / loanOracleRate;
-        const slippageBuffer = strictSlippageBps > 0n ? strictSlippageBps : 50n;
-        loanExpectedInput = (estimatedInput * (10000n + slippageBuffer)) / 10000n;
-      }
-
       const targetLltv = destMarketParams.lltv;
       const safeLtv = targetLltv - 5000000000000000n;
       const newCollateralValue = calculateCollateralValue(expectedNewCollateral, newOraclePrice);
       const maxSafeBorrowAmount = (newCollateralValue * safeLtv) / 10n ** 18n;
 
-      if (loanExpectedInput > maxSafeBorrowAmount) {
-        if (capBorrow) {
-          loanExpectedInput = maxSafeBorrowAmount;
-        } else {
-          const projectedLtv = calculateLtv(loanExpectedInput, newCollateralValue);
-          throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain.`);
-        }
-      }
-
       let curvePool = null;
       if (this.poolService && publicClient) {
-        const probeAmount = loanExpectedInput > 0n ? loanExpectedInput : 10n ** BigInt(destMarketParams.loanDecimals);
+        let probeAmount = 10n ** BigInt(destMarketParams.loanDecimals);
+        if (oldOraclePrice && newOraclePrice) {
+          const curveRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
+          const estInput = (debtAmount * 10n ** 18n * 10n ** decDiff) / curveRate;
+          const buf = strictSlippageBps > 0n ? strictSlippageBps : 50n;
+          probeAmount = (estInput * (10000n + buf)) / 10000n;
+        }
         curvePool = await this.poolService.findCurvePoolAndIndices(
           publicClient,
           destLoanAddress,
           sourceLoanAddress,
           probeAmount
         );
+        if (curvePool) {
+          loanExpectedInput = probeAmount;
+          if (loanExpectedInput > maxSafeBorrowAmount) {
+            if (capBorrow) {
+              loanExpectedInput = maxSafeBorrowAmount;
+              const cappedPool = await this.poolService.findCurvePoolAndIndices(
+                publicClient,
+                destLoanAddress,
+                sourceLoanAddress,
+                loanExpectedInput
+              );
+              if (cappedPool) {
+                curvePool = cappedPool;
+              }
+            } else {
+              const projectedLtv = calculateLtv(loanExpectedInput, newCollateralValue);
+              throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain.`);
+            }
+          }
+        }
       }
 
       if (curvePool) {
@@ -142,30 +152,27 @@ export class RolloverWorkflow {
         loanExpectedOutput = curvePool.expectedOutput;
       } else {
         const executionSlippage = Number(strictSlippageBps) / 10000;
-        if (!loanExpectedInput || !loanOracleRate) {
-          const guessAmount = (debtAmount * 10n ** BigInt(destMarketParams.loanDecimals)) / 10n ** BigInt(sourceMarketParams.loanDecimals);
-          const nominalInput = guessAmount > 0n ? guessAmount : 10n ** BigInt(destMarketParams.loanDecimals);
+        const nominalInput = 10n ** BigInt(destMarketParams.loanDecimals);
 
-          const nominalRoute = await this.fetchSwapRoute(
-            destLoanAddress,
-            nominalInput,
-            sourceLoanAddress,
-            executionSlippage,
-            config.ETHER_GENERAL_ADAPTER_1,
-            config.MORPHO_BUNDLER_V3
-          );
+        const nominalRoute = await this.fetchSwapRoute(
+          destLoanAddress,
+          nominalInput,
+          sourceLoanAddress,
+          executionSlippage,
+          config.ETHER_GENERAL_ADAPTER_1,
+          config.MORPHO_BUNDLER_V3
+        );
 
-          const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
-          const desiredOutput = (debtAmount * 10000n) / (10000n - strictSlippageBps);
-          loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
+        const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
+        const minOutputNeeded = (debtAmount * 10000n + (10000n - strictSlippageBps - 1n)) / (10000n - strictSlippageBps);
+        loanExpectedInput = (minOutputNeeded * nominalInput + (nominalOutput - 1n)) / nominalOutput;
 
-          if (loanExpectedInput > maxSafeBorrowAmount) {
-            if (capBorrow) {
-              loanExpectedInput = maxSafeBorrowAmount;
-            } else {
-              const projectedLtv = calculateLtv(loanExpectedInput, newCollateralValue);
-              throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain.`);
-            }
+        if (loanExpectedInput > maxSafeBorrowAmount) {
+          if (capBorrow) {
+            loanExpectedInput = maxSafeBorrowAmount;
+          } else {
+            const projectedLtv = calculateLtv(loanExpectedInput, newCollateralValue);
+            throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain.`);
           }
         }
 
