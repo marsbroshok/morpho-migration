@@ -83,16 +83,16 @@
 
 ## Phase 4: Directives, Worktree & Governance Alignment
 
-- [ ] Task: Update Project Governance in `.agents/AGENTS.md`
-  - [ ] Add strict Memory & Context Hygiene Directives (ban on continuous work logs, conventional commits audit trail, milestone CHANGELOG, mandatory ADRs in `docs/adr/`)
-  - [ ] Add Isolated Worktree Standard (`.worktrees/` directory convention)
-  - [ ] Add Hermetic Testing Invariant (ban on unpinned live network queries in tests, property testing recommendations)
-- [ ] Task: Standardize Worktree Setup and Working Tree Hygiene
-  - [ ] Clean up obsolete `agy-worktrees/`
-  - [ ] Verify `.worktrees/` in `.gitignore`
-  - [ ] Validate clean working tree
-- [ ] Task: Execute Full Verification Suite and Pre-Commit Audit
-  - [ ] Run complete automated test suite (`npm test --prefix tests && node tests/cli.test.mjs`)
-  - [ ] Run modularity check ensuring no JavaScript file exceeds 400 lines
-  - [ ] Verify ADRs, reference contracts, and CHANGELOG exist and conform to standards
-- [ ] Task: Phase Verification & Checkpoint (Refer to workflow.md)
+- [x] Task: Update Project Governance in `.agents/AGENTS.md` [a2073db]
+  - [x] Add strict Memory & Context Hygiene Directives (ban on continuous work logs, conventional commits audit trail, milestone CHANGELOG, mandatory ADRs in `docs/adr/`)
+  - [x] Add Isolated Worktree Standard (`.worktrees/` directory convention)
+  - [x] Add Hermetic Testing Invariant (ban on unpinned live network queries in tests, property testing recommendations)
+- [x] Task: Standardize Worktree Setup and Working Tree Hygiene [63c730a]
+  - [x] Clean up obsolete `agy-worktrees/`
+  - [x] Verify `.worktrees/` in `.gitignore`
+  - [x] Validate clean working tree
+- [x] Task: Execute Full Verification Suite and Pre-Commit Audit [7190ee4]
+  - [x] Run complete automated test suite (`npm test --prefix tests && node tests/cli.test.mjs`)
+  - [x] Run modularity check ensuring no JavaScript file exceeds 400 lines
+  - [x] Verify ADRs, reference contracts, and CHANGELOG exist and conform to standards
+- [x] Task: Phase Verification & Checkpoint (Refer to workflow.md)
