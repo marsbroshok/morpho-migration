@@ -1,0 +1,4 @@
+Task: Implement Hard Circuit Breakers in CLI and Web UI (Green Phase)
+Summary: Implemented pre-flight simulation leak circuit breakers across CLI and Web UI. In cli/leverage-command.js, passed tokensToCheck and aborted if residual leaks exist. In cli/rollover-command.js, inspected simResult.leaks and aborted with [SECURITY ALERT] before broadcast/presentation. In src/ui/components/position-preview.js, disabled confirmExecuteBtn and displayed [SECURITY ALERT] banner on leaks. In src/ui/controllers/rollover-workflow.js and leverage-workflow.js, added validateSimulationLeaks. In app.js, guarded confirmAndSubmitTransaction.
+Modified files: cli/leverage-command.js, cli/rollover-command.js, src/ui/components/position-preview.js, src/ui/controllers/rollover-workflow.js, src/ui/controllers/leverage-workflow.js, app.js
+Why: Close vulnerability SEC-03 to guarantee hard fail-fast execution aborts whenever peripheral contracts retain user collateral or borrowed debt.
