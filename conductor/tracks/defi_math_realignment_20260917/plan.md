@@ -7,7 +7,7 @@
 
 ---
 
-## Phase 1: Rational BigInt Leverage Calculations & Dynamic LLTV (TDD)
+## Phase 1: Rational BigInt Leverage Calculations & Dynamic LLTV (TDD) [checkpoint: 6304ed4]
 
 - [x] Task: Write Failing Tests for Pure BigInt Leverage Math and Dynamic LLTV Bounds (Red Phase) 0f38cab
   - [x] Update `tests/leverage_adjust.test.mjs` with exact analytical expected values for 3.0x leverage target (3200 PT, 3040 USDC) and assert no IEEE-754 float drift.
@@ -17,7 +17,7 @@
   - [x] Refactor `src/core/math/ltv-calculator.js` to compute target LTV purely in BigInt rational math without IEEE-754 conversions.
   - [x] Implement `calculateMaxSafeLeverage(lltv, bufferBps)` and enforce dynamic ceilings instead of fixed 6.0x limit.
   - [x] Run test suite to confirm leverage adjust tests pass (Green Phase).
-- [ ] Task: Phase Verification & Checkpoint (Refer to workflow.md)
+- [x] Task: Phase Verification & Checkpoint (Refer to workflow.md) 6304ed4
 
 ---
 
