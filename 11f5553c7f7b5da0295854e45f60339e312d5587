@@ -1,0 +1,1 @@
+Phase 3 Task 3: Decomposed core services into MorphoMarketService, SwapQuoterService, and SimulationService (< 400 lines each). Integrated with BlockchainClient, SwapRouterClient, and SimulationEngine. Verified with tests/core_services.test.mjs, full 16-suite test runner, and CLI test runner.
