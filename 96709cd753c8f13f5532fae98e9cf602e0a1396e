@@ -1,0 +1,4 @@
+Task: Write Failing Unit Tests for Terminal Sweeps (Red Phase)
+Summary: Added test assertions in tests/builders.test.mjs and tests/builder_services.test.mjs asserting terminal sweep calls with 2n ** 256n - 1n across deleveraging, leveraging up, zero-debt rollover, and flashloan rollover bundles.
+Modified files: tests/builders.test.mjs, tests/builder_services.test.mjs
+Why: Establish Red Phase acceptance criteria for zero-leak peripheral contract security (SEC-01, SEC-02).
