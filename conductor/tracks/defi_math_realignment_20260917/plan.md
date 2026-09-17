@@ -27,10 +27,10 @@
   - [x] Add unit tests asserting that default 0.5% (50 bps) slippage translates to 9950 multiplier (not 9999) in `RolloverBundleBuilder`.
   - [x] Add tests verifying builder calls with explicit `slippageBps`.
   - [x] Run test suite to verify tests fail as expected (Red Phase).
-- [ ] Task: Standardize Slippage to `slippageBps` in Builders (Green Phase)
-  - [ ] Refactor `src/core/builders/rollover-bundle-builder.js` line 269 to delegate minimum output calculation to `SlippageService.applySlippageTolerance`.
-  - [ ] Standardize slippage parameters to `slippageBps` across builder function signatures with backwards compatibility.
-  - [ ] Run builder unit tests to confirm tests pass (Green Phase).
+- [x] Task: Standardize Slippage to `slippageBps` in Builders (Green Phase) fca134a
+  - [x] Refactor `src/core/builders/rollover-bundle-builder.js` line 269 to delegate minimum output calculation to `SlippageService.applySlippageTolerance`.
+  - [x] Standardize slippage parameters to `slippageBps` across builder function signatures with backwards compatibility.
+  - [x] Run builder unit tests to confirm tests pass (Green Phase).
 - [ ] Task: Phase Verification & Checkpoint (Refer to workflow.md)
 
 ---
