@@ -66,3 +66,26 @@ These rules apply to all development, styling, calculations, simulations, testin
 - **Zero-Funding Intermediate Contracts**: During mainnet-fork simulations (in both integration tests and CLI dry-runs), state-altering cheat codes (such as setting wallet balances or whale transfers) must only be applied to the target end-user address to simulate wallet depth. Do not pre-fund intermediate contracts, adapters, or bundlers. They must start the transaction cycle with exactly a 0 balance to ensure routing, parameter alignment, and balance checks are accurately validated.
 - **Transient Contract Leak Detection**: Simulation assertions should verify that all transient intermediate contracts are swept clean (0 balance) of all transaction tokens (collateral and loan assets) upon successful completion. Any residual balance must be reported as a routing leak.
 
+---
+
+## 8. Memory & Context Hygiene Directives
+- **Zero Raw Diary Dumps & Scratchpad Ban**: Never create or maintain continuous raw developer scratchpads or monolithic diary files (such as `WORK_LOG.md`, `HISTORY_LOG.md`, or raw root trace files).
+- **Conventional Commits as Immutable Audit Trail**: All commit messages must strictly adhere to the Conventional Commits specification (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `perf:`). Git commit history and attached `git notes` serve as the immutable chronological audit trail.
+- **Milestone-Only Changelog Maintenance**: Compile human-facing release notes into `CHANGELOG.md` adhering strictly to the Keep a Changelog and Semantic Versioning standards exclusively during milestone reviews, track finalizations, or version releases—never during incremental task turns.
+- **Mandatory Architecture Decision Records (ADRs)**: Distill failed experiments, non-obvious trade-offs, and critical architectural pivots into formal Architecture Decision Records located under `docs/adr/`. Each ADR must detail Context, Decision, and specifically Considered & Rejected Alternatives.
+
+---
+
+## 9. Isolated Worktree Standard
+- **Worktree Directory Convention**: Whenever provisioning an isolated worktree for multi-feature development, bug fixes, or non-trivial refactoring, use the dedicated `./.worktrees/` directory (e.g. `./.worktrees/feature-name`).
+- **No Main Tree Mutation During Multi-Track Work**: Never develop divergent feature tracks directly in the main working tree when isolation is required.
+- **Legacy Worktree Cleanup**: Obsolete worktree directories (such as `agy-worktrees/`) are deprecated and must be cleaned up immediately. Ensure `.worktrees/` is present in `.gitignore`.
+
+---
+
+## 10. Hermetic Testing & Anti-Specification Gaming Invariants
+- **Ban on Unpinned Live Network Queries**: Automated tests must never execute against unpinned live network states that drift over time. All tests performing fork simulations must run against explicitly pinned block numbers (`process.env.FORK_BLOCK_NUMBER`).
+- **Zero Test Neutralization & Assertion Weakening**: Never weaken assertions (e.g. changing exact value checks to truthiness checks), delete test cases, or add skip annotations (`it.skip`) to achieve passing test runs.
+- **No Hollow Stubs or Input-Matching Overfitting**: Never insert mock bypasses into runtime production code or hardcode return values matching specific test case inputs. Mocks belong strictly within isolated test harnesses.
+- **Property & Financial Invariant Testing**: Validate core financial mathematics, scaling conversions, and risk thresholds using randomized property-based testing and deterministic boundary suites to guarantee behavioral correctness across all supported token decimal combinations.
+
