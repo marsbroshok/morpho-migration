@@ -35,11 +35,11 @@
   - [x] Extract any unique diagnostic checks or assertions into formal `tests/*.test.mjs` test suites
   - [x] Delete remaining ad-hoc scripts from `tests/`
   - [x] Verify clean test discovery in `tests/package.json`
-- [ ] Task: Pin Historical Fork Block for Deterministic Simulation Tests
-  - [ ] Identify the historical block number where target wallet `0xF0A6e66B4396a70eE0620064da847821BeE70731` held an active position (live debt > 0)
-  - [ ] Reproduce the failure in `tests/simulation.test.mjs:356` under unpinned conditions
-  - [ ] Update `tests/simulation.test.mjs` and `tests/simulation_cross_loan.test.mjs` to set and use pinned `FORK_BLOCK_NUMBER` before viem client instantiation while respecting pre-defined environment variables
-  - [ ] Run full test suite (`npm test --prefix tests && node tests/cli.test.mjs`) to verify deterministic exit code 0
+- [x] Task: Pin Historical Fork Block for Deterministic Simulation Tests [caf6e41]
+  - [x] Identify the historical block number where target wallet `0xF0A6e66B4396a70eE0620064da847821BeE70731` held an active position (live debt > 0)
+  - [x] Reproduce the failure in `tests/simulation.test.mjs:356` under unpinned conditions
+  - [x] Update `tests/simulation.test.mjs` and `tests/simulation_cross_loan.test.mjs` to set and use pinned `FORK_BLOCK_NUMBER` before viem client instantiation while respecting pre-defined environment variables
+  - [x] Run full test suite (`npm test --prefix tests && node tests/cli.test.mjs`) to verify deterministic exit code 0
 - [ ] Task: Phase Verification & Checkpoint (Refer to workflow.md)
 
 ---
