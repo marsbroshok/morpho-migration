@@ -1,0 +1,4 @@
+Task: Purge Ad-Hoc Scratch Scripts from tests/
+Summary: Triaged and removed ad-hoc debug and verification scripts (check_decimals.mjs, check_market_details.mjs, check_market_hash.mjs, check_morpho_params.mjs, check_token_name.mjs, debug_allowance.js/.mjs, test_borrow_balance.mjs, test_pendle_swap_direct.mjs, test_permit2_transfer.mjs, trace_simulation.mjs, simulation_payload.json). Tracked formal test suite tests/simulation_cross_loan.test.mjs.
+Files modified/deleted: tests/*
+Why: Eliminates test directory clutter, prevents unmanaged script drift, and ensures tests/ contains strictly formal test suites.
