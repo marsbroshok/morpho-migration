@@ -30,11 +30,11 @@
 
 ## Phase 2: Hermetic Test Suite & Scratch Script Purge
 
-- [ ] Task: Purge Ad-Hoc Scratch Scripts from `tests/`
-  - [ ] Triage ad-hoc files in `tests/`: `check_decimals.mjs`, `check_market_details.mjs`, `check_market_hash.mjs`, `check_morpho_params.mjs`, `check_token_name.mjs`, `debug_allowance.js`, `debug_allowance.mjs`, `test_borrow_balance.mjs`, `test_pendle_swap_direct.mjs`, `test_permit2_transfer.mjs`, `trace_simulation.mjs`, `simulation_payload.json`
-  - [ ] Extract any unique diagnostic checks or assertions into formal `tests/*.test.mjs` test suites
-  - [ ] Delete remaining ad-hoc scripts from `tests/`
-  - [ ] Verify clean test discovery in `tests/package.json`
+- [x] Task: Purge Ad-Hoc Scratch Scripts from `tests/` [69fecd5]
+  - [x] Triage ad-hoc files in `tests/`: `check_decimals.mjs`, `check_market_details.mjs`, `check_market_hash.mjs`, `check_morpho_params.mjs`, `check_token_name.mjs`, `debug_allowance.js`, `debug_allowance.mjs`, `test_borrow_balance.mjs`, `test_pendle_swap_direct.mjs`, `test_permit2_transfer.mjs`, `trace_simulation.mjs`, `simulation_payload.json`
+  - [x] Extract any unique diagnostic checks or assertions into formal `tests/*.test.mjs` test suites
+  - [x] Delete remaining ad-hoc scripts from `tests/`
+  - [x] Verify clean test discovery in `tests/package.json`
 - [ ] Task: Pin Historical Fork Block for Deterministic Simulation Tests
   - [ ] Identify the historical block number where target wallet `0xF0A6e66B4396a70eE0620064da847821BeE70731` held an active position (live debt > 0)
   - [ ] Reproduce the failure in `tests/simulation.test.mjs:356` under unpinned conditions
