@@ -1,4 +1,6 @@
 import { CliFormatter } from './formatter.js';
+import { CliHelpView } from './cli-help-view.js';
+import { CliTraceView } from './cli-trace-view.js';
 
 export class CliView {
   /**
@@ -6,6 +8,7 @@ export class CliView {
    */
   constructor(labelResolver) {
     this.labelResolver = labelResolver;
+    this.traceView = new CliTraceView(labelResolver);
   }
 
   /**
@@ -251,249 +254,24 @@ export class CliView {
     });
   }
 
-  /**
-   * Recursively print call traces in the console with resolved address labels.
-   * @param {object} call
-   * @param {number} depth
-   * @param {object} [marketParams]
-   */
   async printCallTrace(call, depth = 0, marketParams = null) {
-    const indent = '  '.repeat(depth);
-    const toAddress = call.to || 'Unknown';
-    const label = await this.labelResolver.resolveLabel(toAddress, marketParams);
-    
-    const targetDisplay = label 
-      ? `${CliFormatter.color(label, 'cyan')} [${CliFormatter.color(toAddress, 'gray')}]`
-      : CliFormatter.color(toAddress, 'gray');
-
-    const status = call.status === '0x1' 
-      ? CliFormatter.color('SUCCESS', 'green') 
-      : CliFormatter.color('REVERT', 'red');
-
-    const valueStr = call.value ? BigInt(call.value).toString() : '0';
-    const gas = parseInt(call.gasUsed, 16);
-    console.log(`${indent}└── [CALL] To: ${targetDisplay} | Value: ${valueStr} | Status: ${status} | Gas: ${gas.toLocaleString()}`);
-
-    if (call.error) {
-      console.log(`${indent}    ${CliFormatter.color('⚠ Error: ' + call.error.message, 'red')}`);
-    }
-
-    if (call.calls && Array.isArray(call.calls)) {
-      for (const subcall of call.calls) {
-        await this.printCallTrace(subcall, depth + 1, marketParams);
-      }
-    }
+    return this.traceView.printCallTrace(call, depth, marketParams);
   }
 
-  /**
-   * Render simulated execution summary block.
-   * @param {object} simResult
-   * @param {object} [marketParams]
-   */
   async printSimulationSummary(simResult, marketParams = null) {
-    CliFormatter.printSubHeader('6. Mainnet Fork Simulation Result');
-    if (!simResult.success) {
-      console.log(`  ${CliFormatter.color('❌ TRANSACTION SIMULATION REVERTED!', 'red')}`);
-      if (simResult.error) {
-        console.log(`  ${CliFormatter.color('Revert Reason: ' + (simResult.error.message || JSON.stringify(simResult.error)), 'red')}`);
-      }
-    } else {
-      console.log(`  ${CliFormatter.color('✅ TRANSACTION SIMULATION SUCCESSFUL!', 'green')}`);
-      CliFormatter.printItem('Gas Used', simResult.gasUsed.toLocaleString());
-      // Estimate cost at 15 gwei base fee
-      const ethCost = Number(simResult.gasUsed) * 15 / 1e9;
-      CliFormatter.printItem('Est. Net Cost', `${ethCost.toFixed(6)} ETH`);
-    }
-
-    if (simResult.traceTree) {
-      console.log(`\n  ${CliFormatter.color('Simulation Call Trace:', 'bold')}`);
-      await this.printCallTrace(simResult.traceTree, 1, marketParams);
-    }
+    return this.traceView.printSimulationSummary(simResult, marketParams);
   }
 
-  /**
-   * Render real transaction submission confirmation.
-   * @param {string} txHash
-   */
   printTransactionSubmitted(txHash) {
-    CliFormatter.printSubHeader('6. Transaction Submission');
-    console.log(`  ${CliFormatter.color('🚀 Transaction submitted successfully!', 'green')}`);
-    CliFormatter.printItem('Transaction Hash', txHash, 'cyan');
-    console.log(`  Waiting for block confirmations...`);
+    return this.traceView.printTransactionSubmitted(txHash);
   }
 
-  /**
-   * Print post-execution audit results.
-   * @param {string} txType
-   * @param {object} audit
-   */
   printPostExecutionAudit(txType, audit) {
-    CliFormatter.printSubHeader('Post-Execution Audit');
-    if (audit.error) {
-      console.log(`  ${CliFormatter.color('⚠ Audit Warning: ' + audit.error, 'yellow')}`);
-      return;
-    }
-
-    if (txType === 'rollover') {
-      if (audit.isSameCollateral) {
-        console.log(`  ${CliFormatter.color('Direct Rollover: Same collateral asset used for both markets (No swap required).', 'green')}`);
-        return;
-      }
-      const spentSym = audit.spentSymbol || "PT-old";
-      const receivedSym = audit.receivedSymbol || "PT-new";
-      CliFormatter.printItem('Realized Swap Rate', `1 ${spentSym} = ${audit.realizedRate.toFixed(4)} ${receivedSym}`);
-      CliFormatter.printItem('Estimated Swap Rate', `${audit.estimatedRate.toFixed(4)} ${receivedSym}`, 'gray');
-      if (audit.realizedPriceImpact !== undefined) {
-        CliFormatter.printItem('Realized Price Impact', `${audit.realizedPriceImpact.toFixed(2)}% (vs. Oracle)`);
-        CliFormatter.printItem('Estimated Price Impact', `${audit.estimatedPriceImpact.toFixed(2)}%`, 'gray');
-      }
-      console.log(`  ${CliFormatter.color(`(Verified: spent ${CliFormatter.formatAmount(audit.spentAmount, audit.spentDecimals || 18)} ${spentSym}, received ${CliFormatter.formatAmount(audit.receivedAmount, audit.receivedDecimals || 18)} ${receivedSym})`, 'gray')}`);
-    } else {
-      const spentSym = audit.spentSymbol || (audit.isLeverageUp ? "USDC" : "PT");
-      const receivedSym = audit.receivedSymbol || (audit.isLeverageUp ? "PT" : "USDC");
-      const spentDec = audit.spentDecimals || (audit.isLeverageUp ? 6 : 18);
-      const receivedDec = audit.receivedDecimals || (audit.isLeverageUp ? 18 : 6);
-
-      CliFormatter.printItem('Realized Exchange Rate', `1 ${audit.isLeverageUp ? receivedSym : spentSym} = ${audit.realizedRate.toFixed(4)} ${audit.isLeverageUp ? spentSym : receivedSym}`);
-      CliFormatter.printItem('Estimated Rate', `${audit.estimatedRate.toFixed(4)} ${audit.isLeverageUp ? spentSym : receivedSym}`, 'gray');
-      if (audit.realizedPriceImpact !== undefined) {
-        CliFormatter.printItem('Realized Price Impact', `${audit.realizedPriceImpact.toFixed(2)}% (vs. Oracle)`);
-        CliFormatter.printItem('Estimated Price Impact', `${audit.estimatedPriceImpact.toFixed(2)}%`, 'gray');
-      }
-      console.log(`  ${CliFormatter.color(`(Verified: spent ${CliFormatter.formatAmount(audit.spentAmount, spentDec, spentDec === 6 ? 2 : 8)} ${spentSym}, received ${CliFormatter.formatAmount(audit.receivedAmount, receivedDec, receivedDec === 6 ? 2 : 8)} ${receivedSym})`, 'gray')}`);
-    }
+    return this.traceView.printPostExecutionAudit(txType, audit);
   }
 
-  /**
-   * Prints detailed help documentation for the CLI tool or a specific command.
-   * @param {string|null} command 
-   */
   static printHelp(command) {
-    if (command === 'rollover') {
-      CliFormatter.printHeader('Morpho CLI: Rollover Command Help');
-      console.log(`  Migrates user collateral and loan debt from a source Morpho Blue market to a destination market.`);
-      
-      CliFormatter.printSubHeader('Usage');
-      console.log(`  node cli.js rollover --old-market-id <id> --new-market-id <id> --user <address> [options]`);
-      
-      CliFormatter.printSubHeader('Required Options');
-      CliFormatter.printItem('--old-market-id <id>', 'Source Morpho Blue market hex ID.', 'cyan');
-      CliFormatter.printItem('--new-market-id <id>', 'Destination Morpho Blue market hex ID.', 'cyan');
-      CliFormatter.printItem('-u, --user <address>', 'Wallet address to fetch position for (Required in simulation mode).', 'cyan');
-      
-      CliFormatter.printSubHeader('Additional Options');
-      CliFormatter.printItem('--type <full|partial>', 'Migration type: \'full\' or \'partial\' (default: full).');
-      CliFormatter.printItem('--debt <amount>', 'Debt amount to repay (Required if type is \'partial\').');
-      CliFormatter.printItem('--slippage <pct>', 'Slippage limit percentage (default: 1.0).');
-      CliFormatter.printItem('--cap-borrow', 'Caps new market borrow amount dynamically to keep Projected LTV below LLTV safety threshold.');
-      
-      CliFormatter.printSubHeader('Execution/Signing Flags');
-      CliFormatter.printItem('-r, --rpc <url>', 'RPC provider URL (Required if using --private-key).');
-      CliFormatter.printItem('-k, --private-key <hex>', 'Private key hex string to sign transactions locally (Requires --rpc).');
-      CliFormatter.printItem('-w, --walletconnect', 'Initiates secure WalletConnect pairing session.');
-      CliFormatter.printItem('-s, --simulation', 'Simulates transaction on a mainnet fork instead of submitting (Default if no signer).');
-      CliFormatter.printItem('--no-simulation', 'Bypasses simulation and immediately submits transaction.');
-      CliFormatter.printItem('-o, --save-simulation <path>', 'Saves the raw transaction data payload to a JSON file (Only with simulation).');
-      CliFormatter.printItem('--debug', 'Enables verbose debug output including swap routing details, calldata, and full simulator responses.');
-
-      CliFormatter.printSubHeader('Examples');
-      console.log(`  # Read-Only Mainnet Simulation (Default mode)`);
-      console.log(`  node cli.js rollover \\`);
-      console.log(`    --old-market-id 0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124 \\`);
-      console.log(`    --new-market-id 0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c \\`);
-      console.log(`    --user 0xdC382CDF2a25790F535a518EC26958c227e9DCF2 \\`);
-      console.log(`    --simulation`);
-      console.log(`\n  # Live Execution via WalletConnect`);
-      console.log(`  node cli.js rollover \\`);
-      console.log(`    --old-market-id 0xa75bb490ecfee90c86a9d22ebc2dde42fb83478b3f18722b9fc6f5f668cab124 \\`);
-      console.log(`    --new-market-id 0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c \\`);
-      console.log(`    --walletconnect`);
-    } else if (command === 'adjust-leverage' || command === 'leverage') {
-      CliFormatter.printHeader('Morpho CLI: Adjust-Leverage Command Help');
-      console.log(`  Adjusts leverage ratio on an active Morpho Blue market.`);
-      
-      CliFormatter.printSubHeader('Usage');
-      console.log(`  node cli.js adjust-leverage --market-id <id> --target-leverage <num> --user <address> [options]`);
-      console.log(`  (alias: node cli.js leverage ...)`);
-      
-      CliFormatter.printSubHeader('Required Options');
-      CliFormatter.printItem('--market-id <id>', 'Morpho Blue market hex ID.', 'cyan');
-      CliFormatter.printItem('-l, --target-leverage <num>', 'Target leverage level between 1.0 (debt-free) and 6.0.', 'cyan');
-      CliFormatter.printItem('-u, --user <address>', 'Wallet address to fetch position for (Required in simulation mode).', 'cyan');
-      
-      CliFormatter.printSubHeader('Additional Options');
-      CliFormatter.printItem('--slippage <pct>', 'Slippage limit percentage (default: 1.0).');
-      
-      CliFormatter.printSubHeader('Execution/Signing Flags');
-      CliFormatter.printItem('-r, --rpc <url>', 'RPC provider URL (Required if using --private-key).');
-      CliFormatter.printItem('-k, --private-key <hex>', 'Private key hex string to sign transactions locally (Requires --rpc).');
-      CliFormatter.printItem('-w, --walletconnect', 'Initiates secure WalletConnect pairing session.');
-      CliFormatter.printItem('-s, --simulation', 'Simulates transaction on a mainnet fork instead of submitting (Default if no signer).');
-      CliFormatter.printItem('--no-simulation', 'Bypasses simulation and immediately submits transaction.');
-      CliFormatter.printItem('-o, --save-simulation <path>', 'Saves the raw transaction data payload to a JSON file (Only with simulation).');
-      CliFormatter.printItem('--debug', 'Enables verbose debug output including swap routing details, calldata, and full simulator responses.');
-
-      CliFormatter.printSubHeader('Examples');
-      console.log(`  # Deleverage Position via Mainnet Simulation`);
-      console.log(`  node cli.js adjust-leverage \\`);
-      console.log(`    --market-id 0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c \\`);
-      console.log(`    --target-leverage 2.0 \\`);
-      console.log(`    --user 0xdC382CDF2a25790F535a518EC26958c227e9DCF2 \\`);
-      console.log(`    --simulation`);
-      console.log(`\n  # Increase Leverage via WalletConnect`);
-      console.log(`  node cli.js adjust-leverage \\`);
-      console.log(`    --market-id 0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c \\`);
-      console.log(`    --target-leverage 4.5 \\`);
-      console.log(`    --walletconnect`);
-
-    } else if (command === 'simulate-raw') {
-      CliFormatter.printHeader('Morpho CLI: Simulate-Raw Command Help');
-      console.log(`  Simulates a raw transaction from a JSON file on a mainnet fork using eth_simulateV1.`);
-      
-      CliFormatter.printSubHeader('Usage');
-      console.log(`  node cli.js simulate-raw --file <path> [options]`);
-      
-      CliFormatter.printSubHeader('Required Options');
-      CliFormatter.printItem('-f, --file <path>', 'Path to the JSON file containing transaction details.', 'cyan');
-      
-      CliFormatter.printSubHeader('Additional Options');
-      CliFormatter.printItem('-r, --rpc <url>', 'RPC provider URL (Falls back to Alchemy if key is present).');
-      CliFormatter.printItem('--debug', 'Enables verbose debug output including swap routing details, calldata, and full simulator responses.');
-      
-      CliFormatter.printSubHeader('Examples');
-      console.log(`  # Simulate transaction from a JSON file`);
-      console.log(`  node cli.js simulate-raw --file sample_tx.json`);
-    } else {
-      CliFormatter.printHeader('Morpho Position Migrator CLI');
-      console.log(`  A modular, secure command-line interface tool for executing cross-market rollovers`);
-      console.log(`  and adjusting leverage ratios for Principal Token (PT) positions on Morpho Blue.`);
-      
-      CliFormatter.printSubHeader('Usage');
-      console.log(`  node cli.js <command> [options]`);
-      
-      CliFormatter.printSubHeader('Available Commands');
-      CliFormatter.printItem('rollover', 'Migrate user PT collateral and USDC debt from a source Morpho Blue market to a destination market.');
-      CliFormatter.printItem('adjust-leverage', 'Adjust leverage ratio on an active Morpho Blue market (alias: leverage).');
-      CliFormatter.printItem('simulate-raw', 'Simulate a raw transaction from a JSON file on a mainnet fork.');
-      
-      CliFormatter.printSubHeader('Global Options/Flags');
-      CliFormatter.printItem('-r, --rpc <url>', 'RPC provider URL (Required if using --private-key).');
-      CliFormatter.printItem('-k, --private-key <hex>', 'Private key hex string to sign transactions locally (Requires --rpc).');
-      CliFormatter.printItem('-w, --walletconnect', 'Initiates secure WalletConnect pairing session.');
-      CliFormatter.printItem('-s, --simulation', 'Simulates transaction on a mainnet fork instead of submitting (Default if no signer).');
-      CliFormatter.printItem('--no-simulation', 'Bypasses simulation and immediately submits transaction.');
-      CliFormatter.printItem('-o, --save-simulation <path>', 'Saves the raw transaction data payload to a JSON file (Only with simulation).');
-      CliFormatter.printItem('--slippage <pct>', 'Slippage limit percentage (default: 1.0).');
-      CliFormatter.printItem('--debug', 'Enables verbose debug output including swap routing details, calldata, and full simulator responses.');
-      CliFormatter.printItem('-h, --help', 'Display help information for any command or general CLI usage.');
- 
-      CliFormatter.printSubHeader('Command Specific Help');
-      console.log(`  To view detailed options and examples for a specific command, run:`);
-      console.log(`    node cli.js <command> --help`);
-      console.log(`  For example:`);
-      console.log(`    node cli.js rollover --help`);
-    }
-    console.log();
+    return CliHelpView.printHelp(command);
   }
 
   /**
