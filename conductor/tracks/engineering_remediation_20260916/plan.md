@@ -59,12 +59,12 @@
   - [x] Implement `src/core/builders/leverage-bundle-builder.js` (< 400 lines) assembling leverage up and deleverage calldata
   - [x] Refactor `builders.js` to delegate to `src/core/builders/` while preserving backward compatibility
   - [x] Execute tests to confirm builder tests pass
-- [ ] Task: Decompose Core Services: Market, Swap Quoter, and Simulation (TDD)
-  - [ ] Write unit tests for decomposed core services in `tests/`
-  - [ ] Implement `src/core/services/morpho-market-service.js` (< 400 lines) for market queries, params, and oracle rates
-  - [ ] Implement `src/core/services/swap-quoter-service.js` (< 400 lines) for Pendle and DEX quoter dynamic queries and 2-step debt solver
-  - [ ] Implement `src/core/services/simulation-service.js` (< 400 lines) for `eth_simulateV1`, trace decoding, and transient balance leak assertions
-  - [ ] Execute tests to confirm core services pass
+- [x] Task: Decompose Core Services: Market, Swap Quoter, and Simulation (TDD) [11f5553]
+  - [x] Write unit tests for decomposed core services in `tests/`
+  - [x] Implement `src/core/services/morpho-market-service.js` (< 400 lines) for market queries, params, and oracle rates
+  - [x] Implement `src/core/services/swap-quoter-service.js` (< 400 lines) for Pendle and DEX quoter dynamic queries and 2-step debt solver
+  - [x] Implement `src/core/services/simulation-service.js` (< 400 lines) for `eth_simulateV1`, trace decoding, and transient balance leak assertions
+  - [x] Execute tests to confirm core services pass
 - [ ] Task: Decompose UI State and UI Components
   - [ ] Implement `src/ui/state/ui-state-store.js` (< 400 lines) providing reactive state management without undeclared global state
   - [ ] Implement `src/ui/components/error-banner.js` (< 400 lines) for visual HTML error boundary
