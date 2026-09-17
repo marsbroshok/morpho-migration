@@ -1,0 +1,4 @@
+Task: Write Failing Tests for Pure BigInt Leverage Math and Dynamic LLTV Bounds (Red Phase)
+Summary: Updated tests/leverage_adjust.test.mjs to assert exact analytical values for 3.0x leverage target (3200 PT, 3040 USDC) free of IEEE-754 floating-point drift, added dynamic maximum leverage tests across four LLTV tiers (77%, 86%, 94.5%, 96.5%), and added dynamic LLTV boundary validation tests.
+Modified files: tests/leverage_adjust.test.mjs
+Why: TDD Red Phase establishing expected behavior for pure rational BigInt leverage calculations and dynamic safe LLTV ceilings per MATH-03, MATH-04, and TEST-02.
