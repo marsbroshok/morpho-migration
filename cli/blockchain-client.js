@@ -2,6 +2,7 @@ import { createPublicClient, createWalletClient, http, getAddress } from 'viem';
 import { mainnet } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import config from '../config.js';
+import { MorphoMarketService } from '../src/core/services/morpho-market-service.js';
 
 const MORPHO_BLUE = config.MORPHO_BLUE;
 
@@ -80,6 +81,7 @@ export class BlockchainClient {
       this.walletClient = null;
       this.userAddress = null;
     }
+    this.marketService = new MorphoMarketService(MORPHO_BLUE);
   }
 
   getBlockNumber() {
@@ -93,103 +95,32 @@ export class BlockchainClient {
       const borrowShares = debt;
       return { collateral, debt, borrowShares };
     }
-    const [posData, marketData] = await Promise.all([
-      this.publicClient.readContract({
-        address: MORPHO_BLUE,
-        abi: MORPHO_BLUE_ABI,
-        functionName: 'position',
-        args: [marketId, userAddress],
-        blockNumber: this.getBlockNumber()
-      }),
-      this.publicClient.readContract({
-        address: MORPHO_BLUE,
-        abi: MORPHO_BLUE_ABI,
-        functionName: 'market',
-        args: [marketId],
-        blockNumber: this.getBlockNumber()
-      })
-    ]);
-
-    const [, borrowShares, collateral] = posData;
-    const [,, totalBorrowAssets, totalBorrowShares] = marketData;
-
-    let debt = 0n;
-    if (borrowShares > 0n && totalBorrowShares > 0n) {
-      debt = (borrowShares * totalBorrowAssets) / totalBorrowShares;
-    }
-
-    return { collateral, debt, borrowShares };
+    return await this.marketService.fetchPosition(
+      this.publicClient,
+      marketId,
+      userAddress,
+      this.getBlockNumber()
+    );
   }
 
-   async fetchMarketParams(marketId) {
-    const query = `
-      query GetMarket($id: String!) {
-        markets(where: { uniqueKey_in: [$id] }) {
-          items {
-            loanAsset { address symbol decimals }
-            collateralAsset { address symbol decimals }
-            oracleAddress
-            irmAddress
-            lltv
-          }
-        }
-      }
-    `;
-    const response = await fetch('https://blue-api.morpho.org/graphql', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, variables: { id: marketId } })
-    });
-    if (!response.ok) {
-      throw new Error(`Morpho Blue GraphQL API request failed: ${response.statusText}`);
-    }
-    const result = await response.json();
-    if (result.errors && result.errors.length > 0) {
-      throw new Error(`Morpho Blue GraphQL API error: ${result.errors[0].message}`);
-    }
-    const items = result.data.markets.items;
-    if (items.length === 0) {
-      throw new Error(`Market ID ${marketId} not found on Morpho Blue.`);
-    }
-    const market = items[0];
-    return {
-      loanToken: getAddress(market.loanAsset.address),
-      collateralToken: getAddress(market.collateralAsset.address),
-      loanSymbol: market.loanAsset.symbol,
-      collateralSymbol: market.collateralAsset.symbol,
-      loanDecimals: Number(market.loanAsset.decimals),
-      collateralDecimals: Number(market.collateralAsset.decimals),
-      oracle: getAddress(market.oracleAddress),
-      irm: getAddress(market.irmAddress),
-      lltv: BigInt(market.lltv)
-    };
+  async fetchMarketParams(marketId) {
+    return await this.marketService.fetchMarketParams(marketId);
   }
 
   async fetchDecimals(tokenAddress) {
-    return await this.publicClient.readContract({
-      address: tokenAddress,
-      abi: [{"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"stateMutability":"view","type":"function"}],
-      functionName: 'decimals',
-      blockNumber: this.getBlockNumber()
-    });
+    return await this.marketService.fetchTokenDecimals(
+      this.publicClient,
+      tokenAddress,
+      this.getBlockNumber()
+    );
   }
 
   async checkCollateralMaturity(collateralAddress) {
-    try {
-      const expiry = await this.publicClient.readContract({
-        address: collateralAddress,
-        abi: [{"inputs":[],"name":"expiry","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}],
-        functionName: 'expiry',
-        blockNumber: this.getBlockNumber()
-      });
-      const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
-      return {
-        expiryDate: new Date(Number(expiry) * 1000).toLocaleDateString(),
-        isExpired: expiry <= currentTimestamp
-      };
-    } catch (err) {
-      return { expiryDate: "Unknown", isExpired: false };
-    }
+    return await this.marketService.checkCollateralMaturity(
+      this.publicClient,
+      collateralAddress,
+      this.getBlockNumber()
+    );
   }
 
   /**
@@ -316,13 +247,13 @@ export class BlockchainClient {
 
 
   async isAuthorized(userAddress, spenderAddress) {
-    return await this.publicClient.readContract({
-      address: MORPHO_BLUE,
-      abi: MORPHO_BLUE_ABI,
-      functionName: 'isAuthorized',
-      args: [userAddress, spenderAddress],
-      blockNumber: this.getBlockNumber()
-    });
+    return await this.marketService.isAuthorized(
+      this.publicClient,
+      userAddress,
+      spenderAddress,
+      MORPHO_BLUE,
+      this.getBlockNumber()
+    );
   }
 
   async executeTransaction({ to, data, value }) {
