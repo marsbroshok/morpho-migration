@@ -1,0 +1,7 @@
+Task: Remove Oracle Ratio Shortcut and Enforce 2-Step Iterative Quoter (Green Phase)
+- Purged collateral oracle ratio shortcut from cli/rollover-routing-helper.js and src/ui/controllers/rollover-workflow.js
+- Enforced ADR-0003 two-step iterative swap solver with 1.0 unit nominal probe and two-stage ceiling division
+- Synchronized Curve pool dynamic probe sizing across CLI and UI controllers
+- Updated cli/rollover-command.js to parse partial debt using ScalingService.parseUnits for high-precision BigInt arithmetic
+- Maintained all modified modules strictly under 400 lines (cli/rollover-command.js: 394, cli/rollover-routing-helper.js: 239, src/ui/controllers/rollover-workflow.js: 329)
+- All 22 test suites and fork simulations passed deterministically
