@@ -37,7 +37,7 @@
 
 ## Phase 3: ADR-0003 Two-Step Iterative Swap Solver Enforcement (TDD)
 
-- [ ] Task: Write Failing Tests for Cross-Loan Debt Quoting (Red Phase)
+- [~] Task: Write Failing Tests for Cross-Loan Debt Quoting (Red Phase)
   - [ ] Add unit tests in `tests/` asserting that cross-loan debt solver uses the 2-step iterative swap quoter even when collateral oracle prices are readable.
   - [ ] Add tests verifying `ScalingService.parseUnits` string parsing in CLI rollover command.
   - [ ] Run test suite to verify tests fail as expected (Red Phase).
