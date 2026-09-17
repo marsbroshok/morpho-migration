@@ -57,6 +57,10 @@ export class RolloverSimulationHelper {
       tokensToCheck
     );
 
+    if (!simResult?.calls || !Array.isArray(simResult.calls)) {
+      return { actualCollateralOutput: null, actualLoanOutput: null };
+    }
+
     const leakCheckCallsCount = tokensToCheck.length * 3;
     const mainCallIdx = simResult.calls.length - leakCheckCallsCount - 1;
     const mainCall = simResult.calls[mainCallIdx];

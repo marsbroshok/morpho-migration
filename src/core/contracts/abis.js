@@ -225,3 +225,18 @@ export const MORPHO_BLUE_ABI = [
     "type": "function"
   }
 ];
+
+export const getCurvePoolExchangeAbi = (indexType = 'int128') => [
+  {
+    "inputs": [
+      { "name": "i", "type": indexType },
+      { "name": "j", "type": indexType },
+      { "name": "dx", "type": "uint256" },
+      { "name": "min_dy", "type": "uint256" }
+    ],
+    "name": "exchange",
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+];

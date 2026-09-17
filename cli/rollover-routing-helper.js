@@ -24,39 +24,34 @@ export class RolloverRoutingHelper {
    */
   static async solveCrossLoanRoute({
     routerClient,
+    poolService,
+    publicClient,
     assessment,
     strictSlippageBps,
     slippageFrac,
     expectedNewCollateral,
     newOraclePrice,
+    oldOraclePrice,
     ltvCalculator,
     options,
     bundlerAddress,
     adapterAddress
   }) {
     const decDiff = BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
-    const guessAmount = assessment.debtAmount * (10n ** BigInt(assessment.destMarketParams.loanDecimals)) / (10n ** BigInt(assessment.sourceMarketParams.loanDecimals));
-    const nominalInput = guessAmount > 0n ? guessAmount : (10n ** BigInt(assessment.destMarketParams.loanDecimals));
+    const exp = 18n + BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
 
-    const nominalRoute = await routerClient.fetchSwapRoute(
-      assessment.destLoanAddress,
-      nominalInput,
-      assessment.sourceLoanAddress,
-      slippageFrac,
-      bundlerAddress,
-      bundlerAddress
-    );
-    const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
-    const loanOracleRate = (nominalOutput * 10n ** (18n + decDiff)) / nominalInput;
+    let loanOracleRate = 0n;
+    let loanExpectedInput = 0n;
 
-    if (options.debug) {
-      console.log('DEBUG: nominalInput:', nominalInput, 'nominalOutput:', nominalOutput);
-      console.log('DEBUG: loanOracleRate:', loanOracleRate);
+    // 1. If oracles are available, compute oracle rate and initial borrow expectation
+    if (oldOraclePrice && newOraclePrice) {
+      loanOracleRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
+      const estimatedInput = (assessment.debtAmount * 10n ** 18n * 10n ** decDiff) / loanOracleRate;
+      const slippageBuffer = BigInt(Math.max(50, Math.ceil(assessment.slippage * 100)));
+      loanExpectedInput = (estimatedInput * (10000n + slippageBuffer)) / 10000n;
     }
 
-    const desiredOutput = (assessment.debtAmount * 10000n) / (10000n - strictSlippageBps);
-    let loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
-
+    // 2. Validate/cap borrow amount based on Target Market LLTV safety threshold
     const targetLltv = assessment.destMarketParams.lltv;
     const safeLtv = targetLltv - 5000000000000000n;
     const newCollateralValue = ScalingService.calculateCollateralValue(expectedNewCollateral, newOraclePrice);
@@ -72,46 +67,104 @@ export class RolloverRoutingHelper {
       }
     }
 
-    let swapInputAmount = loanExpectedInput - 100000n;
-    let loanRouteData = await routerClient.fetchSwapRoute(
-      assessment.destLoanAddress,
-      swapInputAmount,
-      assessment.sourceLoanAddress,
-      slippageFrac,
-      adapterAddress,
-      bundlerAddress
-    );
-    let loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
-    let minSwapOutput = (loanExpectedOutput * (10000n - strictSlippageBps)) / 10000n;
+    // 3. Try to find a direct Curve pool for dynamic exchange
+    let curvePool = null;
+    if (poolService && publicClient) {
+      const probeAmount = loanExpectedInput > 0n ? loanExpectedInput : (10n ** BigInt(assessment.destMarketParams.loanDecimals));
+      curvePool = await poolService.findCurvePoolAndIndices(
+        publicClient,
+        assessment.destLoanAddress,
+        assessment.sourceLoanAddress,
+        probeAmount
+      );
+    }
 
-    if (minSwapOutput < assessment.debtAmount && loanExpectedInput < maxSafeBorrowAmount) {
-      const adjustedInput = (loanExpectedInput * assessment.debtAmount) / minSwapOutput;
-      loanExpectedInput = adjustedInput > maxSafeBorrowAmount ? maxSafeBorrowAmount : adjustedInput;
+    let loanRouteData = null;
+    let loanExpectedOutput = 0n;
 
-      if (loanExpectedInput > swapInputAmount) {
-        swapInputAmount = loanExpectedInput - 100000n;
-        loanRouteData = await routerClient.fetchSwapRoute(
+    if (curvePool) {
+      loanRouteData = {
+        isCurveDirect: true,
+        poolAddress: curvePool.poolAddress,
+        i: curvePool.i,
+        j: curvePool.j,
+        indexType: curvePool.indexType
+      };
+      loanExpectedOutput = curvePool.expectedOutput;
+    } else {
+      // 4. Fallback to Router Client (e.g. Pendle Convert / DEX aggregators)
+      if (!loanExpectedInput || !loanOracleRate) {
+        const guessAmount = assessment.debtAmount * (10n ** BigInt(assessment.destMarketParams.loanDecimals)) / (10n ** BigInt(assessment.sourceMarketParams.loanDecimals));
+        const nominalInput = guessAmount > 0n ? guessAmount : (10n ** BigInt(assessment.destMarketParams.loanDecimals));
+
+        const nominalRoute = await routerClient.fetchSwapRoute(
           assessment.destLoanAddress,
-          swapInputAmount,
+          nominalInput,
           assessment.sourceLoanAddress,
           slippageFrac,
-          adapterAddress,
+          bundlerAddress,
           bundlerAddress
         );
-        loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
-        minSwapOutput = (loanExpectedOutput * (10000n - strictSlippageBps)) / 10000n;
+        const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
+        loanOracleRate = (nominalOutput * 10n ** (18n + decDiff)) / nominalInput;
+
+        const desiredOutput = (assessment.debtAmount * 10000n) / (10000n - strictSlippageBps);
+        loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
+
+        if (loanExpectedInput > maxSafeBorrowAmount) {
+          if (options.capBorrow) {
+            console.warn(`\n⚠️  Warning: Projected borrow amount exceeds Target Market LLTV limit. Capping borrow amount at safe threshold (${(Number(safeLtv) / 1e16).toFixed(2)}% LTV) to prevent reversion. Shortfall will be funded by user wallet.`);
+            loanExpectedInput = maxSafeBorrowAmount;
+          } else {
+            const projectedLtv = ltvCalculator.calculateLtv(loanExpectedInput, newCollateralValue);
+            throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain. Try again with --cap-borrow flag to automatically cap target leverage.`);
+          }
+        }
+      }
+
+      let swapInputAmount = loanExpectedInput - 100000n;
+      loanRouteData = await routerClient.fetchSwapRoute(
+        assessment.destLoanAddress,
+        swapInputAmount,
+        assessment.sourceLoanAddress,
+        slippageFrac,
+        adapterAddress,
+        bundlerAddress
+      );
+      loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
+      let minSwapOutput = (loanExpectedOutput * (10000n - strictSlippageBps)) / 10000n;
+
+      if (minSwapOutput < assessment.debtAmount && loanExpectedInput < maxSafeBorrowAmount) {
+        const adjustedInput = (loanExpectedInput * assessment.debtAmount) / minSwapOutput;
+        loanExpectedInput = adjustedInput > maxSafeBorrowAmount ? maxSafeBorrowAmount : adjustedInput;
+
+        if (loanExpectedInput > swapInputAmount) {
+          swapInputAmount = loanExpectedInput - 100000n;
+          loanRouteData = await routerClient.fetchSwapRoute(
+            assessment.destLoanAddress,
+            swapInputAmount,
+            assessment.sourceLoanAddress,
+            slippageFrac,
+            adapterAddress,
+            bundlerAddress
+          );
+          loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
+        }
       }
     }
 
-    const loanQuotedRate = (loanExpectedOutput * 10n ** (18n + decDiff)) / loanExpectedInput;
-    const loanSlippagePct = loanOracleRate > 0n ? Number((loanOracleRate - loanQuotedRate) * 10000n / loanOracleRate) / 100 : 0.0;
+    const loanQuotedRate = loanExpectedInput > 0n ? (loanExpectedOutput * 10n ** (18n + decDiff)) / loanExpectedInput : 0n;
+    if (!loanOracleRate && loanQuotedRate > 0n) {
+      loanOracleRate = loanQuotedRate;
+    }
+    const loanPriceImpact = loanOracleRate > 0n ? Number((loanOracleRate - loanQuotedRate) * 10000n / loanOracleRate) / 100 : 0.0;
 
     return {
       loanRouteData,
       loanExpectedInput,
       loanExpectedOutput,
       loanOracleRate,
-      loanPriceImpact: loanSlippagePct
+      loanPriceImpact
     };
   }
 
@@ -170,7 +223,9 @@ export class RolloverRoutingHelper {
       const exp = 18n + BigInt(assessment.destMarketParams.loanDecimals) - BigInt(assessment.sourceMarketParams.loanDecimals);
       loanFairMarketValue = (swap.loanExpectedInput * swap.loanOracleRate) / 10n ** exp;
       loanFairValueLoss = loanFairMarketValue - swap.loanExpectedOutput;
-      const minSwapOutput = (swap.loanExpectedOutput * (10000n - strictSlippageBps)) / 10000n;
+      const minSwapOutput = swap.loanRouteData?.isCurveDirect
+        ? (swap.loanExpectedOutput * BigInt(Math.floor((100 - assessment.slippage) * 100))) / 10000n
+        : (swap.loanExpectedOutput * (10000n - strictSlippageBps)) / 10000n;
       loanWalletShortfall = flashLoanAmount - minSwapOutput;
     } else {
       loanWalletShortfall = flashLoanAmount - borrowAmount;

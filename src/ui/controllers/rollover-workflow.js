@@ -8,6 +8,8 @@ import { calculateCollateralValue, calculateLtv, calculateLeverage } from '../..
 import { buildRolloverBundle } from '../../../builders.js';
 import config from '../../../config.js';
 import { MORPHO_BLUE_ABI, ERC20_ABI } from '../../core/contracts/abis.js';
+import { LiquidityPoolService } from '../../core/services/liquidity-pool-service.js';
+import { NominalOutputResolver } from './nominal-output-resolver.js';
 import { AuditWorkflow } from './audit-workflow.js';
 
 export class RolloverWorkflow {
@@ -17,25 +19,19 @@ export class RolloverWorkflow {
    * @param {object} dependencies.swapQuoterService
    * @param {object} dependencies.simulationService
    * @param {AuditWorkflow} [dependencies.auditWorkflow]
+   * @param {LiquidityPoolService} [dependencies.poolService]
    */
-  constructor({ marketService, swapQuoterService, simulationService, auditWorkflow = new AuditWorkflow() }) {
+  constructor({ marketService, swapQuoterService, simulationService, auditWorkflow = new AuditWorkflow(), poolService = new LiquidityPoolService() }) {
     this.marketService = marketService;
     this.swapQuoterService = swapQuoterService;
     this.simulationService = simulationService;
     this.auditWorkflow = auditWorkflow;
+    this.poolService = poolService;
   }
 
-  async fetchMarketParams(marketId) {
-    return await this.marketService.fetchMarketParams(marketId);
-  }
-
-  async checkCollateralMaturity(client, collateralAddress) {
-    return await this.marketService.checkCollateralMaturity(client, collateralAddress);
-  }
-
-  async fetchMorphoPosition(publicClient, marketId, userAddress) {
-    return await this.marketService.fetchPosition(publicClient, marketId, userAddress);
-  }
+  fetchMarketParams(marketId) { return this.marketService.fetchMarketParams(marketId); }
+  checkCollateralMaturity(client, collateralAddress) { return this.marketService.checkCollateralMaturity(client, collateralAddress); }
+  fetchMorphoPosition(publicClient, marketId, userAddress) { return this.marketService.fetchPosition(publicClient, marketId, userAddress); }
 
   async fetchSwapRoute(inputToken, inputAmount, outputToken, slippage, receiver, sender = null) {
     const slippageBps = slippage <= 1 ? Math.round(slippage * 10000) : slippage;
@@ -99,23 +95,16 @@ export class RolloverWorkflow {
     let loanExpectedOutput = 0n;
 
     if (!isSameLoan) {
-      const executionSlippage = Number(strictSlippageBps) / 10000;
+      const decDiff = BigInt(destMarketParams.loanDecimals) - BigInt(sourceMarketParams.loanDecimals);
+      const exp = 18n + BigInt(destMarketParams.loanDecimals) - BigInt(sourceMarketParams.loanDecimals);
+      let loanOracleRate = 0n;
 
-      const guessAmount = (debtAmount * 10n ** BigInt(destMarketParams.loanDecimals)) / 10n ** BigInt(sourceMarketParams.loanDecimals);
-      const nominalInput = guessAmount > 0n ? guessAmount : 10n ** BigInt(destMarketParams.loanDecimals);
-
-      const nominalRoute = await this.fetchSwapRoute(
-        destLoanAddress,
-        nominalInput,
-        sourceLoanAddress,
-        executionSlippage,
-        config.ETHER_GENERAL_ADAPTER_1,
-        config.MORPHO_BUNDLER_V3
-      );
-
-      const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
-      const desiredOutput = (debtAmount * 10000n) / (10000n - strictSlippageBps);
-      loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
+      if (oldOraclePrice && newOraclePrice) {
+        loanOracleRate = (oldOraclePrice * 10n ** exp) / newOraclePrice;
+        const estimatedInput = (debtAmount * 10n ** 18n * 10n ** decDiff) / loanOracleRate;
+        const slippageBuffer = strictSlippageBps > 0n ? strictSlippageBps : 50n;
+        loanExpectedInput = (estimatedInput * (10000n + slippageBuffer)) / 10000n;
+      }
 
       const targetLltv = destMarketParams.lltv;
       const safeLtv = targetLltv - 5000000000000000n;
@@ -131,21 +120,71 @@ export class RolloverWorkflow {
         }
       }
 
-      loanRouteData = await this.fetchSwapRoute(
-        destLoanAddress,
-        loanExpectedInput,
-        sourceLoanAddress,
-        executionSlippage,
-        config.MORPHO_BUNDLER_V3,
-        config.MORPHO_BUNDLER_V3
-      );
-      loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
+      let curvePool = null;
+      if (this.poolService && publicClient) {
+        const probeAmount = loanExpectedInput > 0n ? loanExpectedInput : 10n ** BigInt(destMarketParams.loanDecimals);
+        curvePool = await this.poolService.findCurvePoolAndIndices(
+          publicClient,
+          destLoanAddress,
+          sourceLoanAddress,
+          probeAmount
+        );
+      }
+
+      if (curvePool) {
+        loanRouteData = {
+          isCurveDirect: true,
+          poolAddress: curvePool.poolAddress,
+          i: curvePool.i,
+          j: curvePool.j,
+          indexType: curvePool.indexType
+        };
+        loanExpectedOutput = curvePool.expectedOutput;
+      } else {
+        const executionSlippage = Number(strictSlippageBps) / 10000;
+        if (!loanExpectedInput || !loanOracleRate) {
+          const guessAmount = (debtAmount * 10n ** BigInt(destMarketParams.loanDecimals)) / 10n ** BigInt(sourceMarketParams.loanDecimals);
+          const nominalInput = guessAmount > 0n ? guessAmount : 10n ** BigInt(destMarketParams.loanDecimals);
+
+          const nominalRoute = await this.fetchSwapRoute(
+            destLoanAddress,
+            nominalInput,
+            sourceLoanAddress,
+            executionSlippage,
+            config.ETHER_GENERAL_ADAPTER_1,
+            config.MORPHO_BUNDLER_V3
+          );
+
+          const nominalOutput = BigInt(nominalRoute.outputs[0].amount);
+          const desiredOutput = (debtAmount * 10000n) / (10000n - strictSlippageBps);
+          loanExpectedInput = (desiredOutput * nominalInput) / nominalOutput;
+
+          if (loanExpectedInput > maxSafeBorrowAmount) {
+            if (capBorrow) {
+              loanExpectedInput = maxSafeBorrowAmount;
+            } else {
+              const projectedLtv = calculateLtv(loanExpectedInput, newCollateralValue);
+              throw new Error(`Projected Target LTV (${projectedLtv.toFixed(2)}%) exceeds Target Market LLTV (${(Number(targetLltv) / 1e16).toFixed(2)}%). Rollover would revert on-chain.`);
+            }
+          }
+        }
+
+        loanRouteData = await this.fetchSwapRoute(
+          destLoanAddress,
+          loanExpectedInput,
+          sourceLoanAddress,
+          executionSlippage,
+          config.MORPHO_BUNDLER_V3,
+          config.MORPHO_BUNDLER_V3
+        );
+        loanExpectedOutput = BigInt(loanRouteData.outputs[0].amount);
+      }
     }
 
     let actualCollateralOutput = null;
     let actualLoanOutput = null;
 
-    if ((!isSameCollateral || !isSameLoan) && rpcUrl) {
+    if ((!isSameCollateral || (!isSameLoan && !loanRouteData?.isCurveDirect)) && rpcUrl) {
       // Phase 1 Nominal Simulation to discover post-swap balances
       const nominalResult = buildRolloverBundle({
         sourceMarketParams,
@@ -170,109 +209,17 @@ export class RolloverWorkflow {
         actualCollateralOutput: null
       });
 
-      const calls = [];
-      let collateralBeforeIdx = -1;
-      let userBalanceBeforeIdx = -1;
-
-      if (!isSameCollateral) {
-        calls.push({
-          from: userAddress,
-          to: config.MORPHO_BLUE,
-          value: '0x0',
-          data: encodeFunctionData({
-            abi: MORPHO_BLUE_ABI,
-            functionName: 'position',
-            args: [params.destMarketId, userAddress]
-          })
-        });
-        collateralBeforeIdx = calls.length - 1;
-      }
-
-      if (!isSameLoan) {
-        calls.push({
-          from: userAddress,
-          to: sourceMarketParams.loanToken,
-          value: '0x0',
-          data: encodeFunctionData({
-            abi: ERC20_ABI,
-            functionName: 'balanceOf',
-            args: [userAddress]
-          })
-        });
-        userBalanceBeforeIdx = calls.length - 1;
-      }
-
-      // Add main bundle execution
-      calls.push({
-        from: userAddress,
-        to: config.MORPHO_BUNDLER_V3,
-        value: '0x0',
-        data: nominalResult.finalCalldata
+      const resolved = await NominalOutputResolver.resolve({
+        rpcUrl,
+        userAddress,
+        destMarketId: params.destMarketId,
+        sourceMarketParams,
+        isSameCollateral,
+        isSameLoan,
+        nominalResult
       });
-
-      const afterCollatIdx = calls.length;
-      if (!isSameCollateral) {
-        calls.push({
-          from: userAddress,
-          to: config.MORPHO_BLUE,
-          value: '0x0',
-          data: encodeFunctionData({
-            abi: MORPHO_BLUE_ABI,
-            functionName: 'position',
-            args: [params.destMarketId, userAddress]
-          })
-        });
-      }
-
-      const afterLoanIdx = calls.length;
-      if (!isSameLoan) {
-        calls.push({
-          from: userAddress,
-          to: sourceMarketParams.loanToken,
-          value: '0x0',
-          data: encodeFunctionData({
-            abi: ERC20_ABI,
-            functionName: 'balanceOf',
-            args: [userAddress]
-          })
-        });
-      }
-
-      const blockTag = (typeof process !== 'undefined' && process.env.FORK_BLOCK_NUMBER)
-        ? (process.env.FORK_BLOCK_NUMBER.startsWith('0x') ? process.env.FORK_BLOCK_NUMBER : `0x${BigInt(process.env.FORK_BLOCK_NUMBER).toString(16)}`)
-        : 'latest';
-
-      const res = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'eth_simulateV1',
-          params: [{ blockStateCalls: [{ calls }] }, blockTag]
-        })
-      });
-
-      const resJson = await res.json();
-      if (!resJson.error && resJson.result?.[0]?.calls) {
-        const traceCalls = resJson.result[0].calls;
-        if (!isSameCollateral && traceCalls[afterCollatIdx] && traceCalls[collateralBeforeIdx]) {
-          const before = decodeAbiParameters(
-            [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }],
-            traceCalls[collateralBeforeIdx].returnData || '0x0'
-          );
-          const after = decodeAbiParameters(
-            [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }],
-            traceCalls[afterCollatIdx].returnData || '0x0'
-          );
-          actualCollateralOutput = BigInt(after[2] || 0n) - BigInt(before[2] || 0n);
-        }
-        if (!isSameLoan && traceCalls[afterLoanIdx] && traceCalls[userBalanceBeforeIdx]) {
-          const bBefore = BigInt(traceCalls[userBalanceBeforeIdx].returnData || '0x0');
-          const bAfter = BigInt(traceCalls[afterLoanIdx].returnData || '0x0');
-          actualLoanOutput = nominalResult.flashLoanAmount + (bAfter - bBefore);
-        }
-      }
+      actualCollateralOutput = resolved.actualCollateralOutput;
+      actualLoanOutput = resolved.actualLoanOutput;
     }
 
     // Phase 2 Final Bundle Construction

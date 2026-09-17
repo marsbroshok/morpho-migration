@@ -5,7 +5,7 @@
 import { encodeFunctionData as defaultEncodeFunctionData, encodeAbiParameters as defaultEncodeAbiParameters, keccak256 as defaultKeccak256 } from 'viem';
 import { ApprovalBuilder, ERC20_ABI } from './approval-builder.js';
 import { LiquidityPoolService } from '../services/liquidity-pool-service.js';
-import { BUNDLER_ABI, ADAPTER_ABI } from '../contracts/abis.js';
+import { BUNDLER_ABI, ADAPTER_ABI, getCurvePoolExchangeAbi } from '../contracts/abis.js';
 
 /**
  * Builds multicall bundles for Morpho Blue position rollovers (full and partial).
@@ -250,21 +250,53 @@ export class RolloverBundleBuilder {
 
     // Call G & H: Only if loan assets are different
     if (!isSameLoan) {
-      const spenders = this.approvalBuilder.getSpendersToApprove(loanRouteData);
-      for (const spender of spenders) {
-        this.approvalBuilder.appendApprovals(reenterBundle, destMarketParams.loanToken, spender, encodeFunctionData);
+      let resolvedOutput = 0n;
+
+      if (loanRouteData?.isCurveDirect) {
+        const CurvePool = loanRouteData.poolAddress;
+        reenterBundle.push({
+          to: destMarketParams.loanToken,
+          data: encodeFunctionData({
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [CurvePool, 2n ** 256n - 1n]
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+        });
+
+        const minSwapOutput = (loanExpectedOutput * BigInt(Math.floor((100 - slippage) * 100))) / 10000n;
+        resolvedOutput = actualLoanOutput !== null ? actualLoanOutput : loanExpectedOutput;
+
+        reenterBundle.push({
+          to: CurvePool,
+          data: encodeFunctionData({
+            abi: getCurvePoolExchangeAbi(loanRouteData.indexType),
+            functionName: 'exchange',
+            args: [loanRouteData.i, loanRouteData.j, loanExpectedInput, minSwapOutput]
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+        });
+      } else {
+        const spenders = this.approvalBuilder.getSpendersToApprove(loanRouteData);
+        for (const spender of spenders) {
+          this.approvalBuilder.appendApprovals(reenterBundle, destMarketParams.loanToken, spender, encodeFunctionData);
+        }
+
+        // Execute swap (settles directly to Bundler)
+        reenterBundle.push({
+          to: loanRouteData.tx.to,
+          data: loanRouteData.tx.data,
+          value: 0n,
+          skipRevert: false,
+          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+        });
+
+        resolvedOutput = actualLoanOutput !== null ? actualLoanOutput : (loanExpectedOutput !== undefined ? BigInt(loanExpectedOutput) : BigInt(loanRouteData.outputs[0].amount));
       }
-
-      // Execute swap (settles directly to Bundler)
-      reenterBundle.push({
-        to: loanRouteData.tx.to,
-        data: loanRouteData.tx.data,
-        value: 0n,
-        skipRevert: false,
-        callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
-      });
-
-      const resolvedOutput = actualLoanOutput !== null ? actualLoanOutput : (loanExpectedOutput !== undefined ? BigInt(loanExpectedOutput) : BigInt(loanRouteData.outputs[0].amount));
 
       // Transfer swap output from Bundler to Adapter
       reenterBundle.push({

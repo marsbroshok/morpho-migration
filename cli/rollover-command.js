@@ -37,11 +37,11 @@ export class RolloverCommand {
     this.slippageService = new SlippageService();
   }
 
-  async findCurvePoolAndIndices(fromToken, toToken, amount) {
+  findCurvePoolAndIndices(fromToken, toToken, amount) {
     return this.poolService.findCurvePoolAndIndices(this.blockchainClient.publicClient, fromToken, toToken, amount, getAddress);
   }
 
-  async findUniswapV3Pool(tokenAddress) {
+  findUniswapV3Pool(tokenAddress) {
     return this.poolService.findUniswapV3Pool(this.blockchainClient.publicClient, tokenAddress, getAddress);
   }
 
@@ -53,8 +53,10 @@ export class RolloverCommand {
     const sourceMarketId = options.oldMarketId;
     const destMarketId = options.newMarketId;
 
-    const sourceMarketParams = await this.blockchainClient.fetchMarketParams(sourceMarketId);
-    const destMarketParams = await this.blockchainClient.fetchMarketParams(destMarketId);
+    const [sourceMarketParams, destMarketParams] = await Promise.all([
+      this.blockchainClient.fetchMarketParams(sourceMarketId),
+      this.blockchainClient.fetchMarketParams(destMarketId)
+    ]);
 
     const sourceLoanAddress = getAddress(sourceMarketParams.loanToken);
     const destLoanAddress = getAddress(destMarketParams.loanToken);
@@ -62,9 +64,7 @@ export class RolloverCommand {
     const destCollateralAddress = getAddress(destMarketParams.collateralToken);
 
     const position = await this.blockchainClient.fetchMorphoPosition(sourceMarketId, userAddress);
-    const liveCollateral = position.collateral;
-    const liveDebt = position.debt;
-    const liveBorrowShares = position.borrowShares;
+    const { collateral: liveCollateral, debt: liveDebt, borrowShares: liveBorrowShares } = position;
 
     if (liveCollateral === 0n) {
       throw new Error(`User does not have an active collateral position in market ${sourceMarketId}`);
@@ -86,10 +86,6 @@ export class RolloverCommand {
       collateralAmount = (liveCollateral * debtAmount) / liveDebt;
     }
 
-    const sourceCollateralSymbol = options.oldCollateralSymbol || sourceMarketParams.collateralSymbol || 'PT-old';
-    const sourceLoanSymbol = options.oldLoanSymbol || sourceMarketParams.loanSymbol || 'USDC';
-    const destCollateralSymbol = options.newCollateralSymbol || destMarketParams.collateralSymbol || 'PT-new';
-    const destLoanSymbol = options.newLoanSymbol || destMarketParams.loanSymbol || 'USDC';
     const maturity = await this.blockchainClient.checkCollateralMaturity(sourceCollateralAddress);
 
     return {
@@ -105,15 +101,15 @@ export class RolloverCommand {
       destCollateralAddress,
       oldMarket: {
         collateralToken: sourceMarketParams.collateralToken,
-        collateralSymbol: sourceCollateralSymbol,
+        collateralSymbol: options.oldCollateralSymbol || sourceMarketParams.collateralSymbol || 'PT-old',
         loanToken: sourceMarketParams.loanToken,
-        loanSymbol: sourceLoanSymbol
+        loanSymbol: options.oldLoanSymbol || sourceMarketParams.loanSymbol || 'USDC'
       },
       newMarket: {
         collateralToken: destMarketParams.collateralToken,
-        collateralSymbol: destCollateralSymbol,
+        collateralSymbol: options.newCollateralSymbol || destMarketParams.collateralSymbol || 'PT-new',
         loanToken: destMarketParams.loanToken,
-        loanSymbol: destLoanSymbol
+        loanSymbol: options.newLoanSymbol || destMarketParams.loanSymbol || 'USDC'
       },
       maturity,
       position: {
@@ -199,11 +195,14 @@ export class RolloverCommand {
     if (!isSameLoan) {
       crossLoan = await RolloverRoutingHelper.solveCrossLoanRoute({
         routerClient: this.routerClient,
+        poolService: this.poolService,
+        publicClient: this.blockchainClient.publicClient,
         assessment,
         strictSlippageBps,
         slippageFrac,
         expectedNewCollateral,
         newOraclePrice,
+        oldOraclePrice,
         ltvCalculator: this.ltvCalculator,
         options,
         bundlerAddress: MORPHO_BUNDLER_V3,
@@ -273,7 +272,8 @@ export class RolloverCommand {
     };
 
     let bundleResult;
-    if (!swap.isSameCollateral || !swap.isSameLoan) {
+    const needsOutputSimulation = !swap.isSameCollateral || (!swap.isSameLoan && !swap.loanRouteData?.isCurveDirect);
+    if (needsOutputSimulation) {
       const nominalResult = this.rolloverBuilder.buildRolloverBundle(buildArgs);
       const { actualCollateralOutput, actualLoanOutput } = await RolloverSimulationHelper.resolveActualOutputs({
         simulationEngine: this.simulationEngine,

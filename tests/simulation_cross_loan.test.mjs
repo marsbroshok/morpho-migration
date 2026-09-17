@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { getAddress, encodeFunctionData } from 'viem';
 import { BlockchainClient } from '../cli/blockchain-client.js';
-import { findUniswapV3Pool, ERC20_ABI } from '../builders.js';
+import { findUniswapV3Pool, ERC20_ABI, BUNDLER_ABI } from '../builders.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,7 +42,7 @@ if (!apiKey) {
 }
 
 const ALCHEMY_RPC_URL = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`;
-const blockchainClient = new BlockchainClient({ transportUrl: ALCHEMY_RPC_URL });
+const blockchainClient = new BlockchainClient(ALCHEMY_RPC_URL, null);
 
 async function buildPrependCalls() {
   const prependCalls = [];
@@ -55,6 +55,25 @@ async function buildPrependCalls() {
     blockchainClient.fetchMarketParams(oldMarketId),
     blockchainClient.fetchMarketParams(newMarketId)
   ]);
+
+  const poolWhale = await findUniswapV3Pool(blockchainClient.publicClient, oldMarketParams.loanToken, getAddress);
+  if (poolWhale) {
+    const decimals = await blockchainClient.publicClient.readContract({
+      address: oldMarketParams.loanToken,
+      abi: [{ inputs: [], name: 'decimals', outputs: [{ type: 'uint8' }], stateMutability: 'view', type: 'function' }],
+      functionName: 'decimals'
+    });
+    prependCalls.push({
+      from: poolWhale,
+      to: oldMarketParams.loanToken,
+      value: '0x0',
+      data: encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: 'transfer',
+        args: [TEST_USER_ADDRESS, 10000n * 10n ** BigInt(decimals)]
+      })
+    });
+  }
 
   const tokensToApprove = [oldMarketParams.loanToken, newMarketParams.loanToken];
   const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
@@ -93,6 +112,36 @@ async function buildPrependCalls() {
         }],
         functionName: 'approve',
         args: [token, ADAPTER_ADDRESS, 2n ** 160n - 1n, 2 ** 32 - 1]
+      })
+    });
+  }
+  
+  // Ensure intermediate bundler starts with 0 balance per Rule 7
+  const initialBundlerApxBal = await blockchainClient.publicClient.readContract({
+    address: getAddress('0x98A878b1Cd98131B271883b390f68D2c90674665'),
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: [getAddress('0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245')]
+  });
+  if (initialBundlerApxBal > 0n) {
+    prependCalls.push({
+      from: TEST_USER_ADDRESS,
+      to: getAddress('0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245'),
+      value: '0x0',
+      data: encodeFunctionData({
+        abi: BUNDLER_ABI,
+        functionName: 'multicall',
+        args: [[{
+          to: getAddress('0x98A878b1Cd98131B271883b390f68D2c90674665'),
+          data: encodeFunctionData({
+            abi: ERC20_ABI,
+            functionName: 'transfer',
+            args: [getAddress('0x000000000000000000000000000000000000dEaD'), initialBundlerApxBal]
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: '0x0000000000000000000000000000000000000000000000000000000000000000'
+        }]]
       })
     });
   }
