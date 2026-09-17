@@ -28,7 +28,7 @@
 
 ---
 
-## Phase 2: Hermetic Test Suite & Scratch Script Purge
+## Phase 2: Hermetic Test Suite & Scratch Script Purge [checkpoint: 1a63248]
 
 - [x] Task: Purge Ad-Hoc Scratch Scripts from `tests/` [69fecd5]
   - [x] Triage ad-hoc files in `tests/`: `check_decimals.mjs`, `check_market_details.mjs`, `check_market_hash.mjs`, `check_morpho_params.mjs`, `check_token_name.mjs`, `debug_allowance.js`, `debug_allowance.mjs`, `test_borrow_balance.mjs`, `test_pendle_swap_direct.mjs`, `test_permit2_transfer.mjs`, `trace_simulation.mjs`, `simulation_payload.json`
@@ -40,7 +40,7 @@
   - [x] Reproduce the failure in `tests/simulation.test.mjs:356` under unpinned conditions
   - [x] Update `tests/simulation.test.mjs` and `tests/simulation_cross_loan.test.mjs` to set and use pinned `FORK_BLOCK_NUMBER` before viem client instantiation while respecting pre-defined environment variables
   - [x] Run full test suite (`npm test --prefix tests && node tests/cli.test.mjs`) to verify deterministic exit code 0
-- [ ] Task: Phase Verification & Checkpoint (Refer to workflow.md)
+- [x] Task: Phase Verification & Checkpoint (Refer to workflow.md) [1a63248]
 
 ---
 
