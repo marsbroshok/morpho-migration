@@ -2,3 +2,12 @@ Task: Implement Hard Circuit Breakers in CLI and Web UI (Green Phase)
 Summary: Implemented pre-flight simulation leak circuit breakers across CLI and Web UI. In cli/leverage-command.js, passed tokensToCheck and aborted if residual leaks exist. In cli/rollover-command.js, inspected simResult.leaks and aborted with [SECURITY ALERT] before broadcast/presentation. In src/ui/components/position-preview.js, disabled confirmExecuteBtn and displayed [SECURITY ALERT] banner on leaks. In src/ui/controllers/rollover-workflow.js and leverage-workflow.js, added validateSimulationLeaks. In app.js, guarded confirmAndSubmitTransaction.
 Modified files: cli/leverage-command.js, cli/rollover-command.js, src/ui/components/position-preview.js, src/ui/controllers/rollover-workflow.js, src/ui/controllers/leverage-workflow.js, app.js
 Why: Close vulnerability SEC-03 to guarantee hard fail-fast execution aborts whenever peripheral contracts retain user collateral or borrowed debt.
+
+Phase Verification Report: Phase 2: Pre-Flight Simulation Circuit Breakers in CLI & UI (TDD)
+Automated Tests Executed: CI=true npm test --prefix tests && node tests/cli.test.mjs
+Manual Verification Plan:
+1. Verify Circuit Breakers via Automated Harness: Execute node tests/leak_circuit_breaker.test.mjs to verify that CLI commands (rollover, leverage) and UI controllers immediately abort execution and report [SECURITY ALERT] when residual contract balances are returned.
+2. Inspect UI Execution Disabling: Verify PositionPreview disables confirmExecuteBtn and renders alert banner on positive leaks.
+3. Confirm that all circuit breaker test suites pass with exit code 0, preventing broadcast of leaking transactions.
+User Confirmation: Explicitly approved via interactive modal.
+Status: PASSED
