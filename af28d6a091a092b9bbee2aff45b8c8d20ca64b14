@@ -1,0 +1,1 @@
+Phase 3 Task 5 completed: Synchronized RolloverCommand and LeverageCommand with src/core/ builders and math services. Decomposed simulation prep and cross-loan routing into modular helpers (RolloverSimulationHelper, RolloverRoutingHelper, LeverageHelper). All modules strictly < 400 lines. All CLI unit, integration, and fork simulation tests passing with 0 regressions.
