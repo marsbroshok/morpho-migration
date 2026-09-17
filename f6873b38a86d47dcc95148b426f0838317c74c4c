@@ -5,3 +5,10 @@ Task: Remove Oracle Ratio Shortcut and Enforce 2-Step Iterative Quoter (Green Ph
 - Updated cli/rollover-command.js to parse partial debt using ScalingService.parseUnits for high-precision BigInt arithmetic
 - Maintained all modified modules strictly under 400 lines (cli/rollover-command.js: 394, cli/rollover-routing-helper.js: 239, src/ui/controllers/rollover-workflow.js: 329)
 - All 22 test suites and fork simulations passed deterministically
+
+Phase 3 Checkpoint Verification Report:
+- Automated Tests: npm test --prefix tests && node tests/cli.test.mjs passed with exit code 0 across 22 test suites
+- Scope: cli/rollover-routing-helper.js, src/ui/controllers/rollover-workflow.js, cli/rollover-command.js, tests/cross_loan_routing.test.mjs
+- Invariant Compliance: ADR-0003 two-step iterative swap solver strictly enforced; zero reliance on collateral oracle price ratios; exact analytical BigInt calculations
+- Manual & Integration Verification: Simulation cross-loan fork test passed with 0 contract leaks
+- User Confirmation: Approved
