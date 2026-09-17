@@ -1,0 +1,4 @@
+Task: Implement Rational BigInt Sizing and Dynamic LLTV in LtvCalculator (Green Phase)
+Summary: Refactored LtvCalculator.calculateLeverageAdjustmentParams to compute target LTV and exact token adjustments using pure rational BigInt arithmetic without IEEE-754 binary floating-point drift, implemented calculateMaxSafeLeverage(lltv, bufferBps) with configurable safety buffer, enforced dynamic safe ceilings based on market LLTV, and exported calculateMaxSafeLeverage in math.js.
+Modified files: src/core/math/ltv-calculator.js, math.js
+Why: Resolves MATH-03, MATH-04, and TEST-02 to ensure exact analytical leverage math and dynamic LLTV boundary enforcement.
