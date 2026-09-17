@@ -1,0 +1,6 @@
+Task: Standardize Slippage to slippageBps in Builders (Green Phase)
+- Injected SlippageService into RolloverBundleBuilder constructor
+- Standardized slippage input to integer basis points (slippageBps) with backwards-compatible fallback
+- Delegated minSwapOutput calculation to SlippageService.applySlippageTolerance
+- Extracted createBundleStep helper to maintain module size strictly under 400 lines (372 lines)
+- Verified with unit tests in tests/builder_services.test.mjs and tests/builders.test.mjs
