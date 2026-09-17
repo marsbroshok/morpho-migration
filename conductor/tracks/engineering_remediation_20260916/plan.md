@@ -52,13 +52,13 @@
   - [x] Implement `src/core/math/scaling-service.js` (< 400 lines) with dynamic decimal resolution
   - [x] Implement `src/core/math/slippage-service.js` (< 400 lines) with native BigInt basis points calculations
   - [x] Execute tests to confirm all mathematical services pass
-- [ ] Task: Decompose Transaction Builders (TDD)
-  - [ ] Write unit tests for decomposed transaction builders in `tests/`
-  - [ ] Implement `src/core/builders/approval-builder.js` (< 400 lines) handling ERC20 and Permit2 two-layer checks
-  - [ ] Implement `src/core/builders/rollover-bundle-builder.js` (< 400 lines) assembling flashloan + unwind + swap + supply
-  - [ ] Implement `src/core/builders/leverage-bundle-builder.js` (< 400 lines) assembling leverage up and deleverage calldata
-  - [ ] Refactor `builders.js` to delegate to `src/core/builders/` while preserving backward compatibility
-  - [ ] Execute tests to confirm builder tests pass
+- [x] Task: Decompose Transaction Builders (TDD) [0574448]
+  - [x] Write unit tests for decomposed transaction builders in `tests/`
+  - [x] Implement `src/core/builders/approval-builder.js` (< 400 lines) handling ERC20 and Permit2 two-layer checks
+  - [x] Implement `src/core/builders/rollover-bundle-builder.js` (< 400 lines) assembling flashloan + unwind + swap + supply
+  - [x] Implement `src/core/builders/leverage-bundle-builder.js` (< 400 lines) assembling leverage up and deleverage calldata
+  - [x] Refactor `builders.js` to delegate to `src/core/builders/` while preserving backward compatibility
+  - [x] Execute tests to confirm builder tests pass
 - [ ] Task: Decompose Core Services: Market, Swap Quoter, and Simulation (TDD)
   - [ ] Write unit tests for decomposed core services in `tests/`
   - [ ] Implement `src/core/services/morpho-market-service.js` (< 400 lines) for market queries, params, and oracle rates
