@@ -1,0 +1,4 @@
+Task: Write Failing Tests for Simulation Leak Circuit Breakers (Red Phase)
+Summary: Added tests in tests/leak_circuit_breaker.test.mjs covering SEC-03 circuit breakers across CLI RolloverCommand, CLI LeverageCommand (including tokensToCheck assertion), UI PositionPreview execution disabling, and UI workflow controllers (RolloverWorkflow, LeverageWorkflow).
+Modified files: tests/package.json, tests/leak_circuit_breaker.test.mjs
+Why: Fulfill TDD Red Phase to ensure hard aborts with descriptive [SECURITY ALERT] messages are verified before implementing the circuit breakers.
