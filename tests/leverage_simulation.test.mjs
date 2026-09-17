@@ -12,11 +12,8 @@ const __dirname = path.dirname(__filename);
 
 console.log('Running JSDOM live transaction leverage simulation integration tests...');
 
-// 1. Pin fork block before creating clients or reading storage
-if (!process.env.FORK_BLOCK_NUMBER) {
-  process.env.FORK_BLOCK_NUMBER = "25879150";
-}
-console.log(`Pinning mainnet fork block number to: ${process.env.FORK_BLOCK_NUMBER}`);
+// 1. Fork block configuration
+console.log(`Mainnet fork block number: ${process.env.FORK_BLOCK_NUMBER || 'latest'}`);
 
 // 2. Fetch Alchemy API Key
 let apiKey = process.env.ALCHEMY_API_KEY;
@@ -128,7 +125,7 @@ Object.defineProperty(dom.window, 'localStorage', {
 global.localStorage = mockLocalStorage;
 
 // Constants & mutable test state
-let TEST_USER_ADDRESS = '0xF0A6e66B4396a70eE0620064da847821BeE70731'; // Old market user (for deleveraging)
+let TEST_USER_ADDRESS = '0x5ae593c3AD638ce07877813a7552ce02E4AC5d3c'; // Old market active position holder
 const MORPHO_BLUE = config.MORPHO_BLUE;
 const BUNDLER_ADDRESS = config.MORPHO_BUNDLER_V3;
 const ADAPTER_ADDRESS = config.ETHER_GENERAL_ADAPTER_1;
@@ -378,6 +375,7 @@ try {
     console.error("Status Element Text on Failure:", document.getElementById('status').innerText);
   }
   assert.ok(calldata, "Deleveraging calldata should be generated");
+  console.log("Calldata generated (length:", calldata.length, "):", calldata.slice(0, 100) + "...");
 
   let txPayload = { to: BUNDLER_ADDRESS, data: calldata, value: 0n };
   console.log("Simulating deleveraging transaction via Alchemy eth_simulateV1...");
