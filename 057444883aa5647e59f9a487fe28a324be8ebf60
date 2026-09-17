@@ -1,0 +1,1 @@
+Phase 3 Task 2: Decomposed monolithic builders.js into modular classes: ApprovalBuilder, LeverageBundleBuilder, RolloverBundleBuilder, and LiquidityPoolService, with centralized ABIs in src/core/contracts/abis.js. Verified with tests/builder_services.test.mjs and full test suites.
