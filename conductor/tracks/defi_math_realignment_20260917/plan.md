@@ -21,7 +21,7 @@
 
 ---
 
-## Phase 2: Slippage Unit Standardization & SlippageService Delegation (TDD)
+## Phase 2: Slippage Unit Standardization & SlippageService Delegation (TDD) [checkpoint: fca134a]
 
 - [x] Task: Write Failing Tests for Slippage Tolerance in Builders (Red Phase) 280b595
   - [x] Add unit tests asserting that default 0.5% (50 bps) slippage translates to 9950 multiplier (not 9999) in `RolloverBundleBuilder`.
@@ -31,7 +31,7 @@
   - [x] Refactor `src/core/builders/rollover-bundle-builder.js` line 269 to delegate minimum output calculation to `SlippageService.applySlippageTolerance`.
   - [x] Standardize slippage parameters to `slippageBps` across builder function signatures with backwards compatibility.
   - [x] Run builder unit tests to confirm tests pass (Green Phase).
-- [ ] Task: Phase Verification & Checkpoint (Refer to workflow.md)
+- [x] Task: Phase Verification & Checkpoint (Refer to workflow.md) fca134a
 
 ---
 
