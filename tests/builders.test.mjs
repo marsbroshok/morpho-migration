@@ -97,8 +97,8 @@ const bundle2 = buildLeveragingUpBundle({
   MORPHO_BUNDLER_V3
 });
 
-// We expect 7 calls due to Permit2 approvals:
-assert.strictEqual(bundle2.length, 7);
+// We expect 8 calls due to Permit2 approvals:
+assert.strictEqual(bundle2.length, 8);
 
 // Let's decode Call 0 (Transfer USDC from Adapter to Bundler)
 const decodedTransfer = viemDecode({
@@ -121,7 +121,7 @@ assert.strictEqual(decodedTransfer.args[0], usdcAddress);
 assert.strictEqual(decodedTransfer.args[1], MORPHO_BUNDLER_V3);
 assert.strictEqual(decodedTransfer.args[2], debtAmount);
 
-// Let's decode Call 5 (Supply PT collateral)
+// Let's decode Call 6 (Supply PT collateral)
 const decodedSupply = viemDecode({
   abi: [
     {
@@ -147,7 +147,7 @@ const decodedSupply = viemDecode({
       "type": "function"
     }
   ],
-  data: bundle2[5].data
+  data: bundle2[6].data
 });
 assert.strictEqual(decodedSupply.args[1], 2n ** 256n - 1n);
 
