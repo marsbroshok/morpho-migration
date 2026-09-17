@@ -46,12 +46,12 @@
 
 ## Phase 3: Modular Object-Oriented Architecture Refactoring
 
-- [ ] Task: Decompose Mathematical and Sizing Services (TDD)
-  - [ ] Write unit tests for `LtvCalculator`, `ScalingService`, and `SlippageService` in `tests/`
-  - [ ] Implement `src/core/math/ltv-calculator.js` (< 400 lines) with multi-decimal scaling and health factor math
-  - [ ] Implement `src/core/math/scaling-service.js` (< 400 lines) with dynamic decimal resolution
-  - [ ] Implement `src/core/math/slippage-service.js` (< 400 lines) with native BigInt basis points calculations
-  - [ ] Execute tests to confirm all mathematical services pass
+- [x] Task: Decompose Mathematical and Sizing Services (TDD) [01f87e3]
+  - [x] Write unit tests for `LtvCalculator`, `ScalingService`, and `SlippageService` in `tests/`
+  - [x] Implement `src/core/math/ltv-calculator.js` (< 400 lines) with multi-decimal scaling and health factor math
+  - [x] Implement `src/core/math/scaling-service.js` (< 400 lines) with dynamic decimal resolution
+  - [x] Implement `src/core/math/slippage-service.js` (< 400 lines) with native BigInt basis points calculations
+  - [x] Execute tests to confirm all mathematical services pass
 - [ ] Task: Decompose Transaction Builders (TDD)
   - [ ] Write unit tests for decomposed transaction builders in `tests/`
   - [ ] Implement `src/core/builders/approval-builder.js` (< 400 lines) handling ERC20 and Permit2 two-layer checks
