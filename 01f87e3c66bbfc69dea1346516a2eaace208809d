@@ -1,0 +1,1 @@
+Phase 3 Task 1: Decomposed mathematical and sizing logic into ScalingService, LtvCalculator, and SlippageService core classes under src/core/math/ (< 400 lines each), refactored math.js into a backward-compatible delegation facade, authored unit tests in tests/math_services.test.mjs, and verified full 100% passing test suite across all 15 test suites.
