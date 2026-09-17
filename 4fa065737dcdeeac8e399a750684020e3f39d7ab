@@ -2,3 +2,12 @@ Task: Implement Terminal Sweeps in Leverage and Rollover Builders (Green Phase)
 Summary: Implemented terminal sweeps using 2n ** 256n - 1n in LeverageBundleBuilder, RolloverBundleBuilder, LeverageHelper, and leverage-workflow to sweep unspent loan and collateral tokens directly to userAddress after execution.
 Modified files: src/core/builders/leverage-bundle-builder.js, src/core/builders/rollover-bundle-builder.js, cli/leverage-helper.js, src/ui/controllers/leverage-workflow.js, tests/builders.test.mjs, tests/builder_services.test.mjs, tests/preview_workflow.test.mjs
 Why: Close vulnerability SEC-01 and SEC-02 to prevent positive swap slippage or collateral dust from leaking into shared peripheral contracts.
+
+Phase Verification Report: Phase 1: Transaction Builder Terminal Sweeps (TDD)
+Automated Tests Executed: CI=true npm test --prefix tests && node tests/cli.test.mjs
+Manual Verification Plan:
+1. Verify Unit & Service Test Coverage for terminal sweep assertions in buildDeleveragingBundle, buildLeveragingUpBundle, and buildRolloverBundle.
+2. Inspect Generated Calldata Decoding to confirm erc20Transfer(token, userAddress, 2n ** 256n - 1n) calls are present at the end of each multicall sequence.
+3. Confirm clean simulation and execution with exit code 0.
+User Confirmation: Explicitly approved via interactive modal.
+Status: PASSED
