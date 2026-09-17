@@ -13,10 +13,10 @@
   - [x] Update `tests/leverage_adjust.test.mjs` with exact analytical expected values for 3.0x leverage target (3200 PT, 3040 USDC) and assert no IEEE-754 float drift.
   - [x] Add unit tests for dynamic maximum leverage calculation across different LLTV tiers (77.0%, 86.0%, 94.5%, 96.5%).
   - [x] Run test suite to verify tests fail as expected (Red Phase).
-- [ ] Task: Implement Rational BigInt Sizing and Dynamic LLTV in `LtvCalculator` (Green Phase)
-  - [ ] Refactor `src/core/math/ltv-calculator.js` to compute target LTV purely in BigInt rational math without IEEE-754 conversions.
-  - [ ] Implement `calculateMaxSafeLeverage(lltv, bufferBps)` and enforce dynamic ceilings instead of fixed 6.0x limit.
-  - [ ] Run test suite to confirm leverage adjust tests pass (Green Phase).
+- [x] Task: Implement Rational BigInt Sizing and Dynamic LLTV in `LtvCalculator` (Green Phase) 6304ed4
+  - [x] Refactor `src/core/math/ltv-calculator.js` to compute target LTV purely in BigInt rational math without IEEE-754 conversions.
+  - [x] Implement `calculateMaxSafeLeverage(lltv, bufferBps)` and enforce dynamic ceilings instead of fixed 6.0x limit.
+  - [x] Run test suite to confirm leverage adjust tests pass (Green Phase).
 - [ ] Task: Phase Verification & Checkpoint (Refer to workflow.md)
 
 ---
