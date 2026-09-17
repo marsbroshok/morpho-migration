@@ -65,19 +65,19 @@
   - [x] Implement `src/core/services/swap-quoter-service.js` (< 400 lines) for Pendle and DEX quoter dynamic queries and 2-step debt solver
   - [x] Implement `src/core/services/simulation-service.js` (< 400 lines) for `eth_simulateV1`, trace decoding, and transient balance leak assertions
   - [x] Execute tests to confirm core services pass
-- [ ] Task: Decompose UI State and UI Components
-  - [ ] Implement `src/ui/state/ui-state-store.js` (< 400 lines) providing reactive state management without undeclared global state
-  - [ ] Implement `src/ui/components/error-banner.js` (< 400 lines) for visual HTML error boundary
-  - [ ] Implement `src/ui/components/market-selector.js` (< 400 lines) for market dropdowns and PT bindings
-  - [ ] Implement `src/ui/components/position-preview.js` (< 400 lines) for summary tables and audit metrics
-  - [ ] Implement `src/ui/components/wallet-modal.js` (< 400 lines) for WalletConnect modal and connection state
-  - [ ] Implement `src/ui/app-controller.js` (< 250 lines) coordinating UI components and core services
-  - [ ] Refactor `app.js` into a lightweight entrypoint (< 250 lines) exporting initialized controllers and preserving JSDOM import interfaces
-- [ ] Task: Synchronize CLI Commands with Core Services
-  - [ ] Update `cli/rollover-command.js` to import and consume `src/core/` services
-  - [ ] Update `cli/leverage-command.js` to import and consume `src/core/` services
-  - [ ] Run `node tests/cli.test.mjs` and all CLI test suites to verify parity and 0 regressions
-- [ ] Task: Phase Verification & Checkpoint (Refer to workflow.md)
+- [x] Task: Decompose UI State and UI Components [e9a03ea]
+  - [x] Implement `src/ui/state/ui-state-store.js` (< 400 lines) providing reactive state management without undeclared global state
+  - [x] Implement `src/ui/components/error-banner.js` (< 400 lines) for visual HTML error boundary
+  - [x] Implement `src/ui/components/market-selector.js` (< 400 lines) for market dropdowns and PT bindings
+  - [x] Implement `src/ui/components/position-preview.js` (< 400 lines) for summary tables and audit metrics
+  - [x] Implement `src/ui/components/wallet-modal.js` (< 400 lines) for WalletConnect modal and connection state
+  - [x] Implement `src/ui/app-controller.js` (< 250 lines) coordinating UI components and core services
+  - [x] Refactor `app.js` into a lightweight entrypoint (< 250 lines) exporting initialized controllers and preserving JSDOM import interfaces
+- [x] Task: Synchronize CLI Commands with Core Services [af28d6a]
+  - [x] Update `cli/rollover-command.js` to import and consume `src/core/` services
+  - [x] Update `cli/leverage-command.js` to import and consume `src/core/` services
+  - [x] Run `node tests/cli.test.mjs` and all CLI test suites to verify parity and 0 regressions
+- [x] Task: Phase Verification & Checkpoint (Refer to workflow.md)
 
 ---
 
