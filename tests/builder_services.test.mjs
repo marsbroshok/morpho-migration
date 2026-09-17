@@ -101,6 +101,102 @@ console.log('✅ LeverageBundleBuilder unit tests passed');
 // 3. RolloverBundleBuilder Tests
 const rolloverBuilder = new RolloverBundleBuilder(approvalBuilder);
 assert.ok(typeof rolloverBuilder.buildRolloverBundle === 'function', 'buildRolloverBundle should be a function');
+
+const mockDestMarketParams = {
+  loanToken: '0x6B175474E89094C44Da98b954EedeAC495271d0F', // DAI
+  collateralToken: '0x3365554a61CeFF74A76528f9e86C1E87946d16a5',
+  oracle: '0x0000000000000000000000000000000000000001',
+  irm: '0x0000000000000000000000000000000000000002',
+  lltv: 860000000000000000n,
+  loanDecimals: 18
+};
+const mockSourceMarketParams = {
+  ...mockMarketParams,
+  loanDecimals: 6
+};
+
+const mockLoanRouteDataCurve = {
+  isCurveDirect: true,
+  poolAddress: '0x0000000000000000000000000000000000000099',
+  indexType: 'int128',
+  i: 0,
+  j: 1
+};
+
+const expectedOutputAmount = 10000000000n;
+
+// Test 3.1: Default slippage must translate to 9950 multiplier (50 bps = 0.5%) instead of 9999
+let capturedExchangeArgsDefault = null;
+const customEncodeDefault = ({ abi, functionName, args }) => {
+  if (functionName === 'exchange') {
+    capturedExchangeArgsDefault = args;
+  }
+  return encodeFunctionData({ abi, functionName, args });
+};
+
+rolloverBuilder.buildRolloverBundle({
+  encodeFunctionData: customEncodeDefault,
+  sourceMarketParams: mockSourceMarketParams,
+  destMarketParams: mockDestMarketParams,
+  collateralAmount: 100000000000000000000n,
+  debtAmount: 80000000n,
+  isFull: false,
+  sourceCollateralAddress: mockSourceMarketParams.collateralToken,
+  destCollateralAddress: mockDestMarketParams.collateralToken,
+  userAddress: '0xF0A6e66B4396a70eE0620064da847821BeE70731',
+  ETHER_GENERAL_ADAPTER_1: config.ETHER_GENERAL_ADAPTER_1,
+  MORPHO_BUNDLER_V3: config.MORPHO_BUNDLER_V3,
+  isSameCollateral: true,
+  isSameLoan: false,
+  loanRouteData: mockLoanRouteDataCurve,
+  loanExpectedInput: 12000000000000000000n,
+  loanExpectedOutput: expectedOutputAmount
+});
+
+assert.ok(capturedExchangeArgsDefault !== null, 'Curve exchange should be called');
+assert.strictEqual(
+  capturedExchangeArgsDefault[3],
+  9950000000n,
+  'Default slippage must yield 9950 multiplier (50 bps), not 9999'
+);
+
+// Test 3.2: Explicit slippageBps = 100n (1.0% slippage -> 9900 multiplier)
+let capturedExchangeArgs100bps = null;
+const customEncode100bps = ({ abi, functionName, args }) => {
+  if (functionName === 'exchange') {
+    capturedExchangeArgs100bps = args;
+  }
+  return encodeFunctionData({ abi, functionName, args });
+};
+
+rolloverBuilder.buildRolloverBundle({
+  encodeFunctionData: customEncode100bps,
+  sourceMarketParams: mockSourceMarketParams,
+  destMarketParams: mockDestMarketParams,
+  collateralAmount: 100000000000000000000n,
+  debtAmount: 80000000n,
+  isFull: false,
+  sourceCollateralAddress: mockSourceMarketParams.collateralToken,
+  destCollateralAddress: mockDestMarketParams.collateralToken,
+  userAddress: '0xF0A6e66B4396a70eE0620064da847821BeE70731',
+  ETHER_GENERAL_ADAPTER_1: config.ETHER_GENERAL_ADAPTER_1,
+  MORPHO_BUNDLER_V3: config.MORPHO_BUNDLER_V3,
+  isSameCollateral: true,
+  isSameLoan: false,
+  loanRouteData: mockLoanRouteDataCurve,
+  loanExpectedInput: 12000000000000000000n,
+  loanExpectedOutput: expectedOutputAmount,
+  slippageBps: 100n
+});
+
+assert.ok(capturedExchangeArgs100bps !== null, 'Curve exchange should be called for 100bps test');
+assert.strictEqual(
+  capturedExchangeArgs100bps[3],
+  9900000000n,
+  'Explicit slippageBps=100n must yield 9900 multiplier (100 bps)'
+);
+
 console.log('✅ RolloverBundleBuilder unit tests passed');
 
 console.log('🎉 All modular builder services tests passed successfully!');
+
