@@ -41,9 +41,9 @@
   - [x] Add unit tests in `tests/` asserting that cross-loan debt solver uses the 2-step iterative swap quoter even when collateral oracle prices are readable.
   - [x] Add tests verifying `ScalingService.parseUnits` string parsing in CLI rollover command.
   - [x] Run test suite to verify tests fail as expected (Red Phase).
-- [~] Task: Remove Oracle Ratio Shortcut and Enforce 2-Step Iterative Quoter (Green Phase)
-  - [ ] Purge collateral oracle price ratio shortcut from `cli/rollover-routing-helper.js:47-52`.
-  - [ ] Purge collateral oracle price ratio shortcut from `src/ui/controllers/rollover-workflow.js:102-107`.
-  - [ ] Update `cli/rollover-command.js` to parse debt string using `ScalingService.parseUnits`.
-  - [ ] Run cross-loan tests and CLI test suites to confirm green status (Green Phase).
+- [x] Task: Remove Oracle Ratio Shortcut and Enforce 2-Step Iterative Quoter (Green Phase) f6873b3
+  - [x] Purge collateral oracle price ratio shortcut from `cli/rollover-routing-helper.js:47-52`.
+  - [x] Purge collateral oracle price ratio shortcut from `src/ui/controllers/rollover-workflow.js:102-107`.
+  - [x] Update `cli/rollover-command.js` to parse debt string using `ScalingService.parseUnits`.
+  - [x] Run cross-loan tests and CLI test suites to confirm green status (Green Phase).
 - [ ] Task: Phase Verification & Checkpoint (Refer to workflow.md)
