@@ -13,7 +13,9 @@ const __dirname = path.dirname(__filename);
 console.log('Running JSDOM live cross-loan transaction simulation integration tests...');
 
 // 1. Pin block number before creating clients!
-process.env.FORK_BLOCK_NUMBER = "25411200";
+if (!process.env.FORK_BLOCK_NUMBER) {
+  process.env.FORK_BLOCK_NUMBER = "25411200";
+}
 console.log(`Pinning mainnet fork block number to: ${process.env.FORK_BLOCK_NUMBER}`);
 
 // 2. Fetch Alchemy API Key
@@ -140,6 +142,39 @@ global.fetch = async (url, options) => {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+  if (process.env.FORK_BLOCK_NUMBER && options && options.method === 'POST' && options.body) {
+    try {
+      const parsed = JSON.parse(options.body);
+      const forkBlockHex = `0x${BigInt(process.env.FORK_BLOCK_NUMBER).toString(16)}`;
+      let modified = false;
+      const patchCall = (call) => {
+        if (['eth_call', 'eth_getBalance', 'eth_getTransactionCount', 'eth_getCode'].includes(call.method)) {
+          if (Array.isArray(call.params) && (!call.params[1] || call.params[1] === 'latest')) {
+            call.params[1] = forkBlockHex;
+            modified = true;
+          }
+        } else if (call.method === 'eth_getStorageAt') {
+          if (Array.isArray(call.params) && (!call.params[2] || call.params[2] === 'latest')) {
+            call.params[2] = forkBlockHex;
+            modified = true;
+          }
+        } else if (call.method === 'eth_simulateV1') {
+          if (Array.isArray(call.params) && (!call.params[1] || call.params[1] === 'latest')) {
+            call.params[1] = forkBlockHex;
+            modified = true;
+          }
+        }
+      };
+      if (Array.isArray(parsed)) {
+        parsed.forEach(patchCall);
+      } else {
+        patchCall(parsed);
+      }
+      if (modified) {
+        options = { ...options, body: JSON.stringify(parsed) };
+      }
+    } catch (e) {}
+  }
   return originalFetch(url, options);
 };
 global.window.fetch = global.fetch; // map fetch to Node fetch
@@ -253,7 +288,9 @@ async function simulateTransaction(txPayload, prependCalls = [], tokensToCheck =
           }
         ]
       },
-      "latest"
+      process.env.FORK_BLOCK_NUMBER ? 
+        (process.env.FORK_BLOCK_NUMBER.startsWith('0x') ? process.env.FORK_BLOCK_NUMBER : `0x${BigInt(process.env.FORK_BLOCK_NUMBER).toString(16)}`) : 
+        "latest"
     ]
   };
 

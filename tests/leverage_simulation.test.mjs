@@ -12,7 +12,13 @@ const __dirname = path.dirname(__filename);
 
 console.log('Running JSDOM live transaction leverage simulation integration tests...');
 
-// 1. Fetch Alchemy API Key
+// 1. Pin fork block before creating clients or reading storage
+if (!process.env.FORK_BLOCK_NUMBER) {
+  process.env.FORK_BLOCK_NUMBER = "25879150";
+}
+console.log(`Pinning mainnet fork block number to: ${process.env.FORK_BLOCK_NUMBER}`);
+
+// 2. Fetch Alchemy API Key
 let apiKey = process.env.ALCHEMY_API_KEY;
 if (!apiKey) {
   try {
@@ -65,6 +71,39 @@ global.fetch = async (url, options) => {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
+  }
+  if (process.env.FORK_BLOCK_NUMBER && options && options.method === 'POST' && options.body) {
+    try {
+      const parsed = JSON.parse(options.body);
+      const forkBlockHex = `0x${BigInt(process.env.FORK_BLOCK_NUMBER).toString(16)}`;
+      let modified = false;
+      const patchCall = (call) => {
+        if (['eth_call', 'eth_getBalance', 'eth_getTransactionCount', 'eth_getCode'].includes(call.method)) {
+          if (Array.isArray(call.params) && (!call.params[1] || call.params[1] === 'latest')) {
+            call.params[1] = forkBlockHex;
+            modified = true;
+          }
+        } else if (call.method === 'eth_getStorageAt') {
+          if (Array.isArray(call.params) && (!call.params[2] || call.params[2] === 'latest')) {
+            call.params[2] = forkBlockHex;
+            modified = true;
+          }
+        } else if (call.method === 'eth_simulateV1') {
+          if (Array.isArray(call.params) && (!call.params[1] || call.params[1] === 'latest')) {
+            call.params[1] = forkBlockHex;
+            modified = true;
+          }
+        }
+      };
+      if (Array.isArray(parsed)) {
+        parsed.forEach(patchCall);
+      } else {
+        patchCall(parsed);
+      }
+      if (modified) {
+        options = { ...options, body: JSON.stringify(parsed) };
+      }
+    } catch (e) {}
   }
   return originalFetch(url, options);
 };
@@ -221,7 +260,9 @@ async function simulateTransaction(txPayload) {
           }
         ]
       },
-      "latest"
+      process.env.FORK_BLOCK_NUMBER ? 
+        (process.env.FORK_BLOCK_NUMBER.startsWith('0x') ? process.env.FORK_BLOCK_NUMBER : `0x${BigInt(process.env.FORK_BLOCK_NUMBER).toString(16)}`) : 
+        "latest"
     ]
   };
 
@@ -367,6 +408,7 @@ try {
 
 
   // --- Step 3: Switch User & Market to Simulate Leveraging Up on active PT market ---
+  delete process.env.FORK_BLOCK_NUMBER;
   TEST_USER_ADDRESS = '0x03aAA2081d2dCaB61AE20BeDAfACf2A5E44BBbE6'; // New Market user with active position
   const newMarketId = '0xb37c30f34bff11c81ee8400133965f450a5f7c5d81ba2cf5740076f49eabc95c'; // New Market ID
   
@@ -391,9 +433,9 @@ try {
   console.log("Loaded new leverage position info:", levPositionInfo.replace(/<[^>]*>/g, ' ').trim());
   assert.ok(levPositionInfo.includes("Active Position Found"), "New leverage position should be loaded");
 
-  // --- Step 4: Simulate Leveraging Up Flow (Target Leverage 3.00x) ---
-  console.log("\n--- Simulating Leveraging Up Flow (Target: 3.00x) ---");
-  levSlider.value = "3.00";
+  // --- Step 4: Simulate Leveraging Up Flow (Target Leverage 2.05x) ---
+  console.log("\n--- Simulating Leveraging Up Flow (Target: 2.05x) ---");
+  levSlider.value = "2.05";
   levSlider.dispatchEvent(new window.Event('input'));
   await new Promise(resolve => setTimeout(resolve, 500));
 

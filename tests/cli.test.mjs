@@ -771,7 +771,7 @@ async function testCliShellExecutionSimulation() {
   };
 
   // 1. Test: Full Rollover Simulation Shell Command
-  const cmd1 = `node ${cliPath} rollover --old-market-id ${oldMarket} --new-market-id ${newMarket} --user ${user} --simulation --cap-borrow`;
+  const cmd1 = `node "${cliPath}" rollover --old-market-id ${oldMarket} --new-market-id ${newMarket} --user ${user} --simulation --cap-borrow`;
   console.log(`  Spawning: ${cmd1}`);
   const stdout1 = execSync(cmd1, { encoding: 'utf8', env }).toLowerCase();
   
@@ -780,7 +780,7 @@ async function testCliShellExecutionSimulation() {
   assert.ok(stdout1.includes('morpho bundler v3'), 'Output should resolve contract label in call trace');
 
   // 2. Test: Partial Rollover Simulation Shell Command
-  const cmd2 = `node ${cliPath} rollover --old-market-id ${oldMarket} --new-market-id ${newMarket} --user ${user} --type partial --debt 2 --simulation --cap-borrow`;
+  const cmd2 = `node "${cliPath}" rollover --old-market-id ${oldMarket} --new-market-id ${newMarket} --user ${user} --type partial --debt 2 --simulation --cap-borrow`;
   console.log(`  Spawning: ${cmd2}`);
   const stdout2 = execSync(cmd2, { encoding: 'utf8', env }).toLowerCase();
   
@@ -789,7 +789,7 @@ async function testCliShellExecutionSimulation() {
   assert.ok(stdout2.includes('transaction simulation successful') || stdout2.includes('transaction simulation reverted'), 'Output should verify simulation execution');
 
   // 3. Test: Leverage Adjustment Simulation Shell Command (Deleveraging)
-  const cmd3 = `node ${cliPath} adjust-leverage --market-id ${oldMarket} --user ${user} --target-leverage 2.0 --simulation`;
+  const cmd3 = `node "${cliPath}" adjust-leverage --market-id ${oldMarket} --user ${user} --target-leverage 2.0 --simulation`;
   console.log(`  Spawning: ${cmd3}`);
   const stdout3 = execSync(cmd3, { encoding: 'utf8', env }).toLowerCase();
   
@@ -802,7 +802,7 @@ async function testCliShellExecutionSimulation() {
   }
 
   // 4. Test: Validation constraint check (expected failure)
-  const cmd4 = `node ${cliPath} rollover --private-key 0x123`;
+  const cmd4 = `node "${cliPath}" rollover --private-key 0x123`;
   console.log(`  Spawning: ${cmd4} (Expecting error exit)`);
   assert.throws(() => {
     execSync(cmd4, { stdio: 'pipe' });
@@ -818,7 +818,7 @@ async function testCliShellExecutionSimulation() {
   }));
 
   try {
-    const cmd5 = `node ${cliPath} simulate-raw --file ${tempJsonPath}`;
+    const cmd5 = `node "${cliPath}" simulate-raw --file "${tempJsonPath}"`;
     console.log(`  Spawning: ${cmd5}`);
     const stdout5 = execSync(cmd5, { encoding: 'utf8' }).toLowerCase();
     
