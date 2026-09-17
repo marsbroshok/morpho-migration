@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-17
+
+### Added
+- **Modular Core Architecture:** Decomposed monoliths into single-responsibility, object-oriented services under `src/core/` (Math: `LtvCalculator`, `ScalingService`, `SlippageService`; Builders: `ApprovalBuilder`, `RolloverBundleBuilder`, `LeverageBundleBuilder`; Services: `MorphoMarketService`, `SwapQuoterService`, `SimulationService`, `LiquidityPoolService`).
+- **Reactive UI Component Architecture:** Introduced isolated UI state management (`UIStateStore`), dedicated visual components (`ErrorBanner`, `MarketSelector`, `PositionPreview`, `WalletModal`, `CliCommandGenerator`), and workflow controllers (`RolloverWorkflow`, `LeverageWorkflow`, `RawSimulationWorkflow`, `AuditWorkflow`, `AppController`).
+- **CLI Modularity & Helper Ecosystem:** Created dedicated helpers for simulation preparation, routing, argument parsing, trace rendering, and help formatting (`RolloverSimulationHelper`, `RolloverRoutingHelper`, `LeverageHelper`, `CliArgParser`, `CliHelpView`, `CliTraceView`).
+- **Hermetic TDD Test Suites:** Added dedicated unit test suites (`tests/math_services.test.mjs`, `tests/builder_services.test.mjs`, `tests/core_services.test.mjs`, `tests/ui_services.test.mjs`) ensuring 100% test coverage for newly authored modules.
+- **Strict Governance Directives:** Integrated Memory & Context Hygiene Directives, Isolated Worktree Standard, and Hermetic Testing Invariants into `.agents/AGENTS.md`.
+
+### Changed
+- Refactored `app.js` from over 2,400 lines into a lightweight 248-line entrypoint.
+- Refactored `builders.js` and `math.js` into backward-compatible facades delegating to `src/core/`.
+- Synchronized CLI commands (`cli/rollover-command.js`, `cli/leverage-command.js`) with `src/core/` services, enforcing that every JavaScript file in the repository remains strictly < 400 lines.
+
+### Removed
+- Purged all raw scratch scripts, exploratory files, and deprecated `agy-worktrees/` directory.
+
+### Fixed
+- Fixed mainnet-fork simulation test flakiness by enforcing deterministic block pinning.
+
 ## [1.0.0] - 2026-06-30
 
 ### Added
