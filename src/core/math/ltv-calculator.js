@@ -85,37 +85,63 @@ export class LtvCalculator {
   }
 
   /**
-   * Solves the exact token borrow or sell amounts required to transition a position to a target leverage.
+   * Calculates the maximum safe leverage dynamically from the market's specific LLTV parameter
+   * with a configurable safety buffer (default 200 bps = 2.0%).
+   * Equation: MaxSafeLeverage = 10^18 / (10^18 - (LLTV - Buffer))
    *
-   * Solved equations:
-   * - Target LTV = 1 - (1 / TargetLeverage)
-   * - Deleverage: CollateralToSell = (Debt - CollateralValue * TargetLTV) / (SwapPrice - OraclePrice * TargetLTV)
-   * - Leverage Up: DebtToBorrow = (CollateralValue * TargetLTV - Debt) / (1 - TargetLTV)
+   * @param {bigint|number|string} lltv Market LLTV (scaled by 1e18, e.g. 0.86e18).
+   * @param {bigint|number} [bufferBps=200n] Safety buffer in basis points (default 200 bps).
+   * @returns {number} Maximum safe leverage multiplier as a float (e.g. 4.00, 6.25, 18.18).
+   * @throws {Error} If effective LLTV exceeds or equals 100%.
+   */
+  calculateMaxSafeLeverage(lltv, bufferBps = 200n) {
+    const lltvBig = BigInt(lltv);
+    const bufferBpsBig = BigInt(bufferBps);
+    const bufferScaled = (bufferBpsBig * 10n ** 18n) / 10000n;
+    const effectiveLltv = lltvBig - bufferScaled;
+    const denominator = 10n ** 18n - effectiveLltv;
+    if (denominator <= 0n) {
+      throw new Error('Effective LLTV exceeds or equals 100%, cannot compute safe leverage.');
+    }
+    return Number((10n ** 22n) / denominator) / 10000;
+  }
+
+  /**
+   * Solves the exact token borrow or sell amounts required to transition a position to a target leverage.
+   * Operates strictly in rational BigInt arithmetic without IEEE-754 floating-point drift.
+   *
+   * Solved rational equations:
+   * - Target LTV ratio: A / B = (TargetLeverageScaled - ScaleFactor) / TargetLeverageScaled
+   * - Deleverage:
+   *   CollateralToSell = ((Debt * B - CollateralValue * A) * 10^36) / (SwapPrice * B - OraclePrice * A)
+   *   DebtToRepay = (CollateralToSell * SwapPrice) / 10^36
+   * - Leverage Up:
+   *   DebtToBorrow = (CollateralValue * A - Debt * B) / (B - A)
+   *   CollateralToBuy = (DebtToBorrow * 10^36) / SwapPrice
    *
    * @param {bigint} liveDebt Current debt in loan token decimals.
    * @param {bigint} liveCollateral Current collateral in collateral token decimals.
    * @param {bigint} oraclePrice Collateral price in loan (scaled by 10^(36 + loanDec - collDec)).
    * @param {bigint} swapPrice Collateral swap execution price (scaled by 10^(36 + loanDec - collDec)).
-   * @param {number} targetLeverage Target leverage multiplier (between 1.0 and 6.0).
+   * @param {number|bigint|string} targetLeverage Target leverage multiplier.
+   * @param {bigint|number|string|null} [lltv=null] Optional market LLTV (scaled by 1e18) for dynamic safety ceiling.
+   * @param {bigint|number} [bufferBps=200n] Safety buffer in basis points when dynamic LLTV is provided.
    * @returns {{ mode: 'deleverage'|'leverage-up'|'deleverage-to-1x', debtAmount: bigint, collateralAmount: bigint }}
-   * @throws {Error} If targetLeverage is out of bounds or calculation encounters zero collateral.
+   * @throws {Error} If targetLeverage is out of bounds or position has zero collateral.
    */
-  calculateLeverageAdjustmentParams(liveDebt, liveCollateral, oraclePrice, swapPrice, targetLeverage) {
-    if (targetLeverage < 1.0 || targetLeverage > 6.0) {
-      throw new Error('Leverage target exceeds safe maximum limit (1.0x - 6.0x).');
+  calculateLeverageAdjustmentParams(liveDebt, liveCollateral, oraclePrice, swapPrice, targetLeverage, lltv = null, bufferBps = 200n) {
+    const maxSafeLeverage = lltv != null ? this.calculateMaxSafeLeverage(lltv, bufferBps) : 6.0;
+    const targetLevNum = Number(targetLeverage);
+    if (targetLevNum < 1.0 || targetLevNum > maxSafeLeverage) {
+      throw new Error(`Leverage target exceeds safe maximum limit (must be between 1.0x and ${maxSafeLeverage.toFixed(2)}x).`);
     }
 
-    const targetLtvNumeric = 1.0 - 1.0 / targetLeverage;
-    const targetLtvBig = BigInt(Math.floor(targetLtvNumeric * 1e18));
+    const scaleFactor = 10000n;
+    const targetLeverageScaled = BigInt(Math.round(targetLevNum * Number(scaleFactor)));
+    const targetLtvNumerator = targetLeverageScaled - scaleFactor; // A
+    const targetLtvDenominator = targetLeverageScaled;            // B
 
-    const collateralValue = ScalingService.calculateCollateralValue(liveCollateral, oraclePrice);
-    if (collateralValue === 0n) {
-      throw new Error('Cannot adjust leverage of a position with zero collateral.');
-    }
-
-    const currentLtvBig = (liveDebt * 10n ** 18n) / collateralValue;
-
-    if (targetLeverage === 1.0) {
+    if (targetLeverageScaled === scaleFactor) {
       const collateralToSell = (liveDebt * 10n ** 36n) / swapPrice;
       return {
         mode: 'deleverage-to-1x',
@@ -124,13 +150,20 @@ export class LtvCalculator {
       };
     }
 
+    const collateralValue = ScalingService.calculateCollateralValue(liveCollateral, oraclePrice);
+    if (collateralValue === 0n) {
+      throw new Error('Cannot adjust leverage of a position with zero collateral.');
+    }
+
+    const targetLtvBig = (targetLtvNumerator * 10n ** 18n) / targetLtvDenominator;
+    const currentLtvBig = (liveDebt * 10n ** 18n) / collateralValue;
+
     if (targetLtvBig < currentLtvBig) {
       // Mode: Deleverage
-      const numeratorPart2 = (liveCollateral * oraclePrice * targetLtvBig) / 10n ** 54n;
-      const numerator = liveDebt - numeratorPart2;
-
-      const denominatorPart2 = (oraclePrice * targetLtvBig) / 10n ** 18n;
-      const denominator = swapPrice - denominatorPart2;
+      // Using exact rational substitution to eliminate floating-point and integer truncation drift:
+      // CollateralToSell = (Debt * B - CollateralValue * A) / (SwapPrice * B - OraclePrice * A)
+      const numerator = liveDebt * targetLtvDenominator - collateralValue * targetLtvNumerator;
+      const denominator = swapPrice * targetLtvDenominator - oraclePrice * targetLtvNumerator;
 
       if (denominator <= 0n) {
         throw new Error('Mathematical error in deleveraging calculations (denominator <= 0).');
@@ -146,11 +179,11 @@ export class LtvCalculator {
       };
     } else {
       // Mode: Leverage Up
-      const numeratorPart1 = (liveCollateral * oraclePrice * targetLtvBig) / 10n ** 54n;
-      const numerator = numeratorPart1 - liveDebt;
+      // DebtToBorrow = (CollateralValue * A - Debt * B) / (B - A)
+      const numerator = collateralValue * targetLtvNumerator - liveDebt * targetLtvDenominator;
+      const denominator = targetLtvDenominator - targetLtvNumerator;
 
-      const denominator = 10n ** 18n - targetLtvBig;
-      const debtToBorrow = (numerator * 10n ** 18n) / denominator;
+      const debtToBorrow = numerator / denominator;
       const collateralToBuy = (debtToBorrow * 10n ** 36n) / swapPrice;
 
       return {
@@ -161,3 +194,4 @@ export class LtvCalculator {
     }
   }
 }
+

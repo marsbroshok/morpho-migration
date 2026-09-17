@@ -47,14 +47,30 @@ export function calculateLeverage(collateralValue, debtAmount) {
 
 /**
  * Solves the exact token borrow/sell amounts required to adjust a position to a target leverage.
+ * Operates in pure rational BigInt arithmetic without IEEE-754 floating-point drift.
  *
  * @param {bigint} liveDebt Current position debt (scaled by loan decimals)
  * @param {bigint} liveCollateral Current position collateral (scaled by collateral decimals)
  * @param {bigint} oraclePrice Collateral price in loan (scaled by 10^(36 + loanDec - collDec))
  * @param {bigint} swapPrice Collateral to loan swap conversion price (scaled by 10^(36 + loanDec - collDec))
- * @param {number} targetLeverage Target leverage ratio (e.g., 3.0)
+ * @param {number|bigint|string} targetLeverage Target leverage ratio (e.g., 3.0)
+ * @param {bigint|number|string|null} [lltv=null] Optional market LLTV (scaled by 1e18) for dynamic safety ceiling
+ * @param {bigint|number} [bufferBps=200n] Safety buffer in basis points when dynamic LLTV is provided
  * @returns {{ mode: 'deleverage'|'leverage-up'|'deleverage-to-1x', debtAmount: bigint, collateralAmount: bigint }}
  */
-export function calculateLeverageAdjustmentParams(liveDebt, liveCollateral, oraclePrice, swapPrice, targetLeverage) {
-  return ltvCalculator.calculateLeverageAdjustmentParams(liveDebt, liveCollateral, oraclePrice, swapPrice, targetLeverage);
+export function calculateLeverageAdjustmentParams(liveDebt, liveCollateral, oraclePrice, swapPrice, targetLeverage, lltv = null, bufferBps = 200n) {
+  return ltvCalculator.calculateLeverageAdjustmentParams(liveDebt, liveCollateral, oraclePrice, swapPrice, targetLeverage, lltv, bufferBps);
 }
+
+/**
+ * Calculates the maximum safe leverage dynamically from the market's specific LLTV parameter.
+ * Equation: MaxSafeLeverage = 10^18 / (10^18 - (LLTV - Buffer))
+ *
+ * @param {bigint|number|string} lltv Market LLTV (scaled by 1e18, e.g. 0.86e18)
+ * @param {bigint|number} [bufferBps=200n] Safety buffer in basis points (default 200 bps)
+ * @returns {number} Maximum safe leverage multiplier as a float (e.g. 4.00, 6.25, 18.18)
+ */
+export function calculateMaxSafeLeverage(lltv, bufferBps = 200n) {
+  return ltvCalculator.calculateMaxSafeLeverage(lltv, bufferBps);
+}
+
