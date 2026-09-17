@@ -124,7 +124,7 @@ global.fetch = async (url, options) => {
         json: async () => ({
           routes: [
             {
-              outputs: [{ amount: (BigInt(body.inputs[0].amount) / 10n ** 12n).toString() }],
+              outputs: [{ amount: ((BigInt(body.inputs[0].amount) * 8394n / 10000n) / 10n ** 12n).toString() }],
               tx: { to: '0x0000000000000000000000000000000000000007', data: '0x123456' }
             }
           ]
@@ -146,6 +146,7 @@ appCode = appCode.replace(/from\s+['"]\.\/math\.js['"]/g, "from '../math.js'");
 appCode = appCode.replace(/from\s+['"]\.\/labels\.js['"]/g, "from '../labels.js'");
 appCode = appCode.replace(/from\s+['"]\.\/builders\.js['"]/g, "from '../builders.js'");
 appCode = appCode.replace(/from\s+['"]\.\/config\.js['"]/g, "from '../config.js'");
+appCode = appCode.replace(/from\s+['"]\.\/src\//g, "from '../src/");
 
 appCode = "\nconst createPublicClient = () => global.mockPublicClient;\n" + appCode;
 

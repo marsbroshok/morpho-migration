@@ -2,6 +2,7 @@
  * @fileoverview Transaction bundle builder for cross-market and same-market collateral rollover operations.
  */
 
+import { encodeFunctionData as defaultEncodeFunctionData, encodeAbiParameters as defaultEncodeAbiParameters, keccak256 as defaultKeccak256 } from 'viem';
 import { ApprovalBuilder, ERC20_ABI } from './approval-builder.js';
 import { LiquidityPoolService } from '../services/liquidity-pool-service.js';
 import { BUNDLER_ABI, ADAPTER_ABI } from '../contracts/abis.js';
@@ -40,9 +41,9 @@ export class RolloverBundleBuilder {
    * @returns {{ outerBundle?: Array<object>, reenterBundle?: Array<object>, flashLoanAmount: bigint, repayAmount: bigint, repayShares?: bigint, borrowAmount: bigint, finalCalldata: string }}
    */
   buildRolloverBundle({
-    encodeFunctionData,
-    encodeAbiParameters,
-    keccak256,
+    encodeFunctionData: passedEncFn,
+    encodeAbiParameters: passedEncAbi,
+    keccak256: passedKeccak,
     sourceMarketParams,
     destMarketParams,
     collateralAmount,
@@ -54,18 +55,22 @@ export class RolloverBundleBuilder {
     userAddress,
     ETHER_GENERAL_ADAPTER_1,
     MORPHO_BUNDLER_V3,
-    isSameCollateral,
-    isSameLoan,
-    loanRouteData,
-    loanExpectedInput,
-    loanExpectedOutput,
-    slippage,
-    borrowShares,
-    maxSafeBorrowAmount,
-    capBorrow,
+    isSameCollateral = false,
+    isSameLoan = true,
+    loanRouteData = null,
+    loanExpectedInput = 0n,
+    loanExpectedOutput = 0n,
+    slippage = 0.005,
+    borrowShares = 0n,
     actualLoanOutput = null,
-    actualCollateralOutput = null
+    actualCollateralOutput = null,
+    capBorrow = true,
+    maxSafeBorrowAmount = null
   }) {
+    const encodeFunctionData = passedEncFn || defaultEncodeFunctionData;
+    const encodeAbiParameters = passedEncAbi || defaultEncodeAbiParameters;
+    const keccak256 = passedKeccak || defaultKeccak256;
+
     // 1. Zero debt rollover path (Unleveraged rollover)
     if (debtAmount === 0n) {
       const bundle = [];

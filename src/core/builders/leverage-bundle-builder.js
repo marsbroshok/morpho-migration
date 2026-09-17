@@ -2,6 +2,7 @@
  * @fileoverview Transaction bundle builder for leverage adjustment operations (deleveraging and leveraging up).
  */
 
+import { encodeFunctionData as defaultEncodeFunctionData } from 'viem';
 import { ApprovalBuilder, ERC20_ABI } from './approval-builder.js';
 import { ADAPTER_ABI } from '../contracts/abis.js';
 
@@ -20,7 +21,7 @@ export class LeverageBundleBuilder {
    * Constructs the deleveraging bundle for repaying debt and withdrawing collateral.
    *
    * @param {object} params
-   * @param {Function} params.encodeFunctionData viem function encoder
+   * @param {Function} [params.encodeFunctionData] viem function encoder
    * @param {object} params.marketParams Morpho Blue market parameters
    * @param {bigint} params.collateralAmount Collateral amount to withdraw and sell
    * @param {bigint} params.debtAmount Debt amount to repay
@@ -35,7 +36,7 @@ export class LeverageBundleBuilder {
    * @returns {Array<object>} Deleveraging subcall bundle
    */
   buildDeleveragingBundle({
-    encodeFunctionData,
+    encodeFunctionData: passedEncFn,
     marketParams,
     collateralAmount,
     debtAmount,
@@ -48,6 +49,7 @@ export class LeverageBundleBuilder {
     MORPHO_BUNDLER_V3,
     flashLoanAmount
   }) {
+    const encodeFunctionData = passedEncFn || defaultEncodeFunctionData;
     const repayAmount = is1x ? 0n : debtAmount;
     const repayShares = is1x ? 2n ** 256n - 1n : 0n;
 
@@ -140,7 +142,7 @@ export class LeverageBundleBuilder {
    * Constructs the leveraging up bundle for borrowing loan assets and buying collateral.
    *
    * @param {object} params
-   * @param {Function} params.encodeFunctionData viem function encoder
+   * @param {Function} [params.encodeFunctionData] viem function encoder
    * @param {object} params.marketParams Morpho Blue market parameters
    * @param {bigint} params.collateralAmount Collateral amount bought from swap
    * @param {bigint} params.debtAmount Debt amount borrowed from flashloan
@@ -153,7 +155,7 @@ export class LeverageBundleBuilder {
    * @returns {Array<object>} Leveraging up subcall bundle
    */
   buildLeveragingUpBundle({
-    encodeFunctionData,
+    encodeFunctionData: passedEncFn,
     marketParams,
     collateralAmount,
     debtAmount,
@@ -164,6 +166,7 @@ export class LeverageBundleBuilder {
     ETHER_GENERAL_ADAPTER_1,
     MORPHO_BUNDLER_V3
   }) {
+    const encodeFunctionData = passedEncFn || defaultEncodeFunctionData;
     const bundle = [];
 
     // Call A: Transfer loan token from Adapter to Bundler3 for swap execution

@@ -373,6 +373,7 @@ appCode = appCode.replace(/from\s+['"]\.\/math\.js['"]/g, "from '../math.js'");
 appCode = appCode.replace(/from\s+['"]\.\/labels\.js['"]/g, "from '../labels.js'");
 appCode = appCode.replace(/from\s+['"]\.\/builders\.js['"]/g, "from '../builders.js'");
 appCode = appCode.replace(/from\s+['"]\.\/config\.js['"]/g, "from '../config.js'");
+appCode = appCode.replace(/from\s+['"]\.\/src\//g, "from '../src/");
 
 const shadowPath = path.resolve(__dirname, './simulation.shadow.mjs');
 fs.writeFileSync(shadowPath, appCode, 'utf8');

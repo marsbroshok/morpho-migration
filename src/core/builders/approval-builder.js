@@ -2,7 +2,7 @@
  * @fileoverview Service for resolving dynamic token spenders and building ERC-20 & Permit2 approvals.
  */
 
-import { getAddress } from 'viem';
+import { getAddress, encodeFunctionData as defaultEncodeFunctionData } from 'viem';
 import config from '../../../config.js';
 import { ERC20_ABI, PERMIT2_ABI } from '../contracts/abis.js';
 export { ERC20_ABI, PERMIT2_ABI };
@@ -80,7 +80,8 @@ export class ApprovalBuilder {
    * @param {bigint} [amount=2n ** 256n - 1n] Amount to approve
    * @returns {Array<{ to: string, data: string, value: bigint, skipRevert: boolean, callbackHash: string }>}
    */
-  buildApprovalCalls(token, spender, encodeFunctionData, amount = 2n ** 256n - 1n) {
+  buildApprovalCalls(token, spender, encFn = null, amount = 2n ** 256n - 1n) {
+    const encodeFunctionData = encFn || defaultEncodeFunctionData;
     const checksumToken = getAddress(token);
     const checksumSpender = getAddress(spender);
     const calls = [];
@@ -137,9 +138,9 @@ export class ApprovalBuilder {
    * @param {Array<object>} bundle Target multicall bundle array
    * @param {string} token Address of token to approve
    * @param {string} spender Address of spender contract
-   * @param {Function} encodeFunctionData viem encodeFunctionData function
+   * @param {Function} [encodeFunctionData] viem encodeFunctionData function
    */
-  appendApprovals(bundle, token, spender, encodeFunctionData) {
+  appendApprovals(bundle, token, spender, encodeFunctionData = null) {
     const calls = this.buildApprovalCalls(token, spender, encodeFunctionData);
     for (const call of calls) {
       bundle.push(call);
