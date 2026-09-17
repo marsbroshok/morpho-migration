@@ -1,0 +1,4 @@
+Task: Implement Terminal Sweeps in Leverage and Rollover Builders (Green Phase)
+Summary: Implemented terminal sweeps using 2n ** 256n - 1n in LeverageBundleBuilder, RolloverBundleBuilder, LeverageHelper, and leverage-workflow to sweep unspent loan and collateral tokens directly to userAddress after execution.
+Modified files: src/core/builders/leverage-bundle-builder.js, src/core/builders/rollover-bundle-builder.js, cli/leverage-helper.js, src/ui/controllers/leverage-workflow.js, tests/builders.test.mjs, tests/builder_services.test.mjs, tests/preview_workflow.test.mjs
+Why: Close vulnerability SEC-01 and SEC-02 to prevent positive swap slippage or collateral dust from leaking into shared peripheral contracts.
