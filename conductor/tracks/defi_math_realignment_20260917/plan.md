@@ -37,11 +37,11 @@
 
 ## Phase 3: ADR-0003 Two-Step Iterative Swap Solver Enforcement (TDD)
 
-- [~] Task: Write Failing Tests for Cross-Loan Debt Quoting (Red Phase)
-  - [ ] Add unit tests in `tests/` asserting that cross-loan debt solver uses the 2-step iterative swap quoter even when collateral oracle prices are readable.
-  - [ ] Add tests verifying `ScalingService.parseUnits` string parsing in CLI rollover command.
-  - [ ] Run test suite to verify tests fail as expected (Red Phase).
-- [ ] Task: Remove Oracle Ratio Shortcut and Enforce 2-Step Iterative Quoter (Green Phase)
+- [x] Task: Write Failing Tests for Cross-Loan Debt Quoting (Red Phase) 6b32909
+  - [x] Add unit tests in `tests/` asserting that cross-loan debt solver uses the 2-step iterative swap quoter even when collateral oracle prices are readable.
+  - [x] Add tests verifying `ScalingService.parseUnits` string parsing in CLI rollover command.
+  - [x] Run test suite to verify tests fail as expected (Red Phase).
+- [~] Task: Remove Oracle Ratio Shortcut and Enforce 2-Step Iterative Quoter (Green Phase)
   - [ ] Purge collateral oracle price ratio shortcut from `cli/rollover-routing-helper.js:47-52`.
   - [ ] Purge collateral oracle price ratio shortcut from `src/ui/controllers/rollover-workflow.js:102-107`.
   - [ ] Update `cli/rollover-command.js` to parse debt string using `ScalingService.parseUnits`.
